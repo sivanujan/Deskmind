@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "deskmind-api",
+      "runtimeExecutable": "C:\\Users\\Sivanujan_PC\\AppData\\Local\\Microsoft\\WinGet\\Packages\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\uv.exe",
+      "runtimeArgs": ["run", "--no-sync", "deskmind", "api"],
+      "port": 8010
+    },
+    {
+      "name": "deskmind-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "apps/web", "run", "dev"],
+      "port": 3010
+    }
+  ]
+}

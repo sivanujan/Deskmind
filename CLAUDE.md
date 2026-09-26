@@ -1,0 +1,185 @@
+# Deskmind — project rules
+
+## Purpose
+Deskmind is a multi-agent advisory system for crypto futures trading on Binance USDT-M perpetuals.
+Specialist analyst agents (mostly deterministic Python) feed a Head agent (LLM via OpenRouter,
+OpenAI-compatible API; model set by `OPENROUTER_MODEL`, default `deepseek/deepseek-v4.1-flash`,
+always a pinned version ID, never a `~...-latest` alias).
+A Risk Manager (deterministic code, has veto power) sizes every trade, and a human approves before
+anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET only, end-to-end.
+
+## HARD CONSTRAINTS
+1. There is an existing PostgreSQL server on 127.0.0.1:5432 used by ANOTHER project.
+   NEVER connect to it, modify it, create databases in it, install extensions on it, or change its
+   config. Do not touch port 5432 at all. (`config.py` refuses POSTGRES_HOST_PORT=5432.)
+2. Deskmind has its OWN PostgreSQL + TimescaleDB + pgvector in Docker
+   (`timescale/timescaledb-ha:pg17`), database `deskmind`, host port **5435**.
+   (The spec asked for 5433, but 5433 is held by another native Postgres and 5434 by the bijoux
+   project, so 5435 was chosen. Do not use 5432, 5433 or 5434.)
+3. Deskmind has its OWN Redis in Docker on host port **6380** (never 6379).
+4. Before starting containers, check that Deskmind's ports are free (`make up` runs
+   `scripts/check_ports.py`). If a port is held by something else, stop and tell the user.
+5. No secrets in code or git. Secrets live in `.env` (gitignored); `.env.example` has placeholders.
+6. TRADING_MODE must be `paper` or `testnet`. Anything else refuses to start. There is no live mode.
+   Do not add one without an explicit instruction from the user.
+7. Binance keys are `BINANCE_API_KEY` / `BINANCE_SECRET_KEY`. They are only ever sent to
+   `BINANCE_FUTURES_BASE_URL`, which `config.py` restricts to testnet hosts
+   (`testnet.binancefuture.com`, `demo-fapi.binance.com`). Never hard-code or add a mainnet URL
+   (`fapi.binance.com`), and never print or log key values.
+
+## Trading-safety rules
+- Risk rules, leverage caps and validation/holdout data are NEVER changed by agents. Only the human
+  changes them, by hand, in reviewed commits.
+- Money-touching logic (risk, sizing, execution) is deterministic code with unit tests. It is never
+  taken from LLM output. LLMs propose; code validates, sizes and can veto.
+- Every position has an exchange-side stop-loss (STOP_MARKET / reduce-only on Binance). Never rely on
+  a client-side stop.
+- Every order carries a unique `client_order_id`, which is also stored in `trade_journal` (unique
+  constraint), so orders are idempotent and can be reconciled.
+- Decisions are made on candle close only. Never act on a forming candle.
+- Backtests must have no look-ahead: at bar t, use only data available at t's close; signals fill at
+  the next bar at the earliest; indicators must not use future data; keep holdout data separate.
+- Prices and sizes use `Decimal` / `NUMERIC`, never float.
+- A human approves every trade before execution.
+
+## Stack and conventions
+- Python 3.12, uv, asyncio throughout, pydantic-settings, SQLAlchemy 2 async (asyncpg) + Alembic,
+  redis-py async, structlog JSON logs, pytest + pytest-asyncio, ruff.
+- Historical candles: Parquet under `data/parquet/` (gitignored) + DuckDB.
+- Layout: `src/deskmind/{config,logging,health,cli}.py`, `db/`, `cache/`, `data/`, `agents/`,
+  `risk/`, `execution/`, `backtest/`; migrations in `migrations/versions/`.
+- Schema changes always go through a new Alembic migration; never edit an applied migration.
+- Before calling work done: `make lint` and `make test` must pass.
+
+## Historical data rules (Step 2)
+- Symbols come only from config: `DATA_SYMBOLS` in `.env` (default list lives in `config.py`,
+  `DEFAULT_DATA_SYMBOLS`). Never hardcode a symbol anywhere else; every function takes `symbol`.
+  Adding a symbol = add it to `DATA_SYMBOLS` + run `deskmind data download --symbol X`.
+  A test (`test_no_symbol_hardcoded_in_source`) enforces this.
+- Source of truth for backtests: `data/parquet/{symbol}/...` (klines 5m/15m/1h/2h, mark-price
+  klines 5m/1h, funding), built by `deskmind data download|update`. Read candles with
+  `storage.load_klines(data_dir, symbol, tf, start, end)`. Exchange filters snapshots live
+  in `data/meta/{symbol}_filters_{date}.json` (strings; use them for tickSize/stepSize rounding).
+- Parquet prices/volumes are float64 for analytics only. Execution, risk and sizing code must use
+  `Decimal` and the exchange filters, never these floats.
+- Market data comes from live Binance public endpoints (`BINANCE_MARKET_DATA_URL`, default
+  `https://fapi.binance.com`) with the unauthenticated `data.http_client.RateLimitedClient`. Never
+  add API keys or signing to that client; orders stay on testnet.
+- Every bulk zip is checked against its `.CHECKSUM`. Never use unverified zips.
+- Gaps are reported, never filled or interpolated. The currently forming candle is never stored.
+- Reconcile (runs after every download/update): the bulk archive contains flat zero-trade
+  placeholder candles during some incidents, so zero-trade klines and cross-timeframe mismatches
+  are re-downloaded from REST, and REST wins. Mismatches REST confirms are Binance's own data and
+  are recorded in each symbol's `_manifest.json` (`reconcile.cross_tf_confirmed`). See the latest
+  `data/reports/verify_*.md` for the per-symbol list (e.g. BTCUSDT klines around 2023-11-10
+  15:00-16:40 and 2024-10-28 20:15-21:10 UTC: the exchange's 15m/1h/2h candles are truncated,
+  the 5m candles are complete). Backtests on higher timeframes should resample from 5m, or at
+  least be aware of these buckets.
+- Mark vs last price divergence (>1% on close) is report-only (INFO): real market behaviour
+  (liquidation cascades, wicks), not bad data. Liquidation simulation must use mark price.
+- Funding interval changes announced by the exchange (bulk `funding_interval_hours`) are valid.
+- A gap present on several symbols at the same time is exchange-wide (the report says so).
+- `deskmind data verify` must show no FAIL before data is used for a backtest.
+
+## Live market data rules (Step 3)
+- `deskmind live run` (src/deskmind/data/live/) keeps Redis current from ONE combined WebSocket
+  (`wss://fstream.binance.com/market/stream?streams=...`; kline + markPrice streams live on the
+  `/market` route, unrouted URLs no longer deliver them). Stream names are case-sensitive after
+  the symbol (`btcusdt@markPrice@1s`). Public data only, no API key.
+- Agents read candles ONLY via `deskmind.data.live.buffers.get_candles(redis, symbol, tf, n)`
+  (closed candles, Decimal values) and decide ONLY on `deskmind:bar_close` events. The open
+  (partial) candle is for display and must never drive a decision.
+- One bar_close event per (symbol, close_time), in time order, only after every timeframe that
+  closes at that time has arrived (10:00 -> 5m,15m,1h,2h). Missing after 10s -> REST backfill;
+  still missing -> event with `degraded: true` + `missing`. A REST/network error never produces a
+  degraded event; the boundary waits. After reconnects, gaps are backfilled from REST first.
+- Closed candles are upserted into the Postgres `candles` hypertable (idempotent). Parquet is
+  only written by `deskmind data update`, never by the live service.
+- Redis layout, schema version 1 (bump `SCHEMA_VERSION` in buffers.py on any change):
+  | key | type | content |
+  |---|---|---|
+  | `deskmind:schema_version` | string | "1" |
+  | `deskmind:v1:candles:{SYM}:{tf}` | zset | last 500 closed candles, score=open_time, member = compact JSON `[open_time,o,h,l,c,v,close_time,quote_v,trades,taker_buy_v,taker_buy_quote_v]` (Binance strings, exact) |
+  | `deskmind:v1:open:{SYM}:{tf}` | string | `{"is_open": true, "k": [...], "event_time", "updated_at"}` |
+  | `deskmind:v1:mark:{SYM}` | string | mark_price, index_price, est_settle_price, funding_rate, next_funding_time, event_time, received_at |
+  | `deskmind:v1:oi:{SYM}` | string | open_interest, time, received_at (REST poll every 5 min) |
+  | `deskmind:v1:health:streams` | hash | stream -> last message ms |
+  | `deskmind:v1:health:service` | hash | state, ws_state, heartbeat, reconnects, clock_drift_ms, counters |
+  | `deskmind:v1:bar_close:last:{SYM}` | string | last emitted close_time (restart resume) |
+  | `deskmind:v1:bar_close:sent:{SYM}:{t}` | string | SET NX dedupe marker, 7 day TTL |
+  | `deskmind:v1:bar_close:log` | stream | every emitted event (capped ~20k) |
+  | `deskmind:v1:control:ws_block_until` | string | test hook used by `live disconnect` |
+  | channel `deskmind:bar_close` | pub/sub | `{symbol, close_time, close_time_iso, closed_timeframes, degraded, missing, schema_version, emitted_at}` |
+- Reliability: reconnect with backoff, rotate before Binance's 24h limit, stale stream -> health
+  degraded (kline 30s, mark 10s), clock drift vs Binance checked at start + hourly (warn > 1s).
+
+## Web app + read-only API
+- API: `src/deskmind/api/` (FastAPI), `uv run deskmind api` -> http://127.0.0.1:8010 (docs at
+  /docs). Binds 127.0.0.1 only. GET endpoints + one WebSocket, NO endpoint that places, modifies or
+  cancels orders (a test enforces GET-only). Never writes to Postgres, Redis or Parquet.
+  CORS/WebSocket origins: `WEB_ORIGINS` (default http://localhost:3010, http://127.0.0.1:3010).
+- Web: `apps/web/` (Next.js 16 App Router, TypeScript, Tailwind v4, Lightweight Charts 5),
+  `npm --prefix apps/web run dev` -> http://localhost:3010/chart. Next 16 differs from older
+  versions: read `apps/web/node_modules/next/dist/docs/` before changing it (`next lint` is gone,
+  use `npm run lint`; `searchParams` are async; `middleware` is now `proxy`).
+  Keep the TradingView attribution (logo + footer link) required by Lightweight Charts.
+- Auth is not implemented yet: add it in `apps/web/src/app/(dashboard)/layout.tsx` + `proxy.ts`.
+
+## Overlay contract (schema version 1) — what agents draw on the chart
+- Source of truth: `src/deskmind/api/overlays.py` (Pydantic). Mirrors: TypeScript
+  `apps/web/src/lib/overlays.ts`, JSON Schema `docs/overlay.schema.json` (a test fails if it drifts;
+  regenerate with `uv run python -m deskmind.api.overlays > docs/overlay.schema.json`).
+- Served by `GET /api/overlays?symbol&tf&start&end` as `{symbol, timeframe, schema_version, overlays}`
+  (empty until Step 4). Times = UNIX seconds UTC, prices = display floats.
+- Common fields: `id`, `type` (marker|line|zone), `kind` (semantic: swing_high, bos, choch,
+  trendline, order_block, ...), `source_agent`, `agent_version`, `schema_version`.
+  - marker: `time, position (above|below), shape (circle|square|arrowUp|arrowDown), color, text`
+  - line:   `start_time, start_price, end_time, end_price, style (solid|dashed|dotted), color, label`
+  - zone:   `start_time, end_time, top, bottom, color (#rrggbbaa for fill), label`
+- The chart toggles overlays per `source_agent`. Breaking change -> new schema_version on both sides.
+
+## Analyst agents (Step 4+)
+- Agents are deterministic Python in `src/deskmind/agents/` (no LLM). The rule spec is the source
+  of truth: `docs/agents/<agent>.md` (trend: `docs/agents/trend.md`). Code and spec change together.
+- NO LOOK-AHEAD: engines are incremental (`on_candle` with closed candles only, in time order).
+  Every item carries `pivot_time` (drawn) and `confirmed_at` (knowable); state as of T uses only
+  items with `confirmed_at <= T` (`models.as_of`). One code path for live, backfill and tests;
+  never add a vectorised shortcut. `deskmind agents check trend --all` must PASS after any change.
+- All parameters live in the versioned config (`agents/trend/config.py`); ANY parameter or rule
+  change bumps `AGENT_VERSION` and gets a line in the spec's version history. Stored items
+  (`agent_events`) and reports (`agent_reports`) are keyed by version; the API serves only the
+  current version, so re-run `deskmind agents backfill trend --all --start ...` after a bump.
+- Live: `deskmind agents run trend` (separate process; subscribes to `deskmind:bar_close`, reads
+  Redis buffers, writes `agent_events` + `agent_reports`, publishes `deskmind:agent_report`).
+- Overlays: `GET /api/overlays?symbol&tf&start&end&as_of` (as_of = replay), report:
+  `GET /api/agents/trend/report?symbol&as_of`. The chart's Replay mode uses both.
+
+## Commands
+`make up | down | logs | ps | migrate | test | lint | format | health`, and `uv run deskmind health`.
+Data (each takes `--symbol X` or `--all`): `uv run deskmind data download --all --start 2023-01-01`,
+`data update --all`, `data verify --all` (writes `data/reports/verify_{date}.md`), `data info --all`.
+Live: `uv run deskmind live run | status | tail | verify --hours N | disconnect --seconds N`.
+Agents: `uv run deskmind agents run trend | backfill trend --all --start YYYY-MM-DD | check trend --all`.
+API + web: `uv run deskmind api` (:8010) and `npm --prefix apps/web run dev` (:3010);
+web checks: `npm --prefix apps/web run lint` and `npm --prefix apps/web run typecheck`.
+Network tests: `uv run pytest -m network`.
+
+## Phase 1 roadmap (BTCUSDT, one strategy, testnet)
+1. **Foundation**: repo, Docker (Postgres/Timescale/pgvector :5435, Redis :6380), config, logging,
+   DB schema, health CLI, tests. *(done)*
+2. **Historical data**: klines, mark-price klines and funding for all `DATA_SYMBOLS` (BTC, ETH,
+   SOL, BNB, XRP) into Parquet/DuckDB, checksum-verified, reconciled against REST, with a
+   multi-symbol data-quality report. *(done)*
+3. **Live data**: combined WebSocket (klines 5m/15m/1h/2h + mark price) -> Redis buffers + Postgres,
+   OI polling, one bar_close event per closed timestamp, reconnect/backfill, health. *(done)*
+4. **Analyst agents**: trend & structure agent (swings, HH/HL/LH/LL, BOS/CHoCH, sweeps, trend
+   lines), no look-ahead, live + backfill, chart overlays and Replay mode. *(done)*
+5. **Strategy and backtest**: one strategy in `strategy_library`, an event-driven backtester with no
+   look-ahead, fees/slippage/funding, and an out-of-sample validation gate.
+6. **Risk Manager**: deterministic sizing, leverage caps, max loss per trade/day, and veto, with
+   exhaustive unit tests.
+7. **Head agent and approval**: LLM (via OpenRouter) synthesises reports into a proposal; the
+   Risk Manager checks it; the human approves or rejects via the CLI.
+8. **Testnet execution and learning loop**: order placement with exchange-side SL/TP and
+   client_order_id, reconciliation, trade journal, post-trade lessons (pgvector) that require human
+   approval.

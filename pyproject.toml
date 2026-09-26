@@ -1,0 +1,56 @@
+[project]
+name = "deskmind"
+version = "0.1.0"
+description = "Multi-agent advisory system for Binance USDT-M perpetual futures (testnet only)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "sqlalchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pgvector>=0.3",
+    "redis>=5.0",
+    "structlog>=24.1",
+    "typer>=0.12",
+    "duckdb>=1.0",
+    "pyarrow>=16.0",
+    "httpx>=0.27",
+    "websockets>=14",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.scripts]
+deskmind = "deskmind.cli:app"
+
+[dependency-groups]
+dev = [
+    "fakeredis>=2.26",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deskmind"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-m 'not network'"
+markers = ["network: hits real external services (run with: uv run pytest -m network)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]

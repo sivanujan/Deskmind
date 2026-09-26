@@ -1,0 +1,70 @@
+# Secrets & Environment
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+secrets/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Data (parquet, reports, meta, duckdb)
+data/parquet/*
+!data/parquet/.gitkeep
+data/reports/*
+!data/reports/.gitkeep
+data/meta/*
+!data/meta/.gitkeep
+data/*.duckdb
+data/*.duckdb.wal
+*.duckdb
+*.duckdb.wal
+
+# Node & Next.js
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+*.tsbuildinfo
+
+# Docker volumes & data
+deskmind_pgdata/
+deskmind_redisdata/
+*_data/
+*.sock
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

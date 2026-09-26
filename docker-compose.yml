@@ -1,0 +1,46 @@
+name: deskmind
+
+# Deskmind's own infrastructure. Host ports are deliberately non-default:
+#   Postgres/TimescaleDB -> 5435 (5432/5433/5434 are used by other projects on this machine)
+#   Redis               -> 6380 (6379 is used by another project)
+# Never point Deskmind at 127.0.0.1:5432.
+
+services:
+  postgres:
+    # timescaledb-ha ships pgvector alongside TimescaleDB.
+    image: timescale/timescaledb-ha:pg17
+    container_name: deskmind_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-deskmind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-deskmind}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5435}:5432"
+    volumes:
+      - deskmind_pgdata:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: deskmind_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
+    volumes:
+      - deskmind_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  deskmind_pgdata:
+  deskmind_redisdata:
