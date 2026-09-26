@@ -1,0 +1,416 @@
+{
+  "$defs": {
+    "LineOverlay": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_version": {
+          "description": "Version of that agent's logic",
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "color": {
+          "default": "#5b9cf6",
+          "examples": [
+            "#26a69a"
+          ],
+          "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "title": "Color",
+          "type": "string"
+        },
+        "confirmed_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "UNIX seconds when the item became knowable (replay shows <= T only)",
+          "title": "Confirmed At"
+        },
+        "end_price": {
+          "title": "End Price",
+          "type": "number"
+        },
+        "end_time": {
+          "title": "End Time",
+          "type": "integer"
+        },
+        "id": {
+          "description": "Stable id, unique per (source_agent, symbol, timeframe)",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Semantic kind, e.g. swing_high, bos, choch, trendline",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "meta": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Details shown on hover (rule, times, levels)",
+          "title": "Meta",
+          "type": "object"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "source_agent": {
+          "description": "Agent that produced it, e.g. trend",
+          "title": "Source Agent",
+          "type": "string"
+        },
+        "start_price": {
+          "title": "Start Price",
+          "type": "number"
+        },
+        "start_time": {
+          "title": "Start Time",
+          "type": "integer"
+        },
+        "style": {
+          "default": "solid",
+          "enum": [
+            "solid",
+            "dashed",
+            "dotted"
+          ],
+          "title": "Style",
+          "type": "string"
+        },
+        "type": {
+          "const": "line",
+          "default": "line",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "source_agent",
+        "agent_version",
+        "start_time",
+        "start_price",
+        "end_time",
+        "end_price"
+      ],
+      "title": "LineOverlay",
+      "type": "object"
+    },
+    "MarkerOverlay": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_version": {
+          "description": "Version of that agent's logic",
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "color": {
+          "default": "#f5c542",
+          "examples": [
+            "#26a69a"
+          ],
+          "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "title": "Color",
+          "type": "string"
+        },
+        "confirmed_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "UNIX seconds when the item became knowable (replay shows <= T only)",
+          "title": "Confirmed At"
+        },
+        "id": {
+          "description": "Stable id, unique per (source_agent, symbol, timeframe)",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Semantic kind, e.g. swing_high, bos, choch, trendline",
+          "title": "Kind",
+          "type": "string"
+        },
+        "meta": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Details shown on hover (rule, times, levels)",
+          "title": "Meta",
+          "type": "object"
+        },
+        "position": {
+          "enum": [
+            "above",
+            "below"
+          ],
+          "title": "Position",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "shape": {
+          "default": "circle",
+          "enum": [
+            "circle",
+            "square",
+            "arrowUp",
+            "arrowDown"
+          ],
+          "title": "Shape",
+          "type": "string"
+        },
+        "source_agent": {
+          "description": "Agent that produced it, e.g. trend",
+          "title": "Source Agent",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "time": {
+          "description": "Candle open time, UNIX seconds",
+          "title": "Time",
+          "type": "integer"
+        },
+        "type": {
+          "const": "marker",
+          "default": "marker",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "source_agent",
+        "agent_version",
+        "time",
+        "position"
+      ],
+      "title": "MarkerOverlay",
+      "type": "object"
+    },
+    "ZoneOverlay": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_version": {
+          "description": "Version of that agent's logic",
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "bottom": {
+          "title": "Bottom",
+          "type": "number"
+        },
+        "color": {
+          "default": "#5b9cf633",
+          "description": "Fill colour, #rrggbb or #rrggbbaa",
+          "examples": [
+            "#26a69a"
+          ],
+          "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "title": "Color",
+          "type": "string"
+        },
+        "confirmed_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "UNIX seconds when the item became knowable (replay shows <= T only)",
+          "title": "Confirmed At"
+        },
+        "end_time": {
+          "title": "End Time",
+          "type": "integer"
+        },
+        "id": {
+          "description": "Stable id, unique per (source_agent, symbol, timeframe)",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Semantic kind, e.g. swing_high, bos, choch, trendline",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "meta": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Details shown on hover (rule, times, levels)",
+          "title": "Meta",
+          "type": "object"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "source_agent": {
+          "description": "Agent that produced it, e.g. trend",
+          "title": "Source Agent",
+          "type": "string"
+        },
+        "start_time": {
+          "title": "Start Time",
+          "type": "integer"
+        },
+        "top": {
+          "title": "Top",
+          "type": "number"
+        },
+        "type": {
+          "const": "zone",
+          "default": "zone",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "source_agent",
+        "agent_version",
+        "start_time",
+        "end_time",
+        "top",
+        "bottom"
+      ],
+      "title": "ZoneOverlay",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "overlays": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "line": "#/$defs/LineOverlay",
+            "marker": "#/$defs/MarkerOverlay",
+            "zone": "#/$defs/ZoneOverlay"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/MarkerOverlay"
+          },
+          {
+            "$ref": "#/$defs/LineOverlay"
+          },
+          {
+            "$ref": "#/$defs/ZoneOverlay"
+          }
+        ]
+      },
+      "title": "Overlays",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "symbol": {
+      "title": "Symbol",
+      "type": "string"
+    },
+    "timeframe": {
+      "title": "Timeframe",
+      "type": "string"
+    }
+  },
+  "required": [
+    "symbol",
+    "timeframe"
+  ],
+  "title": "OverlayResponse",
+  "type": "object"
+}
