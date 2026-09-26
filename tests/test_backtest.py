@@ -737,8 +737,8 @@ def test_liquidation_scenario_mark_price_divergence(tmp_path: Path):
             "close_time": t3,
             "open": 99.0,
             "high": 100.0,
-            "low": 92.0,
-            "close": 93.0,
+            "low": 94.0,
+            "close": 95.0,
         },
     ]
     # Mark price plunges to 80.0 at Bar 2
@@ -781,7 +781,7 @@ def test_liquidation_scenario_mark_price_divergence(tmp_path: Path):
     )
     assert Decimal("90.0") < liq_p < Decimal("92.0")
 
-    # If evaluated against last price (low=92.0), it would NOT liquidate (or barely touch).
+    # If evaluated against last price (low=94.0), it would NOT liquidate or hit stop (92.5).
     # But against mark price (low=80.0), it definitely liquidates!
     assert is_liquidated("long", liq_p, mark_high=Decimal("100.0"), mark_low=Decimal("80.0"))
 
@@ -789,7 +789,7 @@ def test_liquidation_scenario_mark_price_divergence(tmp_path: Path):
         symbol="BTCUSDT",
         action="open_long",
         order_type="market",
-        stop_loss=Decimal("50.0"),
+        stop_loss=Decimal("92.5"),
         take_profit=Decimal("200.0"),
     )
     strategy = ScriptedStrategy({t1: [intent]})
@@ -1036,7 +1036,7 @@ def test_funding_applied_at_actual_timestamps_non_8h(tmp_path: Path):
         symbol="BTCUSDT",
         action="open_long",
         order_type="market",
-        stop_loss=Decimal("80.0"),
+        stop_loss=Decimal("90.0"),
         take_profit=Decimal("150.0"),
     )
     close_intent = Intent(symbol="BTCUSDT", action="close")
@@ -1068,10 +1068,374 @@ def test_funding_applied_at_actual_timestamps_non_8h(tmp_path: Path):
     assert len(res.trades) == 1
     tr = res.trades[0]
 
-    # Position size: risk = 10000 * 0.01 = 100. Stop distance = 100 - 80 = 20. Qty = 5.0
-    # Notional at bar 3 (open=100.0): 100.0 * 5.0 = 500.0.
-    # Event 1 (15m, rate=+0.005): Long pays 500 * 0.005 = 2.50
-    # Event 2 (1h, rate=-0.002): Long receives 500 * (-0.002) = -1.00 (i.e. +1.00 credit)
-    # Net funding paid = 2.50 - 1.00 = 1.50
-    assert tr.funding_paid == Decimal("1.50")
-    assert res.total_funding_paid == Decimal("1.50")
+    # Position size: risk = 10000 * 0.01 = 100. Stop distance = 100 - 90 = 10. Qty = 10.0
+    # Notional at bar 3 (open=100.0): 100.0 * 10.0 = 1000.0.
+    # Event 1 (15m, rate=+0.005): Long pays 1000 * 0.005 = 5.00
+    # Event 2 (1h, rate=-0.002): Long receives 1000 * (-0.002) = -2.00 (i.e. +2.00 credit)
+    # Net funding paid = 5.00 - 2.00 = 3.00
+    assert tr.funding_paid == Decimal("3.00")
+    assert res.total_funding_paid == Decimal("3.00")
+
+
+# ==============================================================================
+# 8. Regression: trade_159 & Invariant Enforcement
+# ==============================================================================
+
+
+def test_trade_159_regression_stop_crosses_before_liquidation(tmp_path: Path):
+    """Regression test reproducing trade_159:
+
+    A short position with stop-loss strictly inside liquidation price encounters a
+    massive green candle that spikes through both the stop-loss and liquidation price.
+    Because the bar opens below the stop-loss, price moving upward crosses the stop-loss
+    FIRST. The engine must trigger a stop-loss exit, NOT a liquidation.
+    """
+    t0 = 1704067200000
+    t1 = t0 + 300_000
+    t2 = t1 + 300_000
+    t3 = t2 + 300_000
+
+    klines = [
+        # Bar 0: Strategy emits open short intent at close (t1)
+        {
+            "open_time": t0,
+            "close_time": t1,
+            "open": 20.0,
+            "high": 20.2,
+            "low": 19.8,
+            "close": 20.0,
+        },
+        # Bar 1: Fill short at open = 20.0. Stop = 23.0.
+        # 5x leverage -> isolated margin = 20%, MMR = 1%. Liq price = 20 * 1.19 / 1.01 = ~23.564.
+        # Stop loss (23.00) is strictly inside liq price (23.564) by ~2.4%.
+        {
+            "open_time": t1,
+            "close_time": t2,
+            "open": 20.0,
+            "high": 20.5,
+            "low": 19.5,
+            "close": 20.1,
+        },
+        # Bar 2: Opens at 22.0. Spikes to 25.0 (crossing both stop 23.0 and liq 23.564).
+        {
+            "open_time": t2,
+            "close_time": t3,
+            "open": 22.0,
+            "high": 25.0,
+            "low": 21.9,
+            "close": 24.0,
+        },
+    ]
+    _setup_symbol_data(tmp_path, "SOLUSDT", klines)
+
+    intent = Intent(
+        symbol="SOLUSDT",
+        action="open_short",
+        order_type="market",
+        stop_loss=Decimal("23.00"),
+        take_profit=Decimal("14.00"),
+    )
+    strategy = ScriptedStrategy({t1: [intent]})
+
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["SOLUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+        initial_cash=Decimal("10000.0"),
+        maker_fee_rate=Decimal("0.0"),
+        taker_fee_rate=Decimal("0.0"),
+        slippage_bps=Decimal("0.0"),
+        slippage_atr_factor=Decimal("0.0"),
+        sizer=FixedFractionalSizer(risk_pct=Decimal("0.01")),
+        leverage=5,
+    )
+    res = engine.run()
+
+    assert len(res.trades) == 1
+    trade = res.trades[0]
+    # Invariant: Stop reached before liquidation -> MUST be stop_loss
+    assert trade.exit_reason == "stop_loss"
+    assert trade.exit_price == Decimal("23.00")
+    assert res.liquidations_count == 0
+
+
+def test_invariant_a_missing_stop_loss_raises_error(tmp_path: Path):
+    """Invariant (a): Every open position must have an active stop at all times."""
+    t0 = 1704067200000
+    t1 = t0 + 300_000
+    klines = [
+        {
+            "open_time": t0,
+            "close_time": t1,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t1,
+            "close_time": t1 + 300_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+    ]
+    _setup_symbol_data(tmp_path, "BTCUSDT", klines)
+
+    intent = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=None,  # Missing stop loss
+        take_profit=Decimal("150.0"),
+    )
+    strategy = ScriptedStrategy({t1: [intent]})
+
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+    )
+    with pytest.raises(RuntimeError, match=r"Invariant violation.*missing active stop loss"):
+        engine.run()
+
+
+def test_invariant_b_stop_outside_liquidation_raises_error(tmp_path: Path):
+    """Invariant (b): Stop must be strictly inside liquidation price with safety buffer."""
+    t0 = 1704067200000
+    t1 = t0 + 300_000
+    klines = [
+        {
+            "open_time": t0,
+            "close_time": t1,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t1,
+            "close_time": t1 + 300_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+    ]
+    _setup_symbol_data(tmp_path, "BTCUSDT", klines)
+
+    # 10x leverage long entered at 100 has liq price ~91.92.
+    # Setting stop at 90.0 is OUTSIDE liquidation price!
+    intent = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("90.0"),
+        take_profit=Decimal("150.0"),
+    )
+    strategy = ScriptedStrategy({t1: [intent]})
+
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+        leverage=10,
+    )
+    with pytest.raises(
+        RuntimeError, match=r"Invariant violation.*violates safety buffer from liquidation price"
+    ):
+        engine.run()
+
+
+def test_invariant_c_liquidation_records_isolated_margin_loss_and_fees(tmp_path: Path):
+    """Invariant (c): Liquidation exit must record loss = full isolated margin + fees."""
+    t0 = 1704067200000
+    t1 = t0 + 300_000
+    t2 = t1 + 300_000
+    t3 = t2 + 300_000
+
+    klines = [
+        {
+            "open_time": t0,
+            "close_time": t1,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t1,
+            "close_time": t2,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 95.0,
+            "close": 96.0,
+        },
+        # Bar 2: last price stays at 95, but mark price crashes to 80 (triggering liquidation)
+        {"open_time": t2, "close_time": t3, "open": 96.0, "high": 97.0, "low": 94.0, "close": 95.0},
+    ]
+    mark_klines = [
+        {
+            "open_time": t0,
+            "close_time": t1,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t1,
+            "close_time": t2,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {"open_time": t2, "close_time": t3, "open": 96.0, "high": 97.0, "low": 80.0, "close": 82.0},
+    ]
+    _setup_symbol_data(tmp_path, "BTCUSDT", klines, mark_5m=mark_klines)
+
+    # 10x long entered at 100.0, stop loss at 93.0 (> min safe stop ~92.38)
+    intent = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("93.0"),
+        take_profit=Decimal("150.0"),
+    )
+    strategy = ScriptedStrategy({t1: [intent]})
+
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+        initial_cash=Decimal("10000.0"),
+        maker_fee_rate=Decimal("0.0002"),
+        taker_fee_rate=Decimal("0.0005"),
+        sizer=FixedFractionalSizer(risk_pct=Decimal("0.02")),
+        leverage=10,
+    )
+    res = engine.run()
+
+    assert len(res.trades) == 1
+    tr = res.trades[0]
+    assert tr.exit_reason == "liquidation"
+    assert res.liquidations_count == 1
+
+    # Isolated margin = (entry_price * qty) / 10
+    isolated_margin = (tr.entry_price * tr.qty) / Decimal("10")
+    # Total loss must exceed or equal isolated margin + entry fees
+    assert tr.pnl < -isolated_margin
+    # R-multiple must reflect actual loss over initial risk (not a fake -1.0R)
+    expected_r = tr.pnl / tr.initial_risk
+    assert tr.r_multiple == pytest.approx(expected_r, rel=1e-4)
+
+
+def test_warmup_period_suppresses_signals(tmp_path: Path):
+    """Warm-up period feeds agents but suppresses trading signals until elapsed."""
+    t0 = 1704067200000  # 2024-01-01 00:00:00
+    # Day 5 (within 30d warmup)
+    t_day_5 = t0 + (5 * 86_400_000)
+    # Day 32 (after 30d warmup)
+    t_day_32 = t0 + (32 * 86_400_000)
+
+    klines = [
+        {
+            "open_time": t0,
+            "close_time": t0 + 300_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t_day_5,
+            "close_time": t_day_5 + 300_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t_day_5 + 300_000,
+            "close_time": t_day_5 + 600_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t_day_32,
+            "close_time": t_day_32 + 300_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        {
+            "open_time": t_day_32 + 300_000,
+            "close_time": t_day_32 + 600_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        },
+        # Exit bar for day 32 trade (hits TP at 150)
+        {
+            "open_time": t_day_32 + 600_000,
+            "close_time": t_day_32 + 900_000,
+            "open": 100.0,
+            "high": 160.0,
+            "low": 99.0,
+            "close": 150.0,
+        },
+    ]
+    _setup_symbol_data(tmp_path, "BTCUSDT", klines)
+
+    intent_warmup = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("150.0"),
+    )
+    intent_active = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("150.0"),
+    )
+
+    strategy = ScriptedStrategy(
+        {
+            t_day_5 + 300_000: [intent_warmup],
+            t_day_32 + 300_000: [intent_active],
+        }
+    )
+
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 2, 10, 0, 0, tzinfo=UTC),
+        warmup_days=30,
+        initial_cash=Decimal("10000.0"),
+    )
+    res = engine.run()
+
+    # The day 5 intent inside the 30-day warmup must have been ignored.
+    # The day 32 intent must have executed and completed.
+    assert len(res.trades) == 1
+    assert res.trades[0].entry_time_ms >= t0 + (30 * 86_400_000)
+    assert res.trades[0].exit_reason == "take_profit"

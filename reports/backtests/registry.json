@@ -291,5 +291,124 @@
     },
     "notes": "Verification pass: 1000 random seeds, cost breakdown, Parquet funding confirmation",
     "status": "completed"
+  },
+  {
+    "run_id": "trend_follow_v1_train_20260926_172032",
+    "created_at": "2026-09-26T17:25:54.898419+00:00",
+    "strategy_name": "trend_follow_v1",
+    "strategy_version": "1.0.0",
+    "params": {},
+    "agent_versions": {
+      "trend": "1.1.1"
+    },
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT"
+    ],
+    "split": "train",
+    "start_date": "2023-01-01",
+    "end_date": "2024-12-31",
+    "engine_version": "1.0.0",
+    "git_commit": "69a17afd3da0215090edcc24bd0c4349f27244a8",
+    "metrics": {
+      "initial_cash": 10000.0,
+      "final_equity": 6270.443556479388,
+      "net_return_usd": -3729.5564435206124,
+      "net_return_pct": -37.295564435206124,
+      "cagr_pct": -21.614969923894513,
+      "max_drawdown_usd": 5003.965420818534,
+      "max_drawdown_pct": 49.393102746503324,
+      "max_drawdown_duration_days": 699.3055555555555,
+      "sharpe_ratio": -1.1601716472187014,
+      "sortino_ratio": -1.5770313275397967,
+      "total_trades": 393,
+      "winning_trades": 131,
+      "losing_trades": 262,
+      "win_rate_pct": 33.33333333333333,
+      "profit_factor": 0.8163808742266084,
+      "avg_r": -0.1112096283845577,
+      "expectancy_r": -0.11120962838455761,
+      "expectancy_pct": -0.19561086946605877,
+      "avg_cost_per_trade_r": 0.11128692611154598,
+      "gross_expectancy_r": 7.729772698827851e-05,
+      "avg_holding_time_minutes": 2327.4325699745546,
+      "exposure_time_pct": 90.7421626984127,
+      "total_fees_paid": 2004.820778369,
+      "total_funding_paid": 64.3363751516125,
+      "total_slippage_paid": 1045.52991,
+      "gross_pnl_usd": -614.8693800000001,
+      "total_costs_usd": 3114.6870635206124,
+      "cost_as_pct_of_gross": 506.5607696256743,
+      "liquidations_count": 0,
+      "same_bar_sl_tp_count": 0,
+      "skipped_signals_count": 127,
+      "longest_losing_streak": 13,
+      "per_symbol": {
+        "BNBUSDT": {
+          "trades": 75,
+          "win_rate_pct": 36.0,
+          "net_pnl_usd": -685.978302422135,
+          "profit_factor": 0.8290284480927291,
+          "avg_r": -0.049988920676782664,
+          "fees_paid": 516.41133889,
+          "funding_paid": 3.378763532135
+        },
+        "BTCUSDT": {
+          "trades": 66,
+          "win_rate_pct": 30.303030303030305,
+          "net_pnl_usd": -1246.901192083641,
+          "profit_factor": 0.6553944047316786,
+          "avg_r": -0.22547590341740364,
+          "fees_paid": 404.88224207,
+          "funding_paid": 11.198450013641
+        },
+        "ETHUSDT": {
+          "trades": 79,
+          "win_rate_pct": 25.31645569620253,
+          "net_pnl_usd": -1909.2595291393027,
+          "profit_factor": 0.5776118090357646,
+          "avg_r": -0.3511241879595984,
+          "fees_paid": 395.809554855,
+          "funding_paid": 0.9030742843028
+        },
+        "SOLUSDT": {
+          "trades": 88,
+          "win_rate_pct": 39.77272727272727,
+          "net_pnl_usd": 290.0344778371814,
+          "profit_factor": 1.069635073979527,
+          "avg_r": 0.10558939412175478,
+          "fees_paid": 298.463135726,
+          "funding_paid": 52.3111864368186
+        },
+        "XRPUSDT": {
+          "trades": 85,
+          "win_rate_pct": 34.11764705882353,
+          "net_pnl_usd": -241.5182249481931,
+          "profit_factor": 0.9444080894010264,
+          "avg_r": -0.07797483662035279,
+          "fees_paid": 388.840320888,
+          "funding_paid": -1.2413859398069
+        }
+      }
+    },
+    "random_baseline": {
+      "num_seeds": 1000,
+      "our_net_return_usd": -3729.5564435206124,
+      "percentile": 6.5,
+      "beat_count": 65,
+      "median_random_return_usd": -1760.9290389848056,
+      "mean_random_return_usd": -1756.228492997731,
+      "min_random_return_usd": -5428.11188079256,
+      "max_random_return_usd": 2874.5877916158024,
+      "verdict": "does_not_beat_random",
+      "ci_lower": 5.13237952605844,
+      "ci_upper": 8.200547113703813,
+      "confidence_note": "With N=1000 random seeds, the 95% Wilson confidence interval for the true percentile is [5.1%, 8.2%]."
+    },
+    "notes": "Fix trade_159 liquidation precedence, safety invariants, 30d warmup",
+    "status": "completed"
   }
 ]

@@ -175,6 +175,8 @@ class BacktestEngine:
         slippage_atr_factor: Decimal = DEFAULT_SLIPPAGE_ATR_FACTOR,
         sizer: PositionSizer | None = None,
         leverage: int = 5,
+        warmup_days: int = 0,
+        liquidation_safety_buffer_pct: Decimal = Decimal("0.005"),
     ) -> None:
         self.strategy = strategy
         self.symbols = list(symbols)
@@ -189,6 +191,10 @@ class BacktestEngine:
         self.slippage_atr_factor = slippage_atr_factor
         self.sizer = sizer or FixedFractionalSizer(max_leverage=leverage)
         self.leverage = leverage
+        self.warmup_days = warmup_days
+        self.liquidation_safety_buffer_pct = liquidation_safety_buffer_pct
+        warmup_ms = warmup_days * 86_400 * 1000
+        self.trading_start_ms = int(start.timestamp() * 1000) + warmup_ms
 
         self.filters: dict[str, SymbolFilters] = {
             s: load_symbol_filters(data_dir, s) for s in self.symbols
@@ -415,6 +421,13 @@ class BacktestEngine:
                                 is_maker = True
 
                         if fill_price is not None:
+                            # INVARIANT (a): Every open position must have an active stop
+                            if p_order.stop_loss is None or p_order.stop_loss <= Decimal("0"):
+                                raise RuntimeError(
+                                    f"Invariant violation: Order for {sym} missing active stop "
+                                    f"loss ({p_order.stop_loss})"
+                                )
+
                             fee_rate = self.maker_fee_rate if is_maker else self.taker_fee_rate
                             fee = fill_price * p_order.qty * fee_rate
                             self.total_fees_paid += fee
@@ -429,6 +442,25 @@ class BacktestEngine:
                                 leverage=self.leverage,
                                 qty=p_order.qty,
                             )
+
+                            # INVARIANT (b): Stop strictly inside liquidation with safety buffer
+                            buf = self.liquidation_safety_buffer_pct
+                            if side == "long":
+                                min_stop = liq_price * (Decimal("1") + buf)
+                                if p_order.stop_loss <= min_stop:
+                                    raise RuntimeError(
+                                        f"Invariant violation: Long stop loss {p_order.stop_loss} "
+                                        f"is outside or violates safety buffer from liquidation "
+                                        f"price {liq_price} (min safe stop: {min_stop})"
+                                    )
+                            else:
+                                max_stop = liq_price * (Decimal("1") - buf)
+                                if p_order.stop_loss >= max_stop:
+                                    raise RuntimeError(
+                                        f"Invariant violation: Short stop loss {p_order.stop_loss} "
+                                        f"is outside or violates safety buffer from liquidation "
+                                        f"price {liq_price} (max safe stop: {max_stop})"
+                                    )
 
                             self.active_position = ActivePosition(
                                 symbol=sym,
@@ -456,10 +488,21 @@ class BacktestEngine:
             if self.active_position is not None:
                 pos = self.active_position
                 sym = pos.symbol
+
+                # INVARIANT (a): Active position must have a valid stop loss at all times
+                if pos.stop_loss is None or pos.stop_loss <= Decimal("0"):
+                    raise RuntimeError(
+                        f"Invariant violation: Active position for {sym} missing valid stop "
+                        f"loss ({pos.stop_loss})"
+                    )
+
                 bar_dict = klines_5m.get(sym, {}).get(t_open)
                 mark_dict = mark_5m.get(sym, {}).get(t_open)
 
                 if bar_dict is not None:
+                    # INVARIANT (d): Stops are checked on every 5m bar of the position's OWN symbol
+                    assert sym == pos.symbol
+
                     b_open = Decimal(str(bar_dict["open"]))
                     b_high = Decimal(str(bar_dict["high"]))
                     b_low = Decimal(str(bar_dict["low"]))
@@ -477,55 +520,29 @@ class BacktestEngine:
                         pos.funding_paid += payment
                         self.total_funding_paid += payment
 
-                    # 2. Liquidation check against MARK price kline
-                    mark_h = Decimal(str(mark_dict["high"])) if mark_dict else b_high
-                    mark_lo = Decimal(str(mark_dict["low"])) if mark_dict else b_low
+                    # 2. Check for Gap Liquidation at open (bar opened beyond liquidation price)
+                    is_gap_liq = (pos.side == "long" and b_open <= pos.liquidation_price) or (
+                        pos.side == "short" and b_open >= pos.liquidation_price
+                    )
 
-                    if is_liquidated(pos.side, pos.liquidation_price, mark_h, mark_lo):
-                        # Position liquidated! Full margin lost + liquidation fee
-                        self.liquidations_count += 1
-                        loss = (pos.entry_price * pos.qty) / Decimal(str(self.leverage))
-                        liq_fee = (pos.entry_price * pos.qty) * filters.liquidation_fee
-                        self.cash -= loss + liq_fee
-                        self.total_fees_paid += liq_fee
+                    atr_val = (
+                        self.agents[sym].engines["15m"].atr or self.agents[sym].engines["5m"].atr
+                    )
+                    slip_pct = self._calc_slippage_pct(b_open, atr_val)
 
-                        self.trades.append(
-                            Trade(
-                                id=f"trade_{len(self.trades) + 1}",
-                                symbol=pos.symbol,
-                                side=pos.side,
-                                entry_time_ms=pos.entry_time_ms,
-                                entry_price=pos.entry_price,
-                                exit_time_ms=t_open,
-                                exit_price=pos.liquidation_price,
-                                qty=pos.qty,
-                                pnl=-(loss + liq_fee),
-                                pnl_pct=Decimal("-100.0"),
-                                r_multiple=Decimal("-1.0"),
-                                exit_reason="liquidation",
-                                fees_paid=pos.fees_paid + liq_fee,
-                                funding_paid=pos.funding_paid,
-                                slippage_paid=pos.slippage_paid,
-                                holding_time_minutes=max(1, (t_open - pos.entry_time_ms) // 60_000),
-                                spanned_gap=pos.spanned_gap,
-                                initial_risk=pos.initial_risk,
-                            )
-                        )
-                        self.active_position = None
+                    exit_price: Decimal | None = None
+                    exit_reason: (
+                        Literal["take_profit", "stop_loss", "sl_tp_same_bar", "liquidation"] | None
+                    ) = None
+                    is_maker = False
 
+                    if is_gap_liq:
+                        exit_price = b_open
+                        exit_reason = "liquidation"
                     else:
                         # 3. Stop-Loss & Take-Profit check on last price kline
-                        atr_val = (
-                            self.agents[sym].engines["15m"].atr
-                            or self.agents[sym].engines["5m"].atr
-                        )
-                        slip_pct = self._calc_slippage_pct(b_open, atr_val)
-                        exit_price: Decimal | None = None
-                        exit_reason: (
-                            Literal["take_profit", "stop_loss", "sl_tp_same_bar"] | None
-                        ) = None
-                        is_maker = False
-
+                        # By Invariant (b), pos.stop_loss is strictly inside pos.liquidation_price.
+                        # Thus, as price moves from b_open toward adverse extreme, SL hits FIRST.
                         if pos.side == "long":
                             # Gap check: opened below stop
                             if b_open <= pos.stop_loss:
@@ -567,7 +584,59 @@ class BacktestEngine:
                                 exit_reason = "take_profit"
                                 is_maker = True
 
-                        if exit_price is not None and exit_reason is not None:
+                        # 4. If neither SL nor TP triggered, check for mark price liq divergence
+                        if exit_reason is None:
+                            mark_h = Decimal(str(mark_dict["high"])) if mark_dict else b_high
+                            mark_lo = Decimal(str(mark_dict["low"])) if mark_dict else b_low
+                            if is_liquidated(pos.side, pos.liquidation_price, mark_h, mark_lo):
+                                exit_price = pos.liquidation_price
+                                exit_reason = "liquidation"
+
+                    if exit_price is not None and exit_reason is not None:
+                        if exit_reason == "liquidation":
+                            # INVARIANT (c): liquidation exit records full isolated margin + fees
+                            self.liquidations_count += 1
+                            isolated_margin = (pos.entry_price * pos.qty) / Decimal(
+                                str(self.leverage)
+                            )
+                            liq_fee = (pos.entry_price * pos.qty) * filters.liquidation_fee
+                            total_liq_loss = isolated_margin + liq_fee
+
+                            self.cash -= total_liq_loss
+                            self.total_fees_paid += liq_fee
+
+                            r_mult = (
+                                -total_liq_loss / pos.initial_risk
+                                if pos.initial_risk > Decimal("0")
+                                else Decimal("-1.0")
+                            )
+
+                            self.trades.append(
+                                Trade(
+                                    id=f"trade_{len(self.trades) + 1}",
+                                    symbol=pos.symbol,
+                                    side=pos.side,
+                                    entry_time_ms=pos.entry_time_ms,
+                                    entry_price=pos.entry_price,
+                                    exit_time_ms=t_open,
+                                    exit_price=exit_price or pos.liquidation_price,
+                                    qty=pos.qty,
+                                    pnl=-total_liq_loss,
+                                    pnl_pct=Decimal("-100.0"),
+                                    r_multiple=r_mult,
+                                    exit_reason="liquidation",
+                                    fees_paid=pos.fees_paid + liq_fee,
+                                    funding_paid=pos.funding_paid,
+                                    slippage_paid=pos.slippage_paid,
+                                    holding_time_minutes=max(
+                                        1, (t_open - pos.entry_time_ms) // 60_000
+                                    ),
+                                    spanned_gap=pos.spanned_gap,
+                                    initial_risk=pos.initial_risk,
+                                )
+                            )
+                            self.active_position = None
+                        else:
                             # Track exit slippage on market/stop fills
                             if exit_reason in ("stop_loss", "sl_tp_same_bar"):
                                 ref_stop = (
@@ -725,13 +794,19 @@ class BacktestEngine:
             # ----------------------------------------------------
             # STEP D: Strategy Decision & Signal Ranking
             # ----------------------------------------------------
-            if contexts:
+            # Only generate strategy intents if past the warm-up period
+            if contexts and t_close >= self.trading_start_ms:
                 raw_intents = self.strategy.on_bar(contexts)
 
                 if self.active_position is not None:
                     for it in raw_intents:
                         if it.symbol == self.active_position.symbol:
-                            if it.action == "move_stop" and it.stop_loss is not None:
+                            if it.action == "move_stop":
+                                if it.stop_loss is None or it.stop_loss <= Decimal("0"):
+                                    raise RuntimeError(
+                                        f"Invariant violation: Cannot move stop to invalid "
+                                        f"value ({it.stop_loss})"
+                                    )
                                 self.active_position.stop_loss = it.stop_loss
                             elif it.action == "close":
                                 self.pending_order = PendingOrder(
@@ -761,6 +836,13 @@ class BacktestEngine:
                         )
 
                         chosen = ranked_intents[0]
+                        # INVARIANT (a): Every open position/order must have an active stop
+                        if chosen.stop_loss is None or chosen.stop_loss <= Decimal("0"):
+                            raise RuntimeError(
+                                f"Invariant violation: Strategy emitted {chosen.action} on "
+                                f"{chosen.symbol} missing active stop loss ({chosen.stop_loss})"
+                            )
+
                         # Log skipped signals
                         if len(ranked_intents) > 1:
                             self.skipped_signals_count += len(ranked_intents) - 1
@@ -831,7 +913,7 @@ class BacktestEngine:
             total_funding_paid=self.total_funding_paid,
             total_fees_paid=self.total_fees_paid,
             total_slippage_paid=self.total_slippage_paid,
-            start_time_ms=all_timestamps[0],
+            start_time_ms=max(all_timestamps[0], self.trading_start_ms),
             end_time_ms=all_timestamps[-1] + step_5m,
             initial_cash=self.initial_cash,
             final_equity=final_eq,

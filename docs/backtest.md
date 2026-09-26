@@ -80,6 +80,19 @@ Its sole purpose is **to tell the truth, not to make results look good**. It mak
   - Tie-breaker: Alphabetical symbol order.
 - The highest-ranked signal is selected for pending execution; all other signals are logged as skipped.
 
+### 2.12 Warm-up Period
+- A configurable warm-up period (default: **30 days**, configurable via `--warmup-days`) during which incremental agents are fully fed historical candles across all timeframes to stabilize indicator state (EMAs, ATRs, swing pivots).
+- No trading signals are generated or executed during this period (`t_close < trading_start_ms`), ensuring strategies never trade on cold or uninitialized agent state.
+
+### 2.13 Execution Invariants & Safety Enforcement
+To guarantee safety and simulation integrity, the engine strictly enforces four loud invariants:
+1. **Invariant (a) — Mandatory Active Stop**: Every open position and entry intent must maintain an active, positive stop-loss at all times. Any order without a valid stop fails the run immediately with a `RuntimeError`.
+2. **Invariant (b) — Stop Strictly Inside Liquidation**: For every position, the stop-loss must be strictly inside the liquidation price with a safety buffer (default: 0.5%):
+   - Longs: $\text{Stop} \ge \text{Liquidation Price} \times (1 + \text{buffer})$
+   - Shorts: $\text{Stop} \le \text{Liquidation Price} \times (1 - \text{buffer})$
+3. **Invariant (c) — True Liquidation Loss Accounting**: A liquidation exit records the exact loss equal to the full isolated margin plus exchange liquidation clearance fees. The R-multiple is calculated based on the actual loss relative to initial risk.
+4. **Invariant (d) — Dedicated Own-Symbol Evaluation**: Stop-loss and liquidation triggers are evaluated on every single 5m bar of the position's own symbol, preventing any cross-symbol price bleeding. Furthermore, price-movement precedence guarantees that if a bar crosses both the stop and liquidation price, the stop-loss order is filled first.
+
 ---
 
 ## 3. Data Splits & Locked Test Split
@@ -131,6 +144,8 @@ Recorded fields:
 - **Sharpe Ratio** (annualized, 0% risk-free rate) and **Sortino Ratio**.
 - **Win Rate (%)**, **Profit Factor**, and **Average R**.
 - **Expectancy (% and R-multiple)**.
+- **Gross Expectancy (R-multiple before fees, slippage, and funding)**.
+- **Average Cost per Trade (R-multiple friction drag)**.
 - **Exposure Time (%)** and **Average Holding Period**.
 - **Total Fees**, **Total Funding Paid**, and **Liquidations Count**.
 - **Same-bar SL+TP count** and **Longest Losing Streak**.

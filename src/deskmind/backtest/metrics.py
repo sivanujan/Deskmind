@@ -35,6 +35,8 @@ class PerformanceMetrics:
     avg_r: float
     expectancy_r: float
     expectancy_pct: float
+    avg_cost_per_trade_r: float
+    gross_expectancy_r: float
     avg_holding_time_minutes: float
     exposure_time_pct: float
     total_fees_paid: float
@@ -204,6 +206,19 @@ def calculate_metrics(result: BacktestResult) -> PerformanceMetrics:
         (total_costs_usd / abs(gross_pnl_usd)) * 100.0 if abs(gross_pnl_usd) > 0 else 0.0
     )
 
+    # Average cost per trade in R and Gross expectancy in R
+    cost_r_list: list[float] = []
+    gross_r_list: list[float] = []
+    for t in result.trades:
+        r_init = float(t.initial_risk)
+        cost_usd = float(t.fees_paid + t.funding_paid + t.slippage_paid)
+        cost_r = (cost_usd / r_init) if r_init > 0 else 0.0
+        cost_r_list.append(cost_r)
+        gross_r_list.append(float(t.r_multiple) + cost_r)
+
+    avg_cost_per_trade_r = (sum(cost_r_list) / len(cost_r_list)) if cost_r_list else 0.0
+    gross_expectancy_r = (sum(gross_r_list) / len(gross_r_list)) if gross_r_list else 0.0
+
     return PerformanceMetrics(
         initial_cash=initial_cash_f,
         final_equity=final_equity_f,
@@ -223,6 +238,8 @@ def calculate_metrics(result: BacktestResult) -> PerformanceMetrics:
         avg_r=avg_r,
         expectancy_r=expectancy_r,
         expectancy_pct=expectancy_pct,
+        avg_cost_per_trade_r=avg_cost_per_trade_r,
+        gross_expectancy_r=gross_expectancy_r,
         avg_holding_time_minutes=avg_holding_time,
         exposure_time_pct=exposure_time_pct,
         total_fees_paid=float(result.total_fees_paid),

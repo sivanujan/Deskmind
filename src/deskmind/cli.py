@@ -421,6 +421,9 @@ def backtest_run_cmd(
     random_seeds: int = typer.Option(
         1000, "--random-seeds", help="Number of random-entry baseline seeds"
     ),
+    warmup_days: int = typer.Option(
+        30, "--warmup-days", help="Warm-up days for indicator/trend agent initialization"
+    ),
     notes: str | None = typer.Option(None, "--notes", help="Audit notes for this run"),
 ) -> None:
     """Run an event-driven backtest with realistic execution and incremental agents."""
@@ -444,6 +447,7 @@ def backtest_run_cmd(
                 unlock_test=unlock_test,
                 confirm_test_unlock=confirm_test_unlock,
                 random_seeds=random_seeds,
+                warmup_days=warmup_days,
                 notes=notes,
             )
         )

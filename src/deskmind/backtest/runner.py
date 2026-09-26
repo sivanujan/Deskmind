@@ -185,6 +185,7 @@ async def run_backtest(
     confirm_test_unlock: str | None = None,
     notes: str | None = None,
     random_seeds: int = 1000,
+    warmup_days: int = 30,
     data_dir: Path | None = None,
     reports_dir: Path = Path("reports/backtests"),
 ) -> dict[str, Any]:
@@ -213,7 +214,8 @@ async def run_backtest(
 
     # Initialize strategy
     strat_cls = STRATEGY_REGISTRY[strategy_name]
-    strategy = strat_cls(strategy_params or {})
+    params = strategy_params or {}
+    strategy = strat_cls(params)
 
     # Run ID
     timestamp_str = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
@@ -227,6 +229,7 @@ async def run_backtest(
         start=start_dt,
         end=end_dt,
         initial_cash=initial_cash,
+        warmup_days=warmup_days,
     )
     result = engine.run()
 

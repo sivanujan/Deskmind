@@ -123,6 +123,8 @@ def generate_reports(
         ),
         f"| Average R | {metrics.avg_r:+.2f}R |",
         f"| Expectancy | {metrics.expectancy_r:+.2f}R ({metrics.expectancy_pct:+.2f}%) |",
+        f"| Gross Expectancy | {metrics.gross_expectancy_r:+.2f}R |",
+        f"| Avg Cost per Trade | {metrics.avg_cost_per_trade_r:.2f}R |",
         f"| Avg Holding Time | {h_time:.1f} min ({h_time / 60:.1f}h) |",
         f"| Market Exposure | {metrics.exposure_time_pct:.2f}% of time |",
         f"| Total Fees Paid | ${metrics.total_fees_paid:,.2f} |",
@@ -158,6 +160,14 @@ def generate_reports(
         (
             f"| **Cost as % of Gross PnL** | **{metrics.cost_as_pct_of_gross:.1f}%** | "
             "Total friction relative to gross magnitude |"
+        ),
+        (
+            f"| **Average Cost per Trade** | **{metrics.avg_cost_per_trade_r:.2f}R** | "
+            "Average friction drag per trade in R units |"
+        ),
+        (
+            f"| **Gross Expectancy** | **{metrics.gross_expectancy_r:+.2f}R** | "
+            "Expectancy per trade before friction costs |"
         ),
         "",
         "## 3. Benchmark & Baseline Comparison",
@@ -511,8 +521,16 @@ def _write_html_report(
         <td><b style="color: {net_color}">${metrics.net_return_usd:+,.2f}</b></td>
       </tr>
       <tr>
-        <td><b>Cost as % of Gross PnL</b></td>
+        <td>Cost as % of Gross PnL</td>
         <td><b style="color: #f59e0b">{metrics.cost_as_pct_of_gross:.1f}%</b></td>
+      </tr>
+      <tr>
+        <td>Average Cost per Trade (R)</td>
+        <td><b style="color: #ef4444">{metrics.avg_cost_per_trade_r:.2f}R</b></td>
+      </tr>
+      <tr>
+        <td>Gross Expectancy (R)</td>
+        <td><b style="color: {gross_color}">{metrics.gross_expectancy_r:+.2f}R</b></td>
       </tr>
     </table>
   </div>
