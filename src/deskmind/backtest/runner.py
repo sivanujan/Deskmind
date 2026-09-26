@@ -20,7 +20,7 @@ from typing import Any
 
 from deskmind.agents.trend.config import AGENT_VERSION
 from deskmind.backtest.baselines import compute_buy_and_hold, run_random_baseline
-from deskmind.backtest.engine import BacktestEngine, Trade
+from deskmind.backtest.engine import BacktestEngine, RejectedIntent, Trade
 from deskmind.backtest.metrics import calculate_metrics
 from deskmind.backtest.registry import (
     get_git_commit,
@@ -46,7 +46,10 @@ STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
 
 
 def build_trade_overlays(
-    run_id: str, trades: list[Trade], strategy_version: str
+    run_id: str,
+    trades: list[Trade],
+    strategy_version: str,
+    rejected_intents: list[RejectedIntent] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert backtest trades to overlay items for the chart viewer."""
     overlays: list[dict[str, Any]] = []
@@ -165,6 +168,45 @@ def build_trade_overlays(
             }
         )
 
+    # 5. Rejected intent markers (grey circle markers with reason codes in hover metadata)
+    for idx, rej in enumerate(rejected_intents or []):
+        r_time = rej.timestamp_ms // 1000
+        dec = rej.decision or {}
+        failed_reasons = [r for r in dec.get("reasons", []) if not r.get("passed", True)]
+        if failed_reasons:
+            reasons_summary = "; ".join(f"[{r['code']}] {r['message']}" for r in failed_reasons)
+            reason_codes = ", ".join(r["code"] for r in failed_reasons)
+            first_code = failed_reasons[0]["code"]
+        else:
+            reasons_summary = "; ".join(rej.reasons) if rej.reasons else "REJECTED"
+            reason_codes = ", ".join(rej.reasons) if rej.reasons else "REJECTED"
+            first_code = rej.reasons[0] if rej.reasons else "REJECTED"
+
+        side = "long" if "long" in rej.action else "short" if "short" in rej.action else rej.action
+        overlays.append(
+            {
+                "id": f"rejected_{idx}_{rej.symbol}_{r_time}",
+                "type": "marker",
+                "kind": "intent_rejected",
+                "source_agent": f"risk_manager:{run_id}",
+                "agent_version": strategy_version,
+                "schema_version": 1,
+                "time": r_time,
+                "position": "above" if side == "short" else "below",
+                "shape": "circle",
+                "color": "#9ca3af",
+                "text": f"REJECTED: {first_code}",
+                "confirmed_at": r_time,
+                "meta": {
+                    "symbol": rej.symbol,
+                    "side": side,
+                    "price": float(rej.price),
+                    "reason_codes": reason_codes,
+                    "reasons": reasons_summary,
+                },
+            }
+        )
+
     return overlays
 
 
@@ -255,7 +297,9 @@ async def run_backtest(
     )
 
     # Generate & save chart overlays
-    overlays = build_trade_overlays(run_id, result.trades, strategy.version)
+    overlays = build_trade_overlays(
+        run_id, result.trades, strategy.version, result.rejected_intents
+    )
     _save_overlays(run_output_dir / "overlays.json", overlays)
 
     # Register run record

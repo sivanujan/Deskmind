@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import date
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from pathlib import Path
 
 import typer
 
@@ -25,6 +27,10 @@ runs_app = typer.Typer(
     help="Backtest run registry and multiple-testing accounting", no_args_is_help=True
 )
 backtest_app.add_typer(runs_app, name="runs")
+risk_app = typer.Typer(
+    help="Deterministic risk manager, position sizing, and circuit breakers", no_args_is_help=True
+)
+app.add_typer(risk_app, name="risk")
 
 SymbolOpt = typer.Option(None, "--symbol", "-s", help="One symbol from DATA_SYMBOLS")
 AllOpt = typer.Option(False, "--all", help="Every symbol in DATA_SYMBOLS")
@@ -549,6 +555,222 @@ def runs_show_cmd(run_id: str = typer.Argument(..., help="Run ID to show")) -> N
         pct = rb.get("percentile", 0)
         verd = rb.get("verdict", "").upper()
         typer.echo(f"Random-Entry Baseline: {pct:.1f}th percentile ({verd})")
+
+
+# ---------------------------------------------------------------- risk
+
+
+@risk_app.command("check")
+def risk_check_cmd(
+    symbol: str = typer.Option(..., "--symbol", "-s", help="Symbol (e.g. BTCUSDT)"),
+    side: str = typer.Option(..., "--side", help="Order side: long or short"),
+    entry: float = typer.Option(..., "--entry", "-e", help="Expected entry price"),
+    stop: float = typer.Option(..., "--stop", help="Stop loss price"),
+    target: float | None = typer.Option(None, "--target", "-t", help="Take profit target price"),
+    equity: float = typer.Option(10000.0, "--equity", help="Account equity in USD"),
+    available_balance: float | None = typer.Option(
+        None, "--available-balance", help="Available balance in USD (defaults to equity)"
+    ),
+    atr: float | None = typer.Option(
+        None, "--atr", help="ATR for entry timeframe (defaults to 1.5% of entry)"
+    ),
+    funding_rate: float = typer.Option(
+        0.0001, "--funding-rate", help="Current 8h funding rate (e.g. 0.0001 = 0.01%)"
+    ),
+    next_funding_minutes: int = typer.Option(
+        120, "--next-funding-minutes", help="Minutes until next funding event"
+    ),
+    halt_state: str = typer.Option("normal", "--halt-state", help="Account breaker state"),
+    peak_equity: float | None = typer.Option(None, "--peak-equity", help="Peak historical equity"),
+    open_positions: list[str] = typer.Option(
+        None, "--open-position", help="Symbols of currently open positions"
+    ),
+) -> None:
+    """Evaluate a trade intent through the deterministic Risk Manager."""
+    from deskmind.backtest.filters import load_symbol_filters
+    from deskmind.risk import (
+        AccountState,
+        IntentPayload,
+        MarketState,
+        RiskConfig,
+        evaluate,
+    )
+
+    settings = get_settings()
+    sym = symbol.strip().upper()
+    s_side = side.strip().lower()
+
+    if s_side not in ("long", "short"):
+        typer.secho("Error: --side must be 'long' or 'short'", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    entry_d = Decimal(str(entry))
+    stop_d = Decimal(str(stop))
+    target_d = Decimal(str(target)) if target is not None else None
+    equity_d = Decimal(str(equity))
+    avail_d = Decimal(str(available_balance)) if available_balance is not None else equity_d
+    peak_d = Decimal(str(peak_equity)) if peak_equity is not None else equity_d
+    atr_val = Decimal(str(atr)) if atr is not None else (entry_d * Decimal("0.015"))
+    # Load exchange filters
+    sym_filters = load_symbol_filters(settings.data_dir, sym)
+
+    intent = IntentPayload(
+        symbol=sym,
+        side=s_side,  # type: ignore[arg-type]
+        expected_entry=entry_d,
+        stop_loss=stop_d,
+        take_profit=target_d or Decimal("0"),
+        strategy_name="cli_manual",
+        strategy_version="1.0",
+    )
+    account = AccountState(
+        equity=equity_d,
+        available_balance=avail_d,
+        open_positions=open_positions or [],
+        today_realized_pnl=Decimal("0"),
+        peak_equity=peak_d,
+        consecutive_losses=0,
+        halt_state=halt_state,
+        start_of_day_equity=equity_d,
+    )
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    market = MarketState(
+        mark_price=entry_d,
+        atr_by_tf={"15m": atr_val, "5m": atr_val, "1h": atr_val},
+        next_funding_time_ms=now_ms + (next_funding_minutes * 60 * 1000),
+        current_funding_rate=Decimal(str(funding_rate)),
+        filters=sym_filters,
+        is_live=False,
+    )
+    config = RiskConfig()
+
+    decision = evaluate(intent, account, market, config)
+
+    # Display results
+    is_approved = decision.status == "approved"
+    header_color = typer.colors.GREEN if is_approved else typer.colors.RED
+
+    typer.echo("=" * 80)
+    typer.secho(
+        f"RISK DECISION: {decision.status.upper()}",
+        fg=header_color,
+        bold=True,
+    )
+    typer.echo("=" * 80)
+    typer.echo(
+        f"Intent:       {sym} {s_side.upper()} @ {entry_d:,.4f} | Stop: {stop_d:,.4f} | "
+        f"Target: {f'{target_d:,.4f}' if target_d else 'None'}"
+    )
+    typer.echo(
+        f"Account:      Equity: ${equity_d:,.2f} | Avail: ${avail_d:,.2f} | Halt State: {halt_state}"
+    )
+    typer.echo(
+        f"Market:       Mark: {entry_d:,.4f} | ATR: {atr_val:,.4f} | "
+        f"Funding: {funding_rate * 100:+.4f}% in {next_funding_minutes}m"
+    )
+    typer.echo("-" * 80)
+    typer.echo(f"Position Qty:       {decision.qty} {sym}")
+    typer.echo(f"Leverage:           {decision.leverage}x (Isolated)")
+    typer.echo(
+        f"Notional:           ${decision.notional:,.2f} "
+        f"({(decision.notional / equity_d * 100):.1f}% of equity)"
+        if equity_d > 0
+        else f"Notional:           ${decision.notional:,.2f}"
+    )
+    typer.echo(f"Isolated Margin:    ${decision.isolated_margin:,.2f}")
+    typer.echo(f"Liquidation Price:  ${decision.liquidation_price:,.4f}")
+    typer.echo(
+        f"Stop Distance:      ${decision.stop_distance_usd:,.4f} "
+        f"({decision.stop_distance_pct * 100:.2f}% | {decision.stop_distance_atr:.2f}x ATR)"
+    )
+    typer.echo(f"Estimated Costs:    {decision.expected_costs_r:.4f} R")
+    typer.echo(f"Net Reward:Risk:    {decision.net_reward_risk:.2f} R (>= 1.50 required)")
+    typer.echo(
+        f"Allowed Risk:       ${decision.allowed_risk_usd:,.2f} | Actual Risk: ${decision.actual_risk_usd:,.2f}"
+    )
+    typer.echo("-" * 80)
+    typer.echo("Evaluated Checks:")
+    for r in decision.reasons:
+        tag = "[PASS]" if r.passed else "[FAIL]"
+        color = typer.colors.GREEN if r.passed else typer.colors.RED
+        typer.secho(f"  {tag} {r.code:<26}: {r.message}", fg=color)
+    typer.echo("=" * 80)
+
+
+@risk_app.command("status")
+def risk_status_cmd(
+    state_file: Path | None = typer.Option(
+        None, "--state-file", help="Path to circuit breaker state file"
+    ),
+) -> None:
+    """Show current risk manager & circuit breaker status."""
+    from deskmind.risk.breakers import CircuitBreakerTracker
+
+    settings = get_settings()
+    path = state_file or (settings.data_dir / "risk_state.json")
+    tracker = CircuitBreakerTracker.load_state(path)
+
+    dd_pct = Decimal("0")
+    if tracker.peak_equity > Decimal("0"):
+        dd_pct = (
+            (tracker.peak_equity - tracker.start_of_day_equity) / tracker.peak_equity
+        ) * Decimal("100")
+
+    typer.echo("=" * 70)
+    typer.secho("RISK MANAGER & CIRCUIT BREAKER STATUS", bold=True)
+    typer.echo("=" * 70)
+    typer.echo(f"Current Halt State:      {tracker.halt_state.upper()}")
+    typer.echo(f"Peak Equity:             ${tracker.peak_equity:,.2f}")
+    typer.echo(f"Start-of-Day Equity:     ${tracker.start_of_day_equity:,.2f}")
+    typer.echo(f"Today's Realized PnL:    ${tracker.today_realized_pnl:+,.2f}")
+    typer.echo(f"Current Drawdown:        {dd_pct:.2f}% from peak")
+    typer.echo(f"Consecutive Losses:      {tracker.consecutive_losses} (cooldown at 4)")
+    typer.echo(f"Cooldown Active:         {'YES' if tracker.cooldown_until_ms > 0 else 'NO'}")
+    typer.echo(f"Logged Transitions:      {len(tracker.transitions)}")
+    typer.echo(f"State File:              {path}")
+    typer.echo("=" * 70)
+
+
+@risk_app.command("reset")
+def risk_reset_cmd(
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Typed confirmation flag required to reset 20% drawdown full stop",
+    ),
+    state_file: Path | None = typer.Option(
+        None, "--state-file", help="Path to circuit breaker state file"
+    ),
+) -> None:
+    """Manually reset the 20% drawdown full stop breaker (requires --confirm)."""
+    from deskmind.risk.breakers import CircuitBreakerTracker
+
+    if not confirm:
+        typer.secho(
+            "ERROR: Typed confirmation flag --confirm is required to reset the 20% full stop breaker.",
+            fg=typer.colors.RED,
+            bold=True,
+        )
+        raise typer.Exit(code=1)
+
+    settings = get_settings()
+    path = state_file or (settings.data_dir / "risk_state.json")
+    tracker = CircuitBreakerTracker.load_state(path)
+
+    if tracker.halt_state != "full_stop":
+        typer.echo(
+            f"Breaker state is '{tracker.halt_state}'. Reset only applies when state is 'full_stop'."
+        )
+        return
+
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    tracker.reset_full_stop(current_equity=tracker.start_of_day_equity, timestamp_ms=now_ms)
+    tracker.save_state(path)
+    typer.secho(
+        "SUCCESS: 20% drawdown full stop reset. Operational state restored to NORMAL.",
+        fg=typer.colors.GREEN,
+        bold=True,
+    )
 
 
 if __name__ == "__main__":

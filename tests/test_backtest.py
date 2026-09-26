@@ -943,8 +943,8 @@ def test_engine_determinism(tmp_path: Path):
         symbol="BTCUSDT",
         action="open_long",
         order_type="market",
-        stop_loss=Decimal("95.0"),
-        take_profit=Decimal("110.0"),
+        stop_loss=Decimal("97.0"),
+        take_profit=Decimal("108.0"),
     )
 
     def run_simulation():
@@ -1247,6 +1247,7 @@ def test_invariant_b_stop_outside_liquidation_raises_error(tmp_path: Path):
         start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
         end=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
         leverage=10,
+        sizer=FixedFractionalSizer(Decimal("0.01")),
     )
     with pytest.raises(
         RuntimeError, match=r"Invariant violation.*violates safety buffer from liquidation price"

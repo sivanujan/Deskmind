@@ -29,6 +29,7 @@ deskmind = "deskmind.cli:app"
 [dependency-groups]
 dev = [
     "fakeredis>=2.26",
+    "hypothesis>=6.100",
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
@@ -55,3 +56,11 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Diagnostic f-strings in risk module necessarily exceed 100 chars
+"src/deskmind/risk/evaluator.py" = ["E501"]
+"src/deskmind/risk/breakers.py" = ["E501"]
+"tests/test_risk.py" = ["E501"]
+# Typer requires typer.Option() in function defaults (B008); CLI echo strings are long by nature (E501)
+"src/deskmind/cli.py" = ["B008", "E501"]

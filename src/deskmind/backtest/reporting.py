@@ -11,6 +11,7 @@ Saved to reports/backtests/{run_id}/
 from __future__ import annotations
 
 import csv
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -232,6 +233,64 @@ def generate_reports(
             f"${data['net_pnl_usd']:+,.2f} | {data['profit_factor']:.2f} | "
             f"{data['avg_r']:+.2f}R | ${data['fees_paid']:,.2f} | ${data['funding_paid']:,.2f} |"
         )
+
+    # 4. Risk Manager & Circuit Breakers summary
+    rejection_counts: dict[str, int] = {}
+    rej_data = []
+    for r in result.rejected_intents:
+        rej_data.append(
+            {
+                "symbol": r.symbol,
+                "action": r.action,
+                "price": float(r.price),
+                "timestamp_ms": r.timestamp_ms,
+                "reasons": r.reasons,
+                "decision": r.decision,
+            }
+        )
+        for code in r.reasons:
+            rejection_counts[code] = rejection_counts.get(code, 0) + 1
+
+    with open(run_dir / "rejected_intents.json", "w", encoding="utf-8") as f:
+        json.dump(rej_data, f, indent=2)
+
+    total_intents = len(result.trades) + len(result.rejected_intents)
+    lines.extend(
+        [
+            "",
+            "## 4. Risk Manager & Circuit Breakers",
+            "",
+            f"- **Total Intents Evaluated**: {total_intents}",
+            f"- **Approved Intents**: {len(result.trades)}",
+            f"- **Rejected Intents**: {len(result.rejected_intents)}",
+            "",
+            "### Rejection Reasons Breakdown",
+            "",
+            "| Reason Code | Rejection Count |",
+            "|---|---|",
+        ]
+    )
+    for code, count in sorted(rejection_counts.items(), key=lambda x: x[1], reverse=True):
+        lines.append(f"| {code} | {count} |")
+
+    if result.circuit_breaker_transitions:
+        lines.extend(
+            [
+                "",
+                "### Circuit Breaker Transitions",
+                "",
+                "| Timestamp (UTC) | Transition | Trigger Value | Reason |",
+                "|---|---|---|---|",
+            ]
+        )
+        for tr in result.circuit_breaker_transitions:
+            t_str = datetime.fromtimestamp(tr.get("timestamp_ms", 0) / 1000, UTC).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            lines.append(
+                f"| {t_str} | {tr.get('from_state')} &rarr; {tr.get('to_state')} | "
+                f"{tr.get('trigger_value', '')} | {tr.get('reason', '')} |"
+            )
 
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

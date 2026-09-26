@@ -30,7 +30,7 @@ from deskmind.agents.trend.agent import SymbolTrendAgent
 from deskmind.agents.trend.models import Bar
 from deskmind.backtest.filters import SymbolFilters, load_symbol_filters, round_price
 from deskmind.backtest.liquidation import compute_liquidation_price, is_liquidated
-from deskmind.backtest.sizing import FixedFractionalSizer, PositionSizer
+from deskmind.backtest.sizing import PositionSizer
 from deskmind.config import (
     DEFAULT_INITIAL_CASH,
     DEFAULT_MAKER_FEE_RATE,
@@ -40,6 +40,7 @@ from deskmind.config import (
 )
 from deskmind.data.datasets import TIMEFRAME_MS
 from deskmind.data.storage import Dataset, Store, duckdb_connect, load_klines
+from deskmind.risk import CircuitBreakerTracker, RiskConfig, RiskManagerSizer
 from deskmind.strategies.base import (
     AccountSnapshot,
     BarSnapshot,
@@ -73,6 +74,7 @@ class Trade:
     holding_time_minutes: int
     spanned_gap: bool
     initial_risk: Decimal
+    risk_decision: dict[str, Any] | None = None
 
 
 @dataclass
@@ -90,6 +92,17 @@ class ActivePosition:
     funding_paid: Decimal = Decimal("0")
     slippage_paid: Decimal = Decimal("0")
     spanned_gap: bool = False
+    risk_decision: dict[str, Any] | None = None
+
+
+@dataclass
+class RejectedIntent:
+    symbol: str
+    action: str
+    price: Decimal
+    timestamp_ms: int
+    reasons: list[str]
+    decision: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -129,6 +142,8 @@ class BacktestResult:
     end_time_ms: int
     initial_cash: Decimal
     final_equity: Decimal
+    rejected_intents: list[RejectedIntent] = field(default_factory=list)
+    circuit_breaker_transitions: list[dict[str, Any]] = field(default_factory=list)
 
 
 def load_funding_map(data_dir: Path, symbol: str) -> dict[int, Decimal]:
@@ -189,7 +204,12 @@ class BacktestEngine:
         self.taker_fee_rate = taker_fee_rate
         self.slippage_bps = slippage_bps
         self.slippage_atr_factor = slippage_atr_factor
-        self.sizer = sizer or FixedFractionalSizer(max_leverage=leverage)
+        if sizer is not None:
+            self.sizer = sizer
+        else:
+            risk_cfg = RiskConfig(max_leverage=leverage)
+            tracker = CircuitBreakerTracker(config=risk_cfg, initial_equity=initial_cash)
+            self.sizer = RiskManagerSizer(config=risk_cfg, tracker=tracker)
         self.leverage = leverage
         self.warmup_days = warmup_days
         self.liquidation_safety_buffer_pct = liquidation_safety_buffer_pct
@@ -206,6 +226,7 @@ class BacktestEngine:
         self.active_position: ActivePosition | None = None
         self.pending_order: PendingOrder | None = None
         self.trades: list[Trade] = []
+        self.rejected_intents: list[RejectedIntent] = []
         self.equity_curve: list[EquityPoint] = []
 
         self.same_bar_sl_tp_count = 0
@@ -397,8 +418,11 @@ class BacktestEngine:
                                 holding_time_minutes=max(1, (t_open - pos.entry_time_ms) // 60_000),
                                 spanned_gap=pos.spanned_gap,
                                 initial_risk=pos.initial_risk,
+                                risk_decision=pos.risk_decision,
                             )
                         )
+                        if isinstance(self.sizer, RiskManagerSizer):
+                            self.sizer.tracker.record_trade_exit(net_pnl, t_open)
                         self.active_position = None
 
                     elif p_order.action in ("open_long", "open_short"):
@@ -436,10 +460,15 @@ class BacktestEngine:
                             side: Literal["long", "short"] = (
                                 "long" if p_order.action == "open_long" else "short"
                             )
+                            order_leverage = int(
+                                p_order.metadata.get("risk_decision", {}).get(
+                                    "leverage", self.leverage
+                                )
+                            )
                             liq_price = compute_liquidation_price(
                                 side=side,
                                 entry_price=fill_price,
-                                leverage=self.leverage,
+                                leverage=order_leverage,
                                 qty=p_order.qty,
                             )
 
@@ -477,6 +506,7 @@ class BacktestEngine:
                                 if p_order.order_type == "market"
                                 else Decimal("0"),
                                 spanned_gap=is_gap,
+                                risk_decision=p_order.metadata.get("risk_decision"),
                             )
                         elif p_order.order_type == "limit":
                             # Retain limit order on book until filled or canceled
@@ -596,8 +626,13 @@ class BacktestEngine:
                         if exit_reason == "liquidation":
                             # INVARIANT (c): liquidation exit records full isolated margin + fees
                             self.liquidations_count += 1
+                            pos_leverage = int(
+                                pos.risk_decision.get("leverage", self.leverage)
+                                if pos.risk_decision
+                                else self.leverage
+                            )
                             isolated_margin = (pos.entry_price * pos.qty) / Decimal(
-                                str(self.leverage)
+                                str(pos_leverage)
                             )
                             liq_fee = (pos.entry_price * pos.qty) * filters.liquidation_fee
                             total_liq_loss = isolated_margin + liq_fee
@@ -633,8 +668,11 @@ class BacktestEngine:
                                     ),
                                     spanned_gap=pos.spanned_gap,
                                     initial_risk=pos.initial_risk,
+                                    risk_decision=pos.risk_decision,
                                 )
                             )
+                            if isinstance(self.sizer, RiskManagerSizer):
+                                self.sizer.tracker.record_trade_exit(-total_liq_loss, t_open)
                             self.active_position = None
                         else:
                             # Track exit slippage on market/stop fills
@@ -703,8 +741,11 @@ class BacktestEngine:
                                     ),
                                     spanned_gap=pos.spanned_gap,
                                     initial_risk=pos.initial_risk,
+                                    risk_decision=pos.risk_decision,
                                 )
                             )
+                            if isinstance(self.sizer, RiskManagerSizer):
+                                self.sizer.tracker.record_trade_exit(net_pnl, t_open)
                             self.active_position = None
 
             # ----------------------------------------------------
@@ -850,17 +891,56 @@ class BacktestEngine:
                         ctx = contexts[chosen.symbol]
                         cur_close = ctx.current_bar.close
 
+                        # Collect rich market context for RiskManager
+                        mark_bar = mark_5m.get(chosen.symbol, {}).get(t_open)
+                        mark_price = Decimal(str(mark_bar["close"])) if mark_bar else cur_close
+                        atr_map: dict[str, Decimal] = {}
+                        agent = self.agents.get(chosen.symbol)
+                        if agent:
+                            for tf in ("5m", "15m", "1h", "2h"):
+                                engine_tf = agent.engines.get(tf)
+                                if engine_tf and engine_tf.atr is not None:
+                                    atr_map[tf] = Decimal(str(engine_tf.atr))
+
+                        f_rates = funding_map.get(chosen.symbol, {})
+                        cur_f_rate = f_rates.get(t_open)
+                        future_fundings = [ft for ft in f_rates if ft > t_close]
+                        next_funding_ms = min(future_fundings) if future_fundings else None
+
                         # Size position
-                        qty, reason = self.sizer.size_position(
-                            ctx.account, chosen, cur_close, self.filters[chosen.symbol]
-                        )
+                        if isinstance(self.sizer, RiskManagerSizer):
+                            qty, reason = self.sizer.size_position(
+                                ctx.account,
+                                chosen,
+                                cur_close,
+                                self.filters[chosen.symbol],
+                                mark_price=mark_price,
+                                atr_by_tf=atr_map,
+                                next_funding_time_ms=next_funding_ms,
+                                current_funding_rate=cur_f_rate,
+                                timestamp_ms=t_close,
+                            )
+                            decision = self.sizer.last_decision
+                        else:
+                            qty, reason = self.sizer.size_position(
+                                ctx.account, chosen, cur_close, self.filters[chosen.symbol]
+                            )
+                            decision = None
 
                         if (
                             qty > Decimal("0")
                             and chosen.stop_loss is not None
                             and chosen.take_profit is not None
                         ):
-                            init_risk = abs(cur_close - chosen.stop_loss) * qty
+                            init_risk = (
+                                decision.actual_risk_usd
+                                if decision is not None
+                                else abs(cur_close - chosen.stop_loss) * qty
+                            )
+                            meta = dict(chosen.metadata)
+                            if decision is not None:
+                                meta["risk_decision"] = decision.to_dict()
+
                             self.pending_order = PendingOrder(
                                 symbol=chosen.symbol,
                                 action=chosen.action,  # type: ignore[arg-type]
@@ -871,9 +951,25 @@ class BacktestEngine:
                                 take_profit=chosen.take_profit,
                                 initial_risk=init_risk,
                                 intent_time_ms=t_close,
-                                metadata=chosen.metadata,
+                                metadata=meta,
                             )
                         else:
+                            failed_reasons = (
+                                [r.message for r in decision.failed_reasons]
+                                if decision is not None
+                                else [reason]
+                            )
+                            dec_dict = decision.to_dict() if decision is not None else {}
+                            self.rejected_intents.append(
+                                RejectedIntent(
+                                    symbol=chosen.symbol,
+                                    action=chosen.action,
+                                    price=cur_close,
+                                    timestamp_ms=t_close,
+                                    reasons=failed_reasons,
+                                    decision=dec_dict,
+                                )
+                            )
                             logger.debug("Order rejected for %s: %s", chosen.symbol, reason)
 
             # ----------------------------------------------------
@@ -893,6 +989,9 @@ class BacktestEngine:
                         unrealized_pnl = (pos.entry_price - c_close) * pos.qty
 
             total_equity = self.cash + unrealized_pnl
+            if isinstance(self.sizer, RiskManagerSizer):
+                self.sizer.tracker.on_time_and_equity(t_close, total_equity)
+
             self.equity_curve.append(
                 EquityPoint(
                     time_ms=t_close,
@@ -904,6 +1003,19 @@ class BacktestEngine:
             )
 
         final_eq = self.equity_curve[-1].equity if self.equity_curve else self.cash
+        cb_transitions = []
+        if isinstance(self.sizer, RiskManagerSizer):
+            cb_transitions = [
+                {
+                    "timestamp_ms": t.timestamp_ms,
+                    "timestamp_iso": t.timestamp_iso,
+                    "from_state": t.from_state,
+                    "to_state": t.to_state,
+                    "reason": t.reason,
+                }
+                for t in self.sizer.tracker.transitions
+            ]
+
         return BacktestResult(
             trades=self.trades,
             equity_curve=self.equity_curve,
@@ -917,4 +1029,6 @@ class BacktestEngine:
             end_time_ms=all_timestamps[-1] + step_5m,
             initial_cash=self.initial_cash,
             final_equity=final_eq,
+            rejected_intents=self.rejected_intents,
+            circuit_breaker_transitions=cb_transitions,
         )
