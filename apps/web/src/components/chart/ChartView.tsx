@@ -30,6 +30,10 @@ const GROUPS: Record<string, string> = {
   sweep: "sweeps",
   trendline_support: "trend lines",
   trendline_resistance: "trend lines",
+  trade_entry: "trades",
+  trade_exit: "trades",
+  trade_line: "trades",
+  trade_sl: "trades",
 };
 const groupOf = (o: Overlay) => GROUPS[o.kind] ?? "other";
 
@@ -75,8 +79,11 @@ export default function ChartView({ initialSymbol, initialTf }: { initialSymbol:
   const [replayInput, setReplayInput] = useState("");
   const olderState = useRef({ loading: false, exhausted: false });
 
+  const [backtestRuns, setBacktestRuns] = useState<Array<{ run_id: string; strategy_name: string; split: string }>>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
   const iv = TIMEFRAME_SECONDS[tf] ?? 900;
-  const key = `${symbol}|${tf}|${replayT ?? "live"}`;
+  const key = `${symbol}|${tf}|${replayT ?? "live"}|${selectedRunId ?? "none"}`;
 
   useEffect(() => {
     api
@@ -86,6 +93,11 @@ export default function ChartView({ initialSymbol, initialTf }: { initialSymbol:
         setTimeframes(r.timeframes);
       })
       .catch((e: Error) => setError(`API unreachable: ${e.message}`));
+
+    api
+      .backtestRuns()
+      .then((runs) => setBacktestRuns(runs))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -108,7 +120,11 @@ export default function ChartView({ initialSymbol, initialTf }: { initialSymbol:
         setLatest(last ? { candle: last, isLive: false } : null);
         setDevOverlays(devSampleOverlays(r.candles));
         setError(null);
-        return api.overlays(symbol, tf, { start: r.candles[0]?.time, asOf: replayT ?? undefined });
+        return api.overlays(symbol, tf, {
+          start: r.candles[0]?.time,
+          asOf: replayT ?? undefined,
+          runId: selectedRunId ?? undefined,
+        });
       })
       .then((o) => {
         if (!cancelled && o) setApiOverlays(o.overlays);
@@ -130,7 +146,7 @@ export default function ChartView({ initialSymbol, initialTf }: { initialSymbol:
     return () => {
       cancelled = true;
     };
-  }, [symbol, tf, replayT, iv]);
+  }, [symbol, tf, replayT, iv, selectedRunId]);
 
   const loadOlder = useCallback(() => {
     const st = olderState.current;
@@ -300,6 +316,21 @@ export default function ChartView({ initialSymbol, initialTf }: { initialSymbol:
               {t}
             </button>
           ))}
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-muted">
+          <span>Backtest:</span>
+          <select
+            value={selectedRunId ?? ""}
+            onChange={(e) => setSelectedRunId(e.target.value || null)}
+            className="rounded border border-border bg-surface-2 px-2 py-1 text-xs text-foreground"
+          >
+            <option value="">None</option>
+            {backtestRuns.map((r) => (
+              <option key={r.run_id} value={r.run_id}>
+                {r.run_id}
+              </option>
+            ))}
+          </select>
         </div>
         <HealthBadge status={status} error={statusError} />
         <span className="text-xs text-muted" title="Chart WebSocket">

@@ -7,6 +7,7 @@ or if the database is pointed at the forbidden default Postgres port (5432).
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -28,6 +29,36 @@ DEFAULT_DATA_SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,20}USDT$")
 
 TradingMode = Literal["paper", "testnet"]
+
+# Backtest engine constants
+BACKTEST_ENGINE_VERSION = "1.0.0"
+
+# Splits: train 2023-01-01 -> 2024-12-31, validation 2025-01-01 -> 2025-12-31,
+# test 2026-01-01 -> latest
+BACKTEST_SPLITS: dict[str, tuple[str, str]] = {
+    "train": ("2023-01-01", "2024-12-31"),
+    "validation": ("2025-01-01", "2025-12-31"),
+    "test": ("2026-01-01", "2026-09-26"),
+}
+
+# Binance USDT-M VIP0 fee rates
+DEFAULT_MAKER_FEE_RATE = Decimal("0.0002")  # 0.02%
+DEFAULT_TAKER_FEE_RATE = Decimal("0.0005")  # 0.05%
+
+# Conservative default slippage: 1.0 bps fixed + 0.05 * ATR / price
+DEFAULT_SLIPPAGE_BPS = Decimal("1.0")
+DEFAULT_SLIPPAGE_ATR_FACTOR = Decimal("0.05")
+
+# Initial backtest cash (USDT)
+DEFAULT_INITIAL_CASH = Decimal("10000.0")
+
+# Conservative Binance maintenance margin tiers (max_notional_usdt, mmr_rate)
+DEFAULT_MAINTENANCE_BRACKETS: list[tuple[Decimal, Decimal]] = [
+    (Decimal("50000"), Decimal("0.005")),  # Tier 1: 0 - 50k -> 0.5% MMR
+    (Decimal("250000"), Decimal("0.010")),  # Tier 2: 50k - 250k -> 1.0% MMR
+    (Decimal("1000000"), Decimal("0.020")),  # Tier 3: 250k - 1M -> 2.0% MMR
+    (Decimal("10000000"), Decimal("0.050")),  # Tier 4: 1M - 10M -> 5.0% MMR
+]
 
 
 class Settings(BaseSettings):

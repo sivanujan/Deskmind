@@ -19,6 +19,12 @@ live_app = typer.Typer(
     help="Live market data service (WebSocket -> Redis/Postgres)", no_args_is_help=True
 )
 app.add_typer(live_app, name="live")
+backtest_app = typer.Typer(help="Event-driven backtesting engine", no_args_is_help=True)
+app.add_typer(backtest_app, name="backtest")
+runs_app = typer.Typer(
+    help="Backtest run registry and multiple-testing accounting", no_args_is_help=True
+)
+backtest_app.add_typer(runs_app, name="runs")
 
 SymbolOpt = typer.Option(None, "--symbol", "-s", help="One symbol from DATA_SYMBOLS")
 AllOpt = typer.Option(False, "--all", help="Every symbol in DATA_SYMBOLS")
@@ -395,6 +401,143 @@ def live_disconnect(
 
     until = asyncio.run(block_ws(get_settings(), seconds))
     typer.echo(f"WebSocket blocked for {seconds}s (until epoch ms {until})")
+
+
+# ---------------------------------------------------------------- backtest
+
+
+@backtest_app.command("run")
+def backtest_run_cmd(
+    strategy: str = typer.Option("trend_follow_v1", "--strategy", help="Strategy name"),
+    split: str = typer.Option("train", "--split", help="Data split: train, validation, test"),
+    symbol: str | None = SymbolOpt,
+    all_symbols: bool = AllOpt,
+    start: str | None = typer.Option(None, "--start", help="Start date (YYYY-MM-DD)"),
+    end: str | None = typer.Option(None, "--end", help="End date (YYYY-MM-DD)"),
+    unlock_test: bool = typer.Option(False, "--unlock-test", help="Unlock the locked test split"),
+    confirm_test_unlock: str | None = typer.Option(
+        None, "--confirm-test-unlock", help="Type CONFIRM to confirm test unlock"
+    ),
+    notes: str | None = typer.Option(None, "--notes", help="Audit notes for this run"),
+) -> None:
+    """Run an event-driven backtest with realistic execution and incremental agents."""
+    from deskmind.backtest.runner import run_backtest
+
+    settings = get_settings()
+    symbols = resolve_symbols(settings, symbol, all_symbols)
+
+    typer.echo(f"Starting backtest: strategy={strategy}, split={split}, symbols={symbols}")
+    try:
+        res = asyncio.run(
+            run_backtest(
+                strategy_name=strategy,
+                split=split,
+                symbols=symbols,
+                start_date=start,
+                end_date=end,
+                unlock_test=unlock_test,
+                confirm_test_unlock=confirm_test_unlock,
+                notes=notes,
+            )
+        )
+    except PermissionError as e:
+        typer.secho(f"REFUSAL: {e}", fg=typer.colors.RED, bold=True)
+        raise typer.Exit(code=1) from None
+    except Exception as e:
+        typer.secho(f"ERROR: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from None
+
+    m = res["metrics"]
+    rb = res["random_baseline"]
+    typer.echo(f"\nBacktest completed: run_id={res['run_id']}")
+    typer.echo(f"Reports saved to: {res['reports_dir']}")
+    typer.echo(f"Trades: {res['trades_count']}")
+    typer.echo(f"Net Return: ${m.net_return_usd:+,.2f} ({m.net_return_pct:+.2f}%)")
+    typer.echo(f"Max Drawdown: -{m.max_drawdown_pct:.2f}% (${m.max_drawdown_usd:,.2f})")
+    typer.echo(f"Sharpe Ratio: {m.sharpe_ratio:.2f}")
+    typer.echo(f"Profit Factor: {m.profit_factor:.2f}")
+    typer.echo(f"Win Rate: {m.win_rate_pct:.1f}%")
+    typer.echo(f"Average R: {m.avg_r:+.2f}R")
+    typer.echo(f"Random-Entry Baseline: {rb.percentile:.1f}th percentile ({rb.verdict.upper()})")
+
+
+@runs_app.command("list")
+def runs_list_cmd() -> None:
+    """List all recorded backtest runs and multiple-testing accounting counts."""
+    from deskmind.backtest.registry import list_runs_local
+
+    runs = list_runs_local()
+    if not runs:
+        typer.echo("No backtest runs recorded yet.")
+        return
+
+    # Count variants per strategy
+    strat_counts: dict[str, int] = {}
+    for r in runs:
+        s_name = r.get("strategy_name", "unknown")
+        strat_counts[s_name] = strat_counts.get(s_name, 0) + 1
+
+    typer.echo("=== Strategy Variants Tried (Multiple-Testing Accounting) ===")
+    for s_name, count in sorted(strat_counts.items()):
+        typer.echo(f"  {s_name}: {count} run(s) recorded")
+    typer.echo("")
+
+    typer.echo(
+        f"{'run_id':<38} {'strategy':<18} {'split':<10} {'trades':>7} "
+        f"{'win rate':>9} {'net ret':>10} {'sharpe':>7} {'max DD':>8}"
+    )
+    typer.echo("-" * 114)
+    for r in runs:
+        m = r.get("metrics", {})
+        trades = m.get("total_trades", 0)
+        win_rate = f"{m.get('win_rate_pct', 0.0):.1f}%"
+        ret = f"{m.get('net_return_pct', 0.0):+.1f}%"
+        sharpe = f"{m.get('sharpe_ratio', 0.0):.2f}"
+        max_dd = f"{m.get('max_drawdown_pct', 0.0):.1f}%"
+        typer.echo(
+            f"{r['run_id']:<38} {r.get('strategy_name', ''):<18} {r.get('split', ''):<10} "
+            f"{trades:>7} {win_rate:>9} {ret:>10} {sharpe:>7} {max_dd:>8}"
+        )
+
+
+@runs_app.command("show")
+def runs_show_cmd(run_id: str = typer.Argument(..., help="Run ID to show")) -> None:
+    """Show details and full metrics for a recorded backtest run."""
+    from deskmind.backtest.registry import list_runs_local
+
+    runs = list_runs_local()
+    match = next((r for r in runs if r.get("run_id") == run_id), None)
+    if not match:
+        typer.secho(f"Run {run_id!r} not found in registry.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"=== Backtest Run: {run_id} ===")
+    typer.echo(f"Strategy: {match.get('strategy_name')} (v{match.get('strategy_version')})")
+    typer.echo(
+        f"Split: {match.get('split')} ({match.get('start_date')} to {match.get('end_date')})"
+    )
+    typer.echo(f"Symbols: {', '.join(match.get('symbols', []))}")
+    typer.echo(f"Created At: {match.get('created_at')}")
+    typer.echo(f"Git Commit: {match.get('git_commit')}")
+
+    m = match.get("metrics", {})
+    typer.echo("\n--- Key Metrics ---")
+    typer.echo(
+        f"Net Return: ${m.get('net_return_usd', 0):+,.2f} ({m.get('net_return_pct', 0):+.2f}%)"
+    )
+    typer.echo(f"Sharpe Ratio: {m.get('sharpe_ratio', 0):.2f}")
+    typer.echo(f"Profit Factor: {m.get('profit_factor', 0):.2f}")
+    typer.echo(
+        f"Max Drawdown: -{m.get('max_drawdown_pct', 0):.2f}% (${m.get('max_drawdown_usd', 0):,.2f})"
+    )
+    typer.echo(f"Win Rate: {m.get('win_rate_pct', 0):.1f}% ({m.get('total_trades', 0)} trades)")
+    typer.echo(f"Average R: {m.get('avg_r', 0):+.2f}R")
+
+    rb = match.get("random_baseline", {})
+    if rb:
+        pct = rb.get("percentile", 0)
+        verd = rb.get("verdict", "").upper()
+        typer.echo(f"Random-Entry Baseline: {pct:.1f}th percentile ({verd})")
 
 
 if __name__ == "__main__":

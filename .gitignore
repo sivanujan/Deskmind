@@ -41,6 +41,11 @@ data/*.duckdb.wal
 *.duckdb
 *.duckdb.wal
 
+# Backtest reports
+reports/backtests/*
+!reports/backtests/.gitkeep
+!reports/backtests/registry.json
+
 # Node & Next.js
 node_modules/
 **/node_modules/

@@ -147,3 +147,30 @@ class Lesson(Base):
         BigInteger, ForeignKey("trade_journal.id", ondelete="SET NULL")
     )
     approved: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+
+class BacktestRun(Base):
+    """Immutable audit record of every backtest run.
+
+    Multiple-testing accounting: failed and discarded runs are recorded alongside successes.
+    """
+
+    __tablename__ = "backtest_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    strategy_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    agent_versions: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    symbols: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    split: Mapped[str] = mapped_column(String(32), nullable=False)
+    start_date: Mapped[str] = mapped_column(String(32), nullable=False)
+    end_date: Mapped[str] = mapped_column(String(32), nullable=False)
+    engine_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    git_commit: Mapped[str | None] = mapped_column(String(64))
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")

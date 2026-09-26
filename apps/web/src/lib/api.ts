@@ -118,8 +118,9 @@ export const api = {
   candles: (symbol: string, tf: string, opts: { end?: number; start?: number; limit?: number } = {}) =>
     get<CandlesResponse>("/api/candles", { symbol, tf, ...opts }),
   liveStatus: () => get<LiveStatus>("/api/live/status"),
-  overlays: (symbol: string, tf: string, opts: { start?: number; end?: number; asOf?: number } = {}) =>
-    get<OverlayResponse>("/api/overlays", { symbol, tf, start: opts.start, end: opts.end, as_of: opts.asOf }),
+  overlays: (symbol: string, tf: string, opts: { start?: number; end?: number; asOf?: number; runId?: string } = {}) =>
+    get<OverlayResponse>("/api/overlays", { symbol, tf, start: opts.start, end: opts.end, as_of: opts.asOf, run_id: opts.runId }),
+  backtestRuns: () => get<Array<{ run_id: string; strategy_name: string; split: string; created_at?: string }>>("/api/backtest/runs"),
   trendReport: (symbol: string, asOf?: number) =>
     get<TrendReport>("/api/agents/trend/report", { symbol, as_of: asOf }),
   liveSocketUrl: (symbol: string, tf: string) =>

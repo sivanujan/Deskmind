@@ -1,0 +1,178 @@
+[
+  {
+    "run_id": "trend_follow_v1_train_20260926_155637",
+    "created_at": "2026-09-26T15:58:40.818790+00:00",
+    "strategy_name": "trend_follow_v1",
+    "strategy_version": "1.0.0",
+    "params": {},
+    "agent_versions": {
+      "trend": "1.1.1"
+    },
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT"
+    ],
+    "split": "train",
+    "start_date": "2023-01-01",
+    "end_date": "2024-12-31",
+    "engine_version": "1.0.0",
+    "git_commit": "570d48cfb96c5864d901a2d741bc3d322298a8d2",
+    "metrics": {
+      "initial_cash": 10000.0,
+      "final_equity": 10000.0,
+      "net_return_usd": 0.0,
+      "net_return_pct": 0.0,
+      "cagr_pct": 0.0,
+      "max_drawdown_usd": 0.0,
+      "max_drawdown_pct": 0.0,
+      "max_drawdown_duration_days": 730.0,
+      "sharpe_ratio": 0.0,
+      "sortino_ratio": 0.0,
+      "total_trades": 0,
+      "winning_trades": 0,
+      "losing_trades": 0,
+      "win_rate_pct": 0.0,
+      "profit_factor": 0.0,
+      "avg_r": 0.0,
+      "expectancy_r": 0.0,
+      "expectancy_pct": 0.0,
+      "avg_holding_time_minutes": 0.0,
+      "exposure_time_pct": 0.0,
+      "total_fees_paid": 0.0,
+      "total_funding_paid": 0.0,
+      "total_slippage_paid": 0.0,
+      "liquidations_count": 0,
+      "same_bar_sl_tp_count": 0,
+      "skipped_signals_count": 0,
+      "longest_losing_streak": 0,
+      "per_symbol": {}
+    },
+    "random_baseline": {
+      "num_seeds": 50,
+      "our_net_return_usd": 0.0,
+      "percentile": 50.0,
+      "beat_count": 0,
+      "median_random_return_usd": 0.0,
+      "mean_random_return_usd": 0.0,
+      "min_random_return_usd": 0.0,
+      "max_random_return_usd": 0.0,
+      "verdict": "does_not_beat_random"
+    },
+    "notes": null,
+    "status": "completed"
+  },
+  {
+    "run_id": "trend_follow_v1_train_20260926_160220",
+    "created_at": "2026-09-26T16:07:51.107848+00:00",
+    "strategy_name": "trend_follow_v1",
+    "strategy_version": "1.0.0",
+    "params": {},
+    "agent_versions": {
+      "trend": "1.1.1"
+    },
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT"
+    ],
+    "split": "train",
+    "start_date": "2023-01-01",
+    "end_date": "2024-12-31",
+    "engine_version": "1.0.0",
+    "git_commit": "570d48cfb96c5864d901a2d741bc3d322298a8d2",
+    "metrics": {
+      "initial_cash": 10000.0,
+      "final_equity": 5872.787906042271,
+      "net_return_usd": -4127.212093957729,
+      "net_return_pct": -41.27212093957729,
+      "cagr_pct": -23.37985042683841,
+      "max_drawdown_usd": 5625.094917292162,
+      "max_drawdown_pct": 53.95508201669048,
+      "max_drawdown_duration_days": 728.0833333333334,
+      "sharpe_ratio": -1.2792646528417044,
+      "sortino_ratio": -1.7273206634909715,
+      "total_trades": 424,
+      "winning_trades": 141,
+      "losing_trades": 283,
+      "win_rate_pct": 33.25471698113208,
+      "profit_factor": 0.8080373909163144,
+      "avg_r": -0.11653825799685509,
+      "expectancy_r": -0.11653825799685513,
+      "expectancy_pct": -0.36456816015408267,
+      "avg_holding_time_minutes": 2237.4669811320755,
+      "exposure_time_pct": 90.24790715372907,
+      "total_fees_paid": 2199.359248745,
+      "total_funding_paid": 64.4152452127291,
+      "total_slippage_paid": 690.46332,
+      "liquidations_count": 1,
+      "same_bar_sl_tp_count": 0,
+      "skipped_signals_count": 131,
+      "longest_losing_streak": 13,
+      "per_symbol": {
+        "BNBUSDT": {
+          "trades": 80,
+          "win_rate_pct": 35.0,
+          "net_pnl_usd": -943.216118734379,
+          "profit_factor": 0.7777771976383215,
+          "avg_r": -0.08280703724931618,
+          "fees_paid": 540.671952,
+          "funding_paid": 3.257166734379
+        },
+        "BTCUSDT": {
+          "trades": 75,
+          "win_rate_pct": 34.66666666666667,
+          "net_pnl_usd": -491.0829792325399,
+          "profit_factor": 0.8687718992909309,
+          "avg_r": -0.10091042114239909,
+          "fees_paid": 495.64560054,
+          "funding_paid": 15.00457869254
+        },
+        "ETHUSDT": {
+          "trades": 85,
+          "win_rate_pct": 24.705882352941178,
+          "net_pnl_usd": -2208.5191362452033,
+          "profit_factor": 0.5446865246018583,
+          "avg_r": -0.3760259057511506,
+          "fees_paid": 455.227263084,
+          "funding_paid": 2.7554531612031
+        },
+        "SOLUSDT": {
+          "trades": 95,
+          "win_rate_pct": 37.89473684210527,
+          "net_pnl_usd": -177.0417490651015,
+          "profit_factor": 0.9610589970395786,
+          "avg_r": 0.052221649740868736,
+          "fees_paid": 305.503933428,
+          "funding_paid": 44.2376055354681
+        },
+        "XRPUSDT": {
+          "trades": 89,
+          "win_rate_pct": 33.70786516853933,
+          "net_pnl_usd": -363.1925780679144,
+          "profit_factor": 0.917593875405933,
+          "avg_r": -0.0923396804671468,
+          "fees_paid": 401.923562828,
+          "funding_paid": 1.2285152399144
+        }
+      }
+    },
+    "random_baseline": {
+      "num_seeds": 50,
+      "our_net_return_usd": -4127.212093957729,
+      "percentile": 4.0,
+      "beat_count": 2,
+      "median_random_return_usd": -2041.614541884703,
+      "mean_random_return_usd": -2085.5035816383966,
+      "min_random_return_usd": -4582.787398658213,
+      "max_random_return_usd": 1851.9542156474843,
+      "verdict": "does_not_beat_random"
+    },
+    "notes": null,
+    "status": "completed"
+  }
+]

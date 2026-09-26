@@ -17,6 +17,7 @@ are floats (display only).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -86,6 +87,40 @@ class OverlayResponse(BaseModel):
 
 def json_schema() -> dict:
     return TypeAdapter(OverlayResponse).json_schema()
+
+
+def load_backtest_overlays(
+    run_id: str,
+    symbol: str,
+    start: int | None = None,
+    end: int | None = None,
+    as_of: int | None = None,
+    reports_dir: Path = Path("reports/backtests"),
+) -> list[Overlay]:
+    overlay_path = reports_dir / run_id / "overlays.json"
+    if not overlay_path.exists():
+        return []
+    try:
+        with open(overlay_path, encoding="utf-8") as f:
+            raw = json.load(f)
+        adapter = TypeAdapter(list[Overlay])
+        all_overlays = adapter.validate_python(raw)
+        filtered: list[Overlay] = []
+        for o in all_overlays:
+            if o.meta.get("symbol") != symbol:
+                continue
+            if as_of is not None and o.confirmed_at is not None and o.confirmed_at > as_of:
+                continue
+            t = getattr(o, "time", None) or getattr(o, "start_time", None)
+            if t is not None:
+                if start is not None and t < start:
+                    continue
+                if end is not None and t >= end:
+                    continue
+            filtered.append(o)
+        return filtered
+    except Exception:
+        return []
 
 
 if __name__ == "__main__":

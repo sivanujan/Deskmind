@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -153,20 +153,37 @@ def create_app(
                 description="Replay: only what was known at this UNIX second (confirmed_at <= T)"
             ),
         ] = None,
+        run_id: Annotated[
+            str | None,
+            Query(description="Backtest run ID to overlay trades for"),
+        ] = None,
     ) -> OverlayResponse:
         sym = check(symbol, tf)
         iv = TIMEFRAME_MS[tf]
         t = as_of * 1000 if as_of is not None else B.now_ms()
-        view_end = (t // iv) * iv - iv  # open time of the newest candle closed by T
-        items = await app.state.trend_store.items(
-            sym,
-            tf,
-            start * 1000 if start is not None else None,
-            min(end * 1000, view_end) if end is not None else view_end,
-            as_of * 1000 if as_of is not None else None,
-        )
-        overlays = to_overlays(items, AGENT_VERSION, view_end)
+        view_end = (t // iv) * iv - iv
+        overlays = []
+        if getattr(app.state, "trend_store", None) is not None:
+            items = await app.state.trend_store.items(
+                sym,
+                tf,
+                start * 1000 if start is not None else None,
+                min(end * 1000, view_end) if end is not None else view_end,
+                as_of * 1000 if as_of is not None else None,
+            )
+            overlays = to_overlays(items, AGENT_VERSION, view_end)
+
+        if run_id:
+            from deskmind.api.overlays import load_backtest_overlays
+
+            overlays.extend(load_backtest_overlays(run_id, sym, start, end, as_of))
         return OverlayResponse(symbol=sym, timeframe=tf, overlays=overlays)
+
+    @app.get("/api/backtest/runs")
+    async def get_backtest_runs() -> list[dict[str, Any]]:
+        from deskmind.backtest.registry import list_runs_local
+
+        return list_runs_local()
 
     @app.get("/api/agents/trend/report", response_model=TrendReportResponse)
     async def get_trend_report(
