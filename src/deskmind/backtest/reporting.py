@@ -133,7 +133,34 @@ def generate_reports(
         f"| Longest Losing Streak | {metrics.longest_losing_streak} trades |",
         f"| Skipped Concurrent Signals | {metrics.skipped_signals_count} |",
         "",
-        "## 2. Benchmark & Baseline Comparison",
+        "## 2. Cost Breakdown",
+        "",
+        "| Component | Amount | Impact / Accounting |",
+        "|---|---|---|",
+        (
+            f"| Gross PnL (before costs) | ${metrics.gross_pnl_usd:+,.2f} | "
+            "Strategy trading edge before friction |"
+        ),
+        (
+            f"| Maker/Taker Fees | -${metrics.total_fees_paid:,.2f} | "
+            "Binance VIP0 rates (0.02% maker / 0.05% taker) |"
+        ),
+        (f"| Execution Slippage | -${metrics.total_slippage_paid:,.2f} | 2 bps + 0.05 ATR model |"),
+        (
+            f"| Historical Funding | -${metrics.total_funding_paid:,.2f} | "
+            "Real historical funding applied at event timestamps |"
+        ),
+        (
+            f"| **Total Costs (Friction)** | **-${metrics.total_costs_usd:,.2f}** | "
+            "Sum of fees, slippage, and funding |"
+        ),
+        f"| **Net PnL (after costs)** | **${metrics.net_return_usd:+,.2f}** | Final net return |",
+        (
+            f"| **Cost as % of Gross PnL** | **{metrics.cost_as_pct_of_gross:.1f}%** | "
+            "Total friction relative to gross magnitude |"
+        ),
+        "",
+        "## 3. Benchmark & Baseline Comparison",
         "",
         "### A. Random-Entry Baseline",
         (
@@ -154,6 +181,17 @@ def generate_reports(
                 else "DOES NOT BEAT random entry benchmark"
             )
             + "**"
+        ),
+        (
+            f"- **95% Confidence Interval**: "
+            f"[{random_base.ci_lower:.1f}%, {random_base.ci_upper:.1f}%]"
+            if random_base.ci_upper > 0
+            else ""
+        ),
+        (
+            f"- **Confidence Note**: {random_base.confidence_note}"
+            if random_base.confidence_note
+            else ""
         ),
         "",
         "### B. Buy & Hold per Symbol",
@@ -318,6 +356,9 @@ def _write_html_report(
 
     b_pass = "badge-pass" if random_base.percentile >= 50 else "badge-warn"
     b_txt = "BEATS RANDOM ENTRY" if random_base.percentile >= 50 else "DOES NOT BEAT RANDOM ENTRY"
+    gross_color = "#22c55e" if metrics.gross_pnl_usd >= 0 else "#ef4444"
+    net_color = "#22c55e" if metrics.net_return_usd >= 0 else "#ef4444"
+    fund_color = "#ef4444" if metrics.total_funding_paid >= 0 else "#22c55e"
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -434,8 +475,46 @@ def _write_html_report(
       Strategy Percentile: <b>{random_base.percentile:.1f}%</b>
       (Beat {random_base.beat_count} / {random_base.num_seeds} seeds).<br>
       Median Random Return: <b>${random_base.median_random_return_usd:+,.2f}</b><br>
-      Status: <span class="badge {b_pass}">{b_txt}</span>
+      Status: <span class="badge {b_pass}">{b_txt}</span><br>
+      <small style="color: #94a3b8">
+        95% CI: [{random_base.ci_lower:.1f}%, {random_base.ci_upper:.1f}%] |
+        {random_base.confidence_note}
+      </small>
     </p>
+  </div>
+
+  <div class="card">
+    <h2>Cost Breakdown & Friction Impact</h2>
+    <table>
+      <tr>
+        <td>Gross PnL (before costs)</td>
+        <td><b style="color: {gross_color}">${metrics.gross_pnl_usd:+,.2f}</b></td>
+      </tr>
+      <tr>
+        <td>Maker & Taker Fees</td>
+        <td><b style="color: #ef4444">-${metrics.total_fees_paid:,.2f}</b></td>
+      </tr>
+      <tr>
+        <td>Execution Slippage</td>
+        <td><b style="color: #ef4444">-${metrics.total_slippage_paid:,.2f}</b></td>
+      </tr>
+      <tr>
+        <td>Historical Funding</td>
+        <td><b style="color: {fund_color}">-${metrics.total_funding_paid:,.2f}</b></td>
+      </tr>
+      <tr>
+        <td>Total Friction Costs</td>
+        <td><b style="color: #ef4444">-${metrics.total_costs_usd:,.2f}</b></td>
+      </tr>
+      <tr>
+        <td>Net PnL (after costs)</td>
+        <td><b style="color: {net_color}">${metrics.net_return_usd:+,.2f}</b></td>
+      </tr>
+      <tr>
+        <td><b>Cost as % of Gross PnL</b></td>
+        <td><b style="color: #f59e0b">{metrics.cost_as_pct_of_gross:.1f}%</b></td>
+      </tr>
+    </table>
   </div>
 
   <div class="card">

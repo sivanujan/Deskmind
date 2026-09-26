@@ -40,6 +40,9 @@ class PerformanceMetrics:
     total_fees_paid: float
     total_funding_paid: float
     total_slippage_paid: float
+    gross_pnl_usd: float
+    total_costs_usd: float
+    cost_as_pct_of_gross: float
     liquidations_count: int
     same_bar_sl_tp_count: int
     skipped_signals_count: int
@@ -192,6 +195,15 @@ def calculate_metrics(result: BacktestResult) -> PerformanceMetrics:
             "funding_paid": float(sum((t.funding_paid for t in s_trades), Decimal("0"))),
         }
 
+    total_fees_f = float(result.total_fees_paid)
+    total_funding_f = float(result.total_funding_paid)
+    total_slippage_f = float(result.total_slippage_paid)
+    total_costs_usd = total_fees_f + total_funding_f + total_slippage_f
+    gross_pnl_usd = net_return_usd + total_costs_usd
+    cost_as_pct_of_gross = (
+        (total_costs_usd / abs(gross_pnl_usd)) * 100.0 if abs(gross_pnl_usd) > 0 else 0.0
+    )
+
     return PerformanceMetrics(
         initial_cash=initial_cash_f,
         final_equity=final_equity_f,
@@ -216,6 +228,9 @@ def calculate_metrics(result: BacktestResult) -> PerformanceMetrics:
         total_fees_paid=float(result.total_fees_paid),
         total_funding_paid=float(result.total_funding_paid),
         total_slippage_paid=float(result.total_slippage_paid),
+        gross_pnl_usd=gross_pnl_usd,
+        total_costs_usd=total_costs_usd,
+        cost_as_pct_of_gross=cost_as_pct_of_gross,
         liquidations_count=result.liquidations_count,
         same_bar_sl_tp_count=result.same_bar_sl_tp_count,
         skipped_signals_count=result.skipped_signals_count,

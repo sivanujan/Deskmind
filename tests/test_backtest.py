@@ -994,3 +994,84 @@ def test_test_split_refuses_without_unlock_flag():
     validate_split_access(
         split="test", start=start, end=end, unlock_test=True, confirm_text="CONFIRM"
     )
+
+
+def test_funding_applied_at_actual_timestamps_non_8h(tmp_path: Path):
+    """Confirm funding is applied at ACTUAL parquet timestamps, not an assumed 8h schedule.
+
+    Includes a scenario where funding occurs at non-8h intervals (15m and 1h), and
+    confirms no funding is applied when not present in the parquet dataset.
+    """
+    t0 = 1704067200000  # 2024-01-01 00:00:00
+    # Generate 15 consecutive 5m bars (75 minutes total, spanning NO 8h boundary)
+    klines = []
+    for i in range(15):
+        bt_open = t0 + (i * 300_000)
+        bt_close = bt_open + 300_000
+        klines.append(
+            {
+                "open_time": bt_open,
+                "close_time": bt_close,
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+            }
+        )
+
+    # Two funding events in Parquet at NON-8h intervals:
+    # 1. At t3 = t0 + 15m (300,000 * 3) -> 15m interval, rate = +0.005 (+0.5%)
+    #    Add a sub-second jitter of 250ms to verify enclosing 5m bar bucketing
+    # 2. At t12 = t0 + 60m (300,000 * 12) -> 1h interval, rate = -0.002 (-0.2%)
+    t3_jitter = t0 + (3 * 300_000) + 250
+    t12_exact = t0 + (12 * 300_000)
+    funding_events = [
+        (t3_jitter, 0.005),
+        (t12_exact, -0.002),
+    ]
+
+    _setup_symbol_data(tmp_path, "BTCUSDT", klines, funding=funding_events)
+
+    open_intent = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("80.0"),
+        take_profit=Decimal("150.0"),
+    )
+    close_intent = Intent(symbol="BTCUSDT", action="close")
+
+    t_open_order = t0 + 300_000
+    t_close_order = t0 + (13 * 300_000)
+    strategy = ScriptedStrategy(
+        {
+            t_open_order: [open_intent],
+            t_close_order: [close_intent],
+        }
+    )
+
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 2, 0, tzinfo=UTC),
+        initial_cash=Decimal("10000.0"),
+        maker_fee_rate=Decimal("0.0"),
+        taker_fee_rate=Decimal("0.0"),
+        slippage_bps=Decimal("0.0"),
+        slippage_atr_factor=Decimal("0.0"),
+        sizer=FixedFractionalSizer(risk_pct=Decimal("0.01")),
+    )
+    res = engine.run()
+
+    assert len(res.trades) == 1
+    tr = res.trades[0]
+
+    # Position size: risk = 10000 * 0.01 = 100. Stop distance = 100 - 80 = 20. Qty = 5.0
+    # Notional at bar 3 (open=100.0): 100.0 * 5.0 = 500.0.
+    # Event 1 (15m, rate=+0.005): Long pays 500 * 0.005 = 2.50
+    # Event 2 (1h, rate=-0.002): Long receives 500 * (-0.002) = -1.00 (i.e. +1.00 credit)
+    # Net funding paid = 2.50 - 1.00 = 1.50
+    assert tr.funding_paid == Decimal("1.50")
+    assert res.total_funding_paid == Decimal("1.50")

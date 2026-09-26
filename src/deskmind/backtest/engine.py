@@ -132,7 +132,12 @@ class BacktestResult:
 
 
 def load_funding_map(data_dir: Path, symbol: str) -> dict[int, Decimal]:
-    """Map funding_time (epoch ms) -> funding_rate (Decimal)."""
+    """Map funding_time (epoch ms) -> funding_rate (Decimal).
+
+    Historical funding rates from Parquet are bucketed into the enclosing 5m bar
+    timestamp [bar_t, bar_t + 300_000) to ensure exact alignment with the 5m engine
+    clock, regardless of non-8h intervals (1h, 2h, 4h) or sub-second timestamp jitter.
+    """
     store = Store(data_dir, symbol)
     ds = Dataset("funding")
     if not store.files(ds):
@@ -146,7 +151,13 @@ def load_funding_map(data_dir: Path, symbol: str) -> dict[int, Decimal]:
         rows = con.execute(query).fetchall()
     finally:
         con.close()
-    return {int(t): Decimal(str(r)) for t, r in rows if r is not None}
+    res: dict[int, Decimal] = {}
+    for t, r in rows:
+        if r is not None:
+            # Map funding timestamp to the 5m bar interval [bar_t, bar_t + 300_000)
+            bar_t = (int(t) // 300_000) * 300_000
+            res[bar_t] = res.get(bar_t, Decimal("0")) + Decimal(str(r))
+    return res
 
 
 class BacktestEngine:
@@ -334,10 +345,15 @@ class BacktestEngine:
                             raw_fill = b_open * (Decimal("1") - slip_pct)
                             fill_price = round_price(raw_fill, filters.tick_size)
                             gross_pnl = (fill_price - pos.entry_price) * pos.qty
+                            exit_slip = max(Decimal("0"), (b_open - fill_price) * pos.qty)
                         else:
                             raw_fill = b_open * (Decimal("1") + slip_pct)
                             fill_price = round_price(raw_fill, filters.tick_size)
                             gross_pnl = (pos.entry_price - fill_price) * pos.qty
+                            exit_slip = max(Decimal("0"), (fill_price - b_open) * pos.qty)
+
+                        pos.slippage_paid += exit_slip
+                        self.total_slippage_paid += exit_slip
 
                         exit_fee = fill_price * pos.qty * self.taker_fee_rate
                         self.total_fees_paid += exit_fee
@@ -425,6 +441,9 @@ class BacktestEngine:
                                 initial_risk=p_order.initial_risk,
                                 liquidation_price=liq_price,
                                 fees_paid=fee,
+                                slippage_paid=max(Decimal("0"), slip_paid)
+                                if p_order.order_type == "market"
+                                else Decimal("0"),
                                 spanned_gap=is_gap,
                             )
                         elif p_order.order_type == "limit":
@@ -549,6 +568,26 @@ class BacktestEngine:
                                 is_maker = True
 
                         if exit_price is not None and exit_reason is not None:
+                            # Track exit slippage on market/stop fills
+                            if exit_reason in ("stop_loss", "sl_tp_same_bar"):
+                                ref_stop = (
+                                    pos.stop_loss
+                                    if b_open > pos.stop_loss and pos.side == "long"
+                                    else (
+                                        pos.stop_loss
+                                        if b_open < pos.stop_loss and pos.side == "short"
+                                        else b_open
+                                    )
+                                )
+                                exit_slip = max(
+                                    Decimal("0"),
+                                    (ref_stop - exit_price) * pos.qty
+                                    if pos.side == "long"
+                                    else (exit_price - ref_stop) * pos.qty,
+                                )
+                                pos.slippage_paid += exit_slip
+                                self.total_slippage_paid += exit_slip
+
                             fee_rate = self.maker_fee_rate if is_maker else self.taker_fee_rate
                             exit_fee = exit_price * pos.qty * fee_rate
                             self.total_fees_paid += exit_fee

@@ -184,6 +184,7 @@ async def run_backtest(
     unlock_test: bool = False,
     confirm_test_unlock: str | None = None,
     notes: str | None = None,
+    random_seeds: int = 1000,
     data_dir: Path | None = None,
     reports_dir: Path = Path("reports/backtests"),
 ) -> dict[str, Any]:
@@ -234,7 +235,7 @@ async def run_backtest(
 
     # Calculate baselines
     bnh = compute_buy_and_hold(d_dir, syms, start_dt, end_dt, initial_cash)
-    random_base = run_random_baseline(result, d_dir, syms, start_dt, end_dt)
+    random_base = run_random_baseline(result, d_dir, syms, start_dt, end_dt, num_seeds=random_seeds)
 
     # Generate reports & CSV
     run_output_dir = generate_reports(

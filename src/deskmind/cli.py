@@ -418,13 +418,19 @@ def backtest_run_cmd(
     confirm_test_unlock: str | None = typer.Option(
         None, "--confirm-test-unlock", help="Type CONFIRM to confirm test unlock"
     ),
+    random_seeds: int = typer.Option(
+        1000, "--random-seeds", help="Number of random-entry baseline seeds"
+    ),
     notes: str | None = typer.Option(None, "--notes", help="Audit notes for this run"),
 ) -> None:
     """Run an event-driven backtest with realistic execution and incremental agents."""
     from deskmind.backtest.runner import run_backtest
 
     settings = get_settings()
-    symbols = resolve_symbols(settings, symbol, all_symbols)
+    if symbol is None and not all_symbols:
+        symbols = list(settings.data_symbols)
+    else:
+        symbols = resolve_symbols(settings, symbol, all_symbols)
 
     typer.echo(f"Starting backtest: strategy={strategy}, split={split}, symbols={symbols}")
     try:
@@ -437,6 +443,7 @@ def backtest_run_cmd(
                 end_date=end,
                 unlock_test=unlock_test,
                 confirm_test_unlock=confirm_test_unlock,
+                random_seeds=random_seeds,
                 notes=notes,
             )
         )

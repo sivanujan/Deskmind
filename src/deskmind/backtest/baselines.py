@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from datetime import datetime
@@ -41,6 +42,9 @@ class RandomBaselineResult:
     min_random_return_usd: float
     max_random_return_usd: float
     verdict: str  # "beats_random" or "does_not_beat_random"
+    ci_lower: float = 0.0
+    ci_upper: float = 0.0
+    confidence_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +57,9 @@ class RandomBaselineResult:
             "min_random_return_usd": self.min_random_return_usd,
             "max_random_return_usd": self.max_random_return_usd,
             "verdict": self.verdict,
+            "ci_lower": self.ci_lower,
+            "ci_upper": self.ci_upper,
+            "confidence_note": self.confidence_note,
         }
 
 
@@ -135,7 +142,7 @@ def run_random_baseline(
     symbols: list[str],
     start: datetime,
     end: datetime,
-    num_seeds: int = 50,
+    num_seeds: int = 1000,
 ) -> RandomBaselineResult:
     """Run random-entry baseline simulation with matching trade count and direction mix."""
     trades = result.trades
@@ -248,6 +255,20 @@ def run_random_baseline(
     beat_count = sum(1 for r in random_returns if our_return >= r)
     percentile = (beat_count / len(random_returns)) * 100.0 if random_returns else 50.0
 
+    # 95% Wilson score interval for the percentile
+    p = beat_count / len(random_returns) if random_returns else 0.5
+    n = len(random_returns) if random_returns else 1
+    z = 1.95996  # 95% confidence
+    denom = 1 + (z**2) / n
+    centre = (p + (z**2) / (2 * n)) / denom
+    margin = (z * math.sqrt((p * (1 - p) / n) + ((z**2) / (4 * (n**2))))) / denom
+    ci_lower = max(0.0, (centre - margin) * 100.0)
+    ci_upper = min(100.0, (centre + margin) * 100.0)
+    conf_note = (
+        f"With N={num_seeds} random seeds, the 95% Wilson confidence interval for the true "
+        f"percentile is [{ci_lower:.1f}%, {ci_upper:.1f}%]."
+    )
+
     median_val = random_returns[len(random_returns) // 2] if random_returns else 0.0
     mean_val = (sum(random_returns) / len(random_returns)) if random_returns else 0.0
     min_val = min(random_returns) if random_returns else 0.0
@@ -265,4 +286,7 @@ def run_random_baseline(
         min_random_return_usd=min_val,
         max_random_return_usd=max_val,
         verdict=verdict,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        confidence_note=conf_note,
     )
