@@ -56,6 +56,7 @@ ALLOWLISTED_ENDPOINTS: frozenset[str] = frozenset(
         "/fapi/v1/income",  # futures income (REALIZED_PNL, COMMISSION, ...), last 3 months only
         "/api/v3/myTrades",  # spot fills per symbol, paged by fromId (full history)
         "/api/v3/account",  # spot balances: used only to discover which spot symbols to query
+        "/api/v3/time",  # public server time, unsigned: aligns request timestamps (-1021)
     }
 )
 
@@ -106,6 +107,8 @@ class MainnetReadOnlyClient:
         self._owns_client = http_client is None
         self.futures_enabled: bool = True
         self.permissions: dict[str, Any] | None = None
+        # Binance server time minus local time; a fast local clock otherwise gets -1021.
+        self.time_offset_ms: int | None = None
 
     @property
     def _api_key(self) -> str:
@@ -118,7 +121,8 @@ class MainnetReadOnlyClient:
     def _sign_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Add timestamp and compute HMAC-SHA256 signature."""
         p = dict(params)
-        p["timestamp"] = int(time.time() * 1000)
+        p["timestamp"] = int(time.time() * 1000) + (self.time_offset_ms or 0)
+        p.setdefault("recvWindow", 10_000)
         query_string = urlencode(p)
         secret_bytes = self._api_secret.encode("utf-8")
         signature = hmac.new(secret_bytes, query_string.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -212,6 +216,16 @@ class MainnetReadOnlyClient:
 
         return resp.json()
 
+    async def sync_time(self) -> int:
+        """Measure Binance server time vs the local clock (public, unsigned GET)."""
+        before = int(time.time() * 1000)
+        data = await self.request("GET", "/api/v3/time", signed=False)
+        after = int(time.time() * 1000)
+        self.time_offset_ms = int(data["serverTime"]) - (before + after) // 2
+        if abs(self.time_offset_ms) > 1000:
+            log.warning("local_clock_drift_vs_binance", offset_ms=self.time_offset_ms)
+        return self.time_offset_ms
+
     async def check_permissions(self) -> dict[str, Any]:
         """Verify API key restrictions on Binance mainnet.
 
@@ -219,6 +233,7 @@ class MainnetReadOnlyClient:
         margin, transfer, or withdrawal permissions are active.
         """
         log.info("checking_mainnet_api_restrictions")
+        await self.sync_time()
         data = await self.request("GET", "/sapi/v1/account/apiRestrictions", signed=True)
         self.permissions = data
 

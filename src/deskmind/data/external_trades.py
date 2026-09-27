@@ -257,7 +257,13 @@ async def upsert_trades(session: Any, rows: list[TradeRow]) -> tuple[int, int]:
 # ---------------------------------------------------------------- API import
 
 
-async def import_history(client: Any, since_ms: int, now_ms: int, extra_symbols: list[str]) -> dict:
+async def import_history(
+    client: Any,
+    since_ms: int,
+    now_ms: int,
+    extra_symbols: list[str],
+    spot_since_ms: int | None = None,
+) -> dict:
     """Fetch trades read-only. Returns {"rows": [...], "report": {...}} (nothing stored here)."""
     from deskmind.data.mainnet_readonly import FuturesReadNotEnabled
 
@@ -296,7 +302,8 @@ async def import_history(client: Any, since_ms: int, now_ms: int, extra_symbols:
             checked += 1
             if fills:
                 with_trades.append(sym)
-                rows.extend(from_spot_api(x) for x in fills if int(x["time"]) >= since_ms)
+                spot_from = since_ms if spot_since_ms is None else spot_since_ms
+                rows.extend(from_spot_api(x) for x in fills if int(x["time"]) >= spot_from)
         report["spot"].update(
             symbols_checked=checked,
             symbols_with_trades=with_trades,

@@ -172,7 +172,14 @@ def test_health(env) -> None:
     assert body["ok"] is True and body["live"]["level"] == "red"  # no live service in the fixture
 
 
-def test_overlays_empty_without_agent_results(env) -> None:
+def test_overlays_empty_without_agent_results(env, monkeypatch) -> None:
+    import deskmind.api.overlays as overlays_mod
+
+    async def none(*_a, **_k):  # journal / imported fills live in the dev Postgres, not here
+        return []
+
+    monkeypatch.setattr(overlays_mod, "load_execution_overlays", none)
+    monkeypatch.setattr(overlays_mod, "load_external_trade_overlays", none)
     app, _ = env
     with TestClient(app) as c:
         body = c.get("/api/overlays", params={"symbol": "BTCUSDT", "tf": "15m"}).json()

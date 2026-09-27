@@ -1182,7 +1182,7 @@ def account_sync_cmd() -> None:
 @account_app.command("import-history")
 def account_import_history_cmd(
     since: str = typer.Option(
-        "", help="UTC start date (default: 90 days ago; Binance keeps ~3 months of futures fills)"
+        "", help="UTC start date (default: futures 90 days, Binance keeps ~3 months; spot all)"
     ),
 ) -> None:
     """Import YOUR Binance trade history (read-only key) into external_trades."""
@@ -1212,6 +1212,8 @@ def account_import_history_cmd(
                 int(start.timestamp() * 1000),
                 int(now.timestamp() * 1000),
                 list(settings.data_symbols),
+                # without --since, spot keeps its full history (only futures are ~3 months)
+                spot_since_ms=None if since else 0,
             )
         finally:
             await client.close()

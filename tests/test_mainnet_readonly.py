@@ -11,6 +11,8 @@ Verifies safety invariants:
 
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
 from pydantic import SecretStr
@@ -32,6 +34,8 @@ class MockTransport(httpx.AsyncBaseTransport):
         self.requests_log: list[httpx.Request] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v3/time":  # clock sync before signed calls (not logged)
+            return httpx.Response(200, json={"serverTime": int(time.time() * 1000)})
         self.requests_log.append(request)
         return self.handler(request)
 
@@ -353,3 +357,31 @@ async def test_sync_account_mocked(tmp_path, monkeypatch):
     # Verify snapshot file was created
     meta_files = list((tmp_path / "data" / "meta").glob("mainnet_sync_*.json"))
     assert len(meta_files) == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_requests_use_binance_server_time():
+    """A local clock 2 s ahead used to get -1021; timestamps now follow the server clock."""
+    seen: list[httpx.Request] = []
+    server_ms = int(time.time() * 1000) - 2000
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/v3/time":
+            return httpx.Response(200, json={"serverTime": server_ms})
+        return httpx.Response(200, json={"enableReading": True})
+
+    class T(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            return await handle(request)
+
+    client = MainnetReadOnlyClient(
+        settings=make_test_settings(), http_client=httpx.AsyncClient(transport=T())
+    )
+    offset = await client.sync_time()
+    assert -2600 < offset < -1400
+    assert "signature" not in str(seen[0].url)  # the time call is public and unsigned
+    await client.request("GET", "/sapi/v1/account/apiRestrictions")
+    params = dict(seen[-1].url.params)
+    assert abs(int(params["timestamp"]) - server_ms) < 600
+    assert params["recvWindow"] == "10000"

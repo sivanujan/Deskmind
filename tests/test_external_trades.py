@@ -41,6 +41,8 @@ class Transport(httpx.AsyncBaseTransport):
         self.log: list[httpx.Request] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v3/time":  # clock sync (not logged)
+            return httpx.Response(200, json={"serverTime": 1})
         self.log.append(request)
         return self.handler(request)
 
