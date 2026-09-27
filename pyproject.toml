@@ -64,3 +64,6 @@ select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
 "tests/test_risk.py" = ["E501"]
 # Typer requires typer.Option() in function defaults (B008); CLI echo strings are long by nature (E501)
 "src/deskmind/cli.py" = ["B008", "E501"]
+"src/deskmind/execution/*" = ["E501", "ASYNC230", "ASYNC110"]
+"src/deskmind/strategies/plumbing_stress_v1.py" = ["E501"]
+"tests/test_execution.py" = ["E501"]

@@ -33,10 +33,7 @@ class TrendFollowV1(BaseStrategy):
         intents: list[Intent] = []
 
         for symbol, ctx in contexts.items():
-            if (
-                ctx.account.open_position is not None
-                and ctx.account.open_position.symbol == symbol
-            ):
+            if ctx.account.open_position is not None and ctx.account.open_position.symbol == symbol:
                 continue
 
             timeframes = ctx.agent_report.get("timeframes", {})

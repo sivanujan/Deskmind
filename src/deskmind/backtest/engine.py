@@ -852,9 +852,7 @@ class BacktestEngine:
             # Only generate strategy intents if past the warm-up period
             if contexts and t_close >= self.trading_start_ms:
                 raw_intents = self.strategy.on_bar(contexts)
-                all_entries = [
-                    it for it in raw_intents if it.action in ("open_long", "open_short")
-                ]
+                all_entries = [it for it in raw_intents if it.action in ("open_long", "open_short")]
                 self.raw_entry_signals += len(all_entries)
                 num_entries = len(all_entries)
                 self.intent_distribution[num_entries] = (
@@ -1019,9 +1017,7 @@ class BacktestEngine:
                                         decision=dec_dict,
                                     )
                                 )
-                                logger.debug(
-                                    "Order rejected for %s: %s", chosen.symbol, reason
-                                )
+                                logger.debug("Order rejected for %s: %s", chosen.symbol, reason)
 
             # ----------------------------------------------------
             # STEP E: Record Equity Point

@@ -1449,13 +1449,25 @@ def test_setup_id_deduplication_and_position_skips(tmp_path: Path):
     """
     t0 = 1704067200000
     klines_btc = [
-        {"open_time": t0 + i * 300_000, "close_time": t0 + (i + 1) * 300_000,
-         "open": 100.0, "high": 102.0, "low": 99.0, "close": 101.0}
+        {
+            "open_time": t0 + i * 300_000,
+            "close_time": t0 + (i + 1) * 300_000,
+            "open": 100.0,
+            "high": 102.0,
+            "low": 99.0,
+            "close": 101.0,
+        }
         for i in range(10)
     ]
     klines_eth = [
-        {"open_time": t0 + i * 300_000, "close_time": t0 + (i + 1) * 300_000,
-         "open": 50.0, "high": 51.0, "low": 49.0, "close": 50.5}
+        {
+            "open_time": t0 + i * 300_000,
+            "close_time": t0 + (i + 1) * 300_000,
+            "open": 50.0,
+            "high": 51.0,
+            "low": 49.0,
+            "close": 50.5,
+        }
         for i in range(10)
     ]
     _setup_symbol_data(tmp_path, "BTCUSDT", klines_btc)
@@ -1696,5 +1708,3 @@ def test_shadow_mode_label_in_diagnostic_run(tmp_path: Path):
 
     html_content = (rep_dir / "index.html").read_text(encoding="utf-8")
     assert "DIAGNOSTIC RUN &mdash; SHADOW MODE" in html_content
-
-

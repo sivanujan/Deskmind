@@ -362,7 +362,9 @@ def evaluate(
         if Decimal("0") <= ms_to_funding <= Decimal(str(config.funding_guard_minutes * 60 * 1000)):
             # Funding event is within 30 minutes
             f_rate = market.current_funding_rate
-            if (intent.side == "long" and f_rate > config.funding_guard_threshold) or (intent.side == "short" and f_rate < -config.funding_guard_threshold):
+            if (intent.side == "long" and f_rate > config.funding_guard_threshold) or (
+                intent.side == "short" and f_rate < -config.funding_guard_threshold
+            ):
                 funding_violates = True
 
     if funding_violates:

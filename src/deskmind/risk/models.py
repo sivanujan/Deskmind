@@ -98,6 +98,7 @@ class IntentPayload:
     strategy_version: str = "1.0.0"
     entry_timeframe: str = "15m"
     timestamp_ms: int = 0
+    setup_id: str = ""
 
 
 @dataclass
@@ -142,17 +143,21 @@ class RiskDecision:
     qty: Decimal
     leverage: int
     notional: Decimal
-    isolated_margin: Decimal
-    liquidation_price: Decimal
-    stop_distance_usd: Decimal
-    stop_distance_pct: Decimal
-    stop_distance_atr: Decimal
-    expected_costs_r: Decimal
-    net_reward_risk: Decimal
-    effective_risk_pct: Decimal
-    allowed_risk_usd: Decimal
-    actual_risk_usd: Decimal
+    isolated_margin: Decimal = Decimal("0")
+    liquidation_price: Decimal = Decimal("0")
+    stop_distance_usd: Decimal = Decimal("0")
+    stop_distance_pct: Decimal = Decimal("0")
+    stop_distance_atr: Decimal = Decimal("0")
+    expected_costs_r: Decimal = Decimal("0")
+    net_reward_risk: Decimal = Decimal("0")
+    effective_risk_pct: Decimal = Decimal("0")
+    allowed_risk_usd: Decimal = Decimal("0")
+    actual_risk_usd: Decimal = Decimal("0")
     reasons: list[Reason] = field(default_factory=list)
+
+    @property
+    def approved(self) -> bool:
+        return self.status == "approved"
 
     @property
     def passed_reasons(self) -> list[Reason]:

@@ -182,77 +182,86 @@ def generate_reports(
             "",
             "| Component | Amount | Impact / Accounting |",
             "|---|---|---|",
-        (
-            f"| Gross PnL (before costs) | ${metrics.gross_pnl_usd:+,.2f} | "
-            "Strategy trading edge before friction |"
-        ),
-        (
-            f"| Maker/Taker Fees | -${metrics.total_fees_paid:,.2f} | "
-            "Binance VIP0 rates (0.02% maker / 0.05% taker) |"
-        ),
-        (f"| Execution Slippage | -${metrics.total_slippage_paid:,.2f} | 2 bps + 0.05 ATR model |"),
-        (
-            f"| Historical Funding | -${metrics.total_funding_paid:,.2f} | "
-            "Real historical funding applied at event timestamps |"
-        ),
-        (
-            f"| **Total Costs (Friction)** | **-${metrics.total_costs_usd:,.2f}** | "
-            "Sum of fees, slippage, and funding |"
-        ),
-        f"| **Net PnL (after costs)** | **${metrics.net_return_usd:+,.2f}** | Final net return |",
-        (
-            f"| **Cost as % of Gross PnL** | **{metrics.cost_as_pct_of_gross:.1f}%** | "
-            "Total friction relative to gross magnitude |"
-        ),
-        (
-            f"| **Average Cost per Trade** | **{metrics.avg_cost_per_trade_r:.2f}R** | "
-            "Average friction drag per trade in R units |"
-        ),
-        (
-            f"| **Gross Expectancy** | **{metrics.gross_expectancy_r:+.2f}R** | "
-            "Expectancy per trade before friction costs |"
-        ),
-        "",
-        "## 3. Benchmark & Baseline Comparison",
-        "",
-        "### A. Random-Entry Baseline",
-        (
-            f"- **Strategy Rank**: **{random_base.percentile:.1f}th percentile** "
-            f"across {random_base.num_seeds} random seeds."
-        ),
-        f"- **Beat Count**: Beat {random_base.beat_count} / {random_base.num_seeds} iterations.",
-        f"- **Random Median Return**: ${random_base.median_random_return_usd:+,.2f}",
-        (
-            f"- **Random Range**: [${random_base.min_random_return_usd:+,.2f}, "
-            f"${random_base.max_random_return_usd:+,.2f}]"
-        ),
-        (
-            "- **Verdict**: **"
-            + (
-                "BEATS random entry benchmark"
-                if random_base.percentile >= 50
-                else "DOES NOT BEAT random entry benchmark"
-            )
-            + "**"
-        ),
-        (
-            f"- **95% Confidence Interval**: "
-            f"[{random_base.ci_lower:.1f}%, {random_base.ci_upper:.1f}%]"
-            if random_base.ci_upper > 0
-            else ""
-        ),
-        (
-            f"- **Confidence Note**: {random_base.confidence_note}"
-            if random_base.confidence_note
-            else ""
-        ),
-        "",
-        "### B. Buy & Hold per Symbol",
-        "",
-        "| Symbol | Start Price | End Price | Price Return | Net Return | Fees | Funding |",
-        "|---|---|---|---|---|---|---|",
-    ]
-)
+            (
+                f"| Gross PnL (before costs) | ${metrics.gross_pnl_usd:+,.2f} | "
+                "Strategy trading edge before friction |"
+            ),
+            (
+                f"| Maker/Taker Fees | -${metrics.total_fees_paid:,.2f} | "
+                "Binance VIP0 rates (0.02% maker / 0.05% taker) |"
+            ),
+            (
+                f"| Execution Slippage | -${metrics.total_slippage_paid:,.2f} | "
+                "2 bps + 0.05 ATR model |"
+            ),
+            (
+                f"| Historical Funding | -${metrics.total_funding_paid:,.2f} | "
+                "Real historical funding applied at event timestamps |"
+            ),
+            (
+                f"| **Total Costs (Friction)** | **-${metrics.total_costs_usd:,.2f}** | "
+                "Sum of fees, slippage, and funding |"
+            ),
+            (
+                f"| **Net PnL (after costs)** | **${metrics.net_return_usd:+,.2f}** | "
+                "Final net return |"
+            ),
+            (
+                f"| **Cost as % of Gross PnL** | **{metrics.cost_as_pct_of_gross:.1f}%** | "
+                "Total friction relative to gross magnitude |"
+            ),
+            (
+                f"| **Average Cost per Trade** | **{metrics.avg_cost_per_trade_r:.2f}R** | "
+                "Average friction drag per trade in R units |"
+            ),
+            (
+                f"| **Gross Expectancy** | **{metrics.gross_expectancy_r:+.2f}R** | "
+                "Expectancy per trade before friction costs |"
+            ),
+            "",
+            "## 3. Benchmark & Baseline Comparison",
+            "",
+            "### A. Random-Entry Baseline",
+            (
+                f"- **Strategy Rank**: **{random_base.percentile:.1f}th percentile** "
+                f"across {random_base.num_seeds} random seeds."
+            ),
+            (
+                f"- **Beat Count**: Beat {random_base.beat_count} / "
+                f"{random_base.num_seeds} iterations."
+            ),
+            f"- **Random Median Return**: ${random_base.median_random_return_usd:+,.2f}",
+            (
+                f"- **Random Range**: [${random_base.min_random_return_usd:+,.2f}, "
+                f"${random_base.max_random_return_usd:+,.2f}]"
+            ),
+            (
+                "- **Verdict**: **"
+                + (
+                    "BEATS random entry benchmark"
+                    if random_base.percentile >= 50
+                    else "DOES NOT BEAT random entry benchmark"
+                )
+                + "**"
+            ),
+            (
+                f"- **95% Confidence Interval**: "
+                f"[{random_base.ci_lower:.1f}%, {random_base.ci_upper:.1f}%]"
+                if random_base.ci_upper > 0
+                else ""
+            ),
+            (
+                f"- **Confidence Note**: {random_base.confidence_note}"
+                if random_base.confidence_note
+                else ""
+            ),
+            "",
+            "### B. Buy & Hold per Symbol",
+            "",
+            "| Symbol | Start Price | End Price | Price Return | Net Return | Fees | Funding |",
+            "|---|---|---|---|---|---|---|",
+        ]
+    )
 
     for s, b in bnh.items():
         lines.append(
@@ -550,9 +559,9 @@ def _write_html_report(
         shadow_banner = (
             '<div style="background: #1e1b4b; border: 1px solid #6366f1; color: #a5b4fc; '
             'padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-weight: 500;">'
-            '🔬 <b>DIAGNOSTIC RUN &mdash; SHADOW MODE:</b> Circuit breakers disabled '
-            '(observational only). All position sizing and safety checks active, '
-            'breaker halts non-blocking.</div>'
+            "🔬 <b>DIAGNOSTIC RUN &mdash; SHADOW MODE:</b> Circuit breakers disabled "
+            "(observational only). All position sizing and safety checks active, "
+            "breaker halts non-blocking.</div>"
         )
 
     rm_card_html = ""
@@ -567,18 +576,16 @@ def _write_html_report(
         rej_rows = "".join(
             f"<tr><td><code>{code}</code></td><td><b>{cnt:,}</b></td>"
             f"<td>{(cnt / tot_rej * 100):.1f}%</td></tr>"
-            for code, cnt in sorted(
-                html_first_rejections.items(), key=lambda x: x[1], reverse=True
-            )
+            for code, cnt in sorted(html_first_rejections.items(), key=lambda x: x[1], reverse=True)
         )
 
         cb_rows = ""
         if result.circuit_breaker_transitions:
             tr_cells = []
             for tr in result.circuit_breaker_transitions:
-                dt_str = datetime.fromtimestamp(
-                    tr.get("timestamp_ms", 0) / 1000, UTC
-                ).strftime("%Y-%m-%d %H:%M")
+                dt_str = datetime.fromtimestamp(tr.get("timestamp_ms", 0) / 1000, UTC).strftime(
+                    "%Y-%m-%d %H:%M"
+                )
                 tr_cells.append(
                     f"<tr><td>{dt_str}</td>"
                     f"<td>{tr.get('from_state')} &rarr; {tr.get('to_state')}</td>"

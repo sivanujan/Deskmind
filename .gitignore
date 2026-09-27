@@ -40,6 +40,10 @@ data/*.duckdb
 data/*.duckdb.wal
 *.duckdb
 *.duckdb.wal
+data/journal/*
+!data/journal/.gitkeep
+data/trade/*
+!data/trade/.gitkeep
 
 # Backtest reports
 reports/backtests/*

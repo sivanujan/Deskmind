@@ -19,9 +19,17 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 ALLOWED_TRADING_MODES: tuple[str, ...] = ("paper", "testnet")
 FORBIDDEN_POSTGRES_PORT = 5432
 # Binance futures testnet / demo-trading hosts only; mainnet (fapi.binance.com) is refused.
-ALLOWED_BINANCE_FUTURES_HOSTS: tuple[str, ...] = (
+ALLOWED_BINANCE_FUTURES_REST_HOSTS: tuple[str, ...] = (
     "testnet.binancefuture.com",
     "demo-fapi.binance.com",
+)
+ALLOWED_BINANCE_FUTURES_WS_HOSTS: tuple[str, ...] = (
+    "demo-fstream.binance.com",
+    "stream.binancefuture.com",
+    "fstream.binancefuture.com",
+)
+ALLOWED_BINANCE_FUTURES_HOSTS: tuple[str, ...] = (
+    ALLOWED_BINANCE_FUTURES_REST_HOSTS + ALLOWED_BINANCE_FUTURES_WS_HOSTS
 )
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash"
 # The only place symbols are listed; everything else takes `symbol` as a parameter.
@@ -85,6 +93,9 @@ class Settings(BaseSettings):
     binance_api_key: SecretStr = SecretStr("")
     binance_secret_key: SecretStr = SecretStr("")
     binance_futures_base_url: str = "https://testnet.binancefuture.com"
+    binance_futures_ws_base_url: str = "wss://demo-fstream.binance.com"
+    approval_mode: Literal["auto", "manual"] = "auto"
+    testnet_price_divergence_max_pct: Decimal = Decimal("0.05")
 
     # Public market data (klines, mark price, funding, exchangeInfo). Unauthenticated GETs only:
     # the market-data client has no way to send API keys or sign requests.
@@ -135,12 +146,32 @@ class Settings(BaseSettings):
     @classmethod
     def _testnet_only(cls, v: str) -> str:
         parsed = urlparse(v.strip())
-        if parsed.scheme != "https" or parsed.hostname not in ALLOWED_BINANCE_FUTURES_HOSTS:
+        if parsed.scheme != "https" or parsed.hostname not in ALLOWED_BINANCE_FUTURES_REST_HOSTS:
             raise ValueError(
-                f"BINANCE_FUTURES_BASE_URL={v!r} is not a testnet host; allowed: "
-                f"{ALLOWED_BINANCE_FUTURES_HOSTS}"
+                f"BINANCE_FUTURES_BASE_URL={v!r} is not an allowed testnet REST host; allowed: "
+                f"{ALLOWED_BINANCE_FUTURES_REST_HOSTS}"
             )
         return v.strip().rstrip("/")
+
+    @field_validator("binance_futures_ws_base_url")
+    @classmethod
+    def _testnet_ws_only(cls, v: str) -> str:
+        parsed = urlparse(v.strip())
+        if parsed.scheme != "wss" or parsed.hostname not in ALLOWED_BINANCE_FUTURES_WS_HOSTS:
+            raise ValueError(
+                f"BINANCE_FUTURES_WS_BASE_URL={v!r} is not an allowed testnet WS host; allowed: "
+                f"{ALLOWED_BINANCE_FUTURES_WS_HOSTS}"
+            )
+        return v.strip().rstrip("/")
+
+    @field_validator("approval_mode", mode="before")
+    @classmethod
+    def _validate_approval_mode(cls, v: object) -> str:
+        if isinstance(v, str):
+            v = v.strip().lower()
+        if v not in ("auto", "manual"):
+            raise ValueError(f"APPROVAL_MODE={v!r} must be 'auto' or 'manual'")
+        return str(v)
 
     @field_validator("binance_market_data_url")
     @classmethod

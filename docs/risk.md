@@ -148,10 +148,10 @@ In live mode, if feed latency is stale or the preceding candle was flagged as de
 
 Config settings are strictly validated against immutable code constants:
 ```python
-HARD_CAP_MAX_RISK_PCT = Decimal("0.02")        # Max 2% per trade
+HARD_CAP_MAX_RISK_PCT = Decimal("0.02")  # Max 2% per trade
 HARD_CAP_MAX_STOP_PRICE_PCT = Decimal("0.15")  # Max 15% stop distance
-HARD_CAP_MAX_LEVERAGE = 10                     # Max 10x leverage
-HARD_CAP_MAX_NOTIONAL_MULT = Decimal("5.0")    # Max 5x equity notional
+HARD_CAP_MAX_LEVERAGE = 10  # Max 10x leverage
+HARD_CAP_MAX_NOTIONAL_MULT = Decimal("5.0")  # Max 5x equity notional
 ```
 Attempting to instantiate `RiskConfig` with values exceeding these limits raises an immediate `ValueError`.
 

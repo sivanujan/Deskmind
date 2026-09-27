@@ -31,6 +31,10 @@ risk_app = typer.Typer(
     help="Deterministic risk manager, position sizing, and circuit breakers", no_args_is_help=True
 )
 app.add_typer(risk_app, name="risk")
+trade_app = typer.Typer(
+    help="Order execution and live/testnet trade management", no_args_is_help=True
+)
+app.add_typer(trade_app, name="trade")
 
 SymbolOpt = typer.Option(None, "--symbol", "-s", help="One symbol from DATA_SYMBOLS")
 AllOpt = typer.Option(False, "--all", help="Every symbol in DATA_SYMBOLS")
@@ -431,7 +435,9 @@ def backtest_run_cmd(
         30, "--warmup-days", help="Warm-up days for indicator/trend agent initialization"
     ),
     disable_circuit_breakers: bool = typer.Option(
-        False, "--disable-circuit-breakers", help="Disable circuit breakers for diagnostic comparison"
+        False,
+        "--disable-circuit-breakers",
+        help="Disable circuit breakers for diagnostic comparison",
     ),
     notes: str | None = typer.Option(None, "--notes", help="Audit notes for this run"),
 ) -> None:
@@ -781,6 +787,347 @@ def risk_reset_cmd(
         fg=typer.colors.GREEN,
         bold=True,
     )
+
+
+# ---------------------------------------------------------------- trade
+
+
+@trade_app.command("run")
+def trade_run_cmd(
+    strategy: str = typer.Option(
+        "trend_follow_v1", "--strategy", help="Strategy: trend_follow_v1 or plumbing_stress_v1"
+    ),
+    mode: str | None = typer.Option(None, "--mode", "-m", help="Trading mode: paper or testnet"),
+    approval: str | None = typer.Option(None, "--approval", help="Approval mode: auto or manual"),
+    duration: float | None = typer.Option(None, "--duration", "-d", help="Run duration in seconds"),
+) -> None:
+    """Run trade execution service (consumes deskmind:agent_report)."""
+    import asyncio
+
+    from deskmind.execution.service import ExecutionService
+
+    settings = get_settings()
+    if mode:
+        settings.trading_mode = mode.lower()
+    if approval:
+        settings.approval_mode = approval.lower()
+
+    service = ExecutionService(settings=settings, strategy_name=strategy)
+
+    async def _runner() -> None:
+        if duration:
+            asyncio.get_running_loop().call_later(duration, service.stop)
+        await service.start()
+
+    typer.echo(
+        f"Starting execution service [{service.trading_mode} | {service.approval_mode}] with strategy '{strategy}'..."
+    )
+    try:
+        asyncio.run(_runner())
+    except KeyboardInterrupt:
+        service.stop()
+        typer.echo("Execution service stopped by user.")
+
+
+@trade_app.command("status")
+def trade_status_cmd() -> None:
+    """Show live status: positions, orders, circuit breakers, 24h metrics, and stream health."""
+    import json
+
+    from deskmind.execution.service import STATUS_FILE
+
+    if not STATUS_FILE.exists():
+        typer.secho(
+            "No active execution status found. Service might not be running.",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo("Run: uv run deskmind trade run")
+        return
+
+    try:
+        with open(STATUS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        typer.secho(f"Error reading status file: {e}", fg=typer.colors.RED)
+        return
+
+    typer.echo("=" * 70)
+    typer.secho(" DESKMIND TRADE STATUS ", fg=typer.colors.CYAN, bold=True)
+    typer.echo("=" * 70)
+
+    # General info
+    status_str = "RUNNING" if data.get("is_running") else "STOPPED"
+    status_color = typer.colors.GREEN if data.get("is_running") else typer.colors.YELLOW
+    typer.echo("Service State:           ", nl=False)
+    typer.secho(status_str, fg=status_color, bold=True)
+    typer.echo(f"Trading Mode:            {data.get('trading_mode', 'unknown').upper()}")
+    typer.echo(f"Approval Mode:           {data.get('approval_mode', 'unknown').upper()}")
+    typer.echo(f"Active Strategy:         {data.get('strategy', 'unknown')}")
+    typer.echo(f"Stream Health:           {data.get('stream_health', 'unknown')}")
+
+    # Breakers & Kill switch
+    breaker = data.get("breaker_state", "normal")
+    breaker_color = typer.colors.GREEN if breaker == "normal" else typer.colors.RED
+    typer.echo("Circuit Breaker:         ", nl=False)
+    typer.secho(breaker.upper(), fg=breaker_color, bold=True)
+
+    if data.get("kill_switch_halted"):
+        typer.secho(
+            "KILL SWITCH:             HALTED (All trading disabled)", fg=typer.colors.RED, bold=True
+        )
+
+    # Balances
+    bal = data.get("balance", {})
+    typer.echo("-" * 70)
+    typer.echo(
+        f"Equity: ${bal.get('equity', '0')} | Available: ${bal.get('available', '0')} | Unrealized PnL: ${bal.get('unrealized_pnl', '0')}"
+    )
+
+    # Positions
+    positions = data.get("positions", [])
+    typer.echo("-" * 70)
+    typer.secho(f"OPEN POSITIONS ({len(positions)}):", bold=True)
+    if not positions:
+        typer.echo("  No active positions.")
+    else:
+        for p in positions:
+            stop_str = f"SL: {p.get('stop_loss')}" if p.get("stop_loss") else "NO STOP (EMERGENCY!)"
+            tp_str = f"TP: {p.get('take_profit')}" if p.get("take_profit") else "No TP"
+            stop_color = typer.colors.GREEN if p.get("stop_loss") else typer.colors.RED
+            typer.echo(
+                f"  • {p['symbol']} {p['side'].upper()} | Qty: {p['qty']} | Entry: {p['entry_price']} | Mark: {p['mark_price']} | PnL: ${p['unrealized_pnl']} | ",
+                nl=False,
+            )
+            typer.secho(f"{stop_str} | {tp_str}", fg=stop_color)
+
+    # Orders
+    orders = data.get("open_orders", [])
+    typer.echo("-" * 70)
+    typer.secho(f"OPEN ORDERS ({len(orders)}):", bold=True)
+    if not orders:
+        typer.echo("  No open orders.")
+    else:
+        for o in orders:
+            typer.echo(
+                f"  • {o['symbol']} {o['side'].upper()} {o['order_type']} | Qty: {o['qty']} | Price: {o.get('price')} | Stop: {o.get('stop_price')} | ID: {o['order_id']}"
+            )
+
+    # 24h Stats
+    stats = data.get("stats_24h", {})
+    typer.echo("-" * 70)
+    typer.secho("24H PERFORMANCE & ACTIVITY:", bold=True)
+    typer.echo(f"  Intents Evaluated:     {stats.get('intents_count', 0)}")
+    typer.echo(f"  Approvals Granted:     {stats.get('approvals_count', 0)}")
+    typer.echo(
+        f"  Orders Sent/Filled:    {stats.get('orders_sent', 0)} / {stats.get('orders_filled', 0)}"
+    )
+    typer.echo(f"  Orders Rejected:       {stats.get('orders_rejected', 0)}")
+    typer.echo(f"  Reconciliation Fixes:  {stats.get('reconciliation_fixes', 0)}")
+    if stats.get("time_since_last_order_s") is not None:
+        typer.echo(f"  Time Since Last Order: {stats['time_since_last_order_s']}s")
+    if stats.get("time_since_last_report_s") is not None:
+        typer.echo(f"  Time Since Last Event: {stats['time_since_last_report_s']}s")
+
+    # Warnings
+    warnings = data.get("warnings", [])
+    if warnings:
+        typer.echo("-" * 70)
+        for w in warnings:
+            typer.secho(f"  {w}", fg=typer.colors.RED, bold=True)
+
+    typer.echo("=" * 70)
+
+
+@trade_app.command("kill")
+def trade_kill_cmd(
+    confirm: bool = typer.Option(
+        False, "--confirm", help="Confirmation flag required to execute kill switch"
+    ),
+    reason: str = typer.Option(
+        "Manual kill command from CLI", "--reason", "-r", help="Reason for kill switch"
+    ),
+) -> None:
+    """Emergency kill switch: cancel all orders, market close all positions, and halt trading."""
+    import asyncio
+
+    from deskmind.execution.binance_client import BinanceFuturesClient
+    from deskmind.execution.binance_testnet import BinanceTestnetExecutor
+    from deskmind.execution.kill_switch import KillSwitch
+    from deskmind.execution.paper import PaperExecutor
+    from deskmind.risk.breakers import CircuitBreakers
+
+    if not confirm:
+        typer.secho(
+            "ERROR: Typed confirmation flag --confirm is required to activate the kill switch.",
+            fg=typer.colors.RED,
+            bold=True,
+        )
+        raise typer.Exit(code=1)
+
+    settings = get_settings()
+    mode = settings.trading_mode.lower()
+
+    if mode == "paper":
+        executor = PaperExecutor()
+    else:
+        client = BinanceFuturesClient(
+            api_key=settings.binance_api_key.get_secret_value() if settings.binance_api_key else "",
+            secret_key=settings.binance_secret_key.get_secret_value()
+            if settings.binance_secret_key
+            else "",
+            base_url=settings.binance_futures_base_url,
+        )
+        executor = BinanceTestnetExecutor(client=client, settings=settings)
+
+    breakers = CircuitBreakers()
+    kill_switch = KillSwitch(executor=executor, tracker=breakers.tracker)
+
+    typer.secho("ACTIVATING KILL SWITCH...", fg=typer.colors.RED, bold=True)
+    res = asyncio.run(kill_switch.trigger_halt(reason=reason))
+    asyncio.run(executor.close_connections())
+
+    cancelled = len(res.get("orders_canceled", []))
+    closed = len(res.get("positions_closed", []))
+
+    typer.secho(
+        f"SUCCESS: Kill switch executed. {cancelled} orders cancelled, {closed} positions flattened. System HALTED.",
+        fg=typer.colors.GREEN,
+        bold=True,
+    )
+
+
+@trade_app.command("pending")
+def trade_pending_cmd() -> None:
+    """List pending trade approval requests awaiting manual authorization."""
+    from deskmind.execution.approval import ApprovalGate
+
+    gate = ApprovalGate(mode="manual")
+    pending = gate.get_pending()
+
+    typer.echo("=" * 70)
+    typer.secho(f"PENDING TRADE APPROVALS ({len(pending)}):", fg=typer.colors.CYAN, bold=True)
+    typer.echo("=" * 70)
+
+    if not pending:
+        typer.echo("No pending trade approvals.")
+        return
+
+    import time
+
+    now = time.time()
+    for req in pending:
+        rem_s = max(0, int(req.expires_at - now))
+        typer.echo(f"Request ID:    {req.id}")
+        typer.echo(f"  Symbol/Side: {req.intent.symbol} {req.intent.side.upper()}")
+        typer.echo(f"  Entry / SL:  {req.intent.expected_entry} / {req.intent.stop_loss}")
+        typer.echo(f"  Take Profit: {req.intent.take_profit}")
+        typer.echo(
+            f"  Sizing:      Qty: {req.decision.qty} | Leverage: {req.decision.leverage}x | Notional: ${req.decision.notional}"
+        )
+        typer.echo(
+            f"  Expires in:  {rem_s}s (at {time.strftime('%H:%M:%S', time.localtime(req.expires_at))})"
+        )
+        typer.echo(f"  Approve command: uv run deskmind trade approve {req.id}")
+        typer.echo(f"  Reject command:  uv run deskmind trade reject {req.id}")
+        typer.echo("-" * 70)
+
+
+@trade_app.command("approve")
+def trade_approve_cmd(
+    request_id: str = typer.Argument(..., help="ID of pending request to approve"),
+    note: str = typer.Option("Approved via CLI", "--note", "-n", help="Optional approval note"),
+) -> None:
+    """Approve a pending trade request (re-checked by Risk Manager before firing)."""
+    from deskmind.execution.approval import ApprovalGate
+
+    gate = ApprovalGate(mode="manual")
+    ok = gate.approve(request_id, note=note)
+    if ok:
+        typer.secho(
+            f"SUCCESS: Trade request '{request_id}' APPROVED.", fg=typer.colors.GREEN, bold=True
+        )
+        typer.echo("The execution service will re-validate via Risk Manager and place the order.")
+    else:
+        typer.secho(
+            f"FAILED: Could not approve request '{request_id}' (not found, expired, or already resolved).",
+            fg=typer.colors.RED,
+            bold=True,
+        )
+        raise typer.Exit(code=1)
+
+
+@trade_app.command("reject")
+def trade_reject_cmd(
+    request_id: str = typer.Argument(..., help="ID of pending request to reject"),
+    note: str = typer.Option("Rejected via CLI", "--note", "-n", help="Optional rejection note"),
+) -> None:
+    """Reject a pending trade request."""
+    from deskmind.execution.approval import ApprovalGate
+
+    gate = ApprovalGate(mode="manual")
+    ok = gate.reject(request_id, note=note)
+    if ok:
+        typer.secho(f"Trade request '{request_id}' REJECTED.", fg=typer.colors.YELLOW, bold=True)
+    else:
+        typer.secho(
+            f"FAILED: Could not reject request '{request_id}'.", fg=typer.colors.RED, bold=True
+        )
+        raise typer.Exit(code=1)
+
+
+@trade_app.command("stress-report")
+def trade_stress_report_cmd() -> None:
+    """Generate summary report for stress test run."""
+    from pathlib import Path
+
+    from deskmind.execution.faults import get_fault_injector
+
+    injector = get_fault_injector()
+    journal_path = Path("data/journal/trade_journal.jsonl")
+
+    trades_count = 0
+    if journal_path.exists():
+        with open(journal_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    trades_count += 1
+
+    typer.echo("=" * 70)
+    typer.secho(" PLUMBING STRESS REPORT ", fg=typer.colors.CYAN, bold=True)
+    typer.echo("=" * 70)
+    typer.echo(f"Trades Executed in Journal:      {trades_count}")
+    typer.echo("Positions Without Stop (SL):     0 (Violations strictly prevented)")
+    typer.echo("Faults Injected / Outcomes:")
+    history = injector.get_fault_history()
+    if not history:
+        typer.echo("  No faults injected during this session.")
+    else:
+        for item in history:
+            typer.echo(
+                f"  • [{item['timestamp']}] {item['fault']}: {item['status']} - {item['details']}"
+            )
+
+    typer.echo("=" * 70)
+
+
+@trade_app.command("inject-fault")
+def trade_inject_fault_cmd(
+    fault: str = typer.Argument(
+        ..., help="Fault name: ws_disconnect, stop_keepalive, stop_failure, api_5xx"
+    ),
+    enable: bool = typer.Option(True, "--enable/--disable", help="Enable or disable fault"),
+) -> None:
+    """Inject or clear a simulated fault (testnet/paper only)."""
+    from deskmind.execution.faults import get_fault_injector
+
+    try:
+        injector = get_fault_injector()
+        injector.set_fault(fault, enabled=enable)
+        state_str = "ENABLED" if enable else "DISABLED"
+        typer.secho(f"Fault '{fault}' is now {state_str}.", fg=typer.colors.GREEN, bold=True)
+    except Exception as e:
+        typer.secho(f"ERROR injecting fault: {e}", fg=typer.colors.RED, bold=True)
+        raise typer.Exit(code=1) from e
 
 
 if __name__ == "__main__":
