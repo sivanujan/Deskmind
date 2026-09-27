@@ -45,10 +45,30 @@ It operates under strict safety invariants designed to prevent capital loss, rac
       • Sized to actual fill qty     • Sized to actual fill qty
 ```
 
-### Stop Trigger Price Type
+### Stop Trigger Price Type & Binance Algo Orders Specification
 - **Type**: `CONTRACT_PRICE` (Binance Last Traded Price).
 - **Rationale**: The backtest engine models bar execution and stop triggers using candle high/low prices (which reflect actual contract trade prints, not mark price index calculations). Using `CONTRACT_PRICE` aligns live execution strictly with the backtest simulation models.
-- **Conditional Order Types**: Placed using `STOP_MARKET` and `TAKE_PROFIT_MARKET` with `reduceOnly="true"` and `workingType="CONTRACT_PRICE"`.
+- **Binance USDS-M Futures Algo Service Migration**:
+  Binance migrated all conditional orders (`STOP`, `STOP_MARKET`, `TAKE_PROFIT`, `TAKE_PROFIT_MARKET`, `TRAILING_STOP_MARKET`) on USDS-M Futures to the dedicated **Algo Service**. Attempting to place conditional orders via the legacy `POST /fapi/v1/order` endpoint fails with:
+  > `{"code": -4120, "msg": "Order type is not supported in this endpoint. Please use algo order API /fapi/v1/algoOrder"}`
+  
+  Deskmind uses the official Algo Service endpoints:
+  - **Placing Conditional Orders**: `POST /fapi/v1/algoOrder`
+    - `symbol`: e.g. `"BTCUSDT"`
+    - `side`: `"BUY"` | `"SELL"`
+    - `algoType`: `"CONDITIONAL"`
+    - `type`: `"STOP_MARKET"` | `"TAKE_PROFIT_MARKET"`
+    - `triggerPrice`: stop or take-profit price rounded to tick size
+    - `quantity`: filled quantity rounded to step size
+    - `reduceOnly`: `"true"`
+    - `workingType`: `"CONTRACT_PRICE"`
+    - `clientAlgoId`: deterministic client ID (e.g. `dm_s_<setup_id>`)
+    - `positionSide`: `"BOTH"` (One-way mode)
+  - **Querying Open Conditional Orders**: `GET /fapi/v1/openAlgoOrders`
+  - **Cancelling Conditional Orders**: `DELETE /fapi/v1/algoOrder` (by `algoId` or `clientAlgoId`)
+  - **Batch Cancelling**: `DELETE /fapi/v1/algoOpenOrders`
+  
+  The executor automatically queries and cancels across both regular and algo endpoints to guarantee no protective order is missed during reconciliation or kill switch activation.
 
 ### Partial Fills & Protective Resizing
 When an entry order fills partially:
@@ -141,13 +161,25 @@ uv run deskmind trade reject <req_id>
 
 ---
 
-## 8. Paper Executor (`paper.py`)
+## 8. Paper Executor (`paper.py`) & Shared Fill Model (`fills.py`)
 
 The Paper Executor implements the exact same `BaseExecutor` ABC interface as `BinanceTestnetExecutor`.
 - Tracks simulated account balance, margins, positions, and open orders in memory.
-- Uses identical friction models as the backtest engine:
-  - Maker fee: 0.02%, Taker fee: 0.05%
-  - Slippage model: 2 bps base + 0.05 ATR
-  - Liquidation logic: margin ratio calculation and maintenance margin thresholds
-- Evaluates triggers on incoming 5m candle bars (`check_triggers_on_candle()`).
-- Emits chart overlay markers with `source_agent = "exec:paper"`.
+- Uses the **exact same unified fill model** (`src/deskmind/backtest/fills.py`) as the backtest engine:
+  - `calc_slippage_pct(atr, price)`: Dynamic slippage combining 2 bps base + 0.05 ATR fraction.
+  - `simulate_market_fill(target_price, side, qty, atr, is_maker)`: Fills market orders with dynamic adverse slippage and computes fees (0.02% maker, 0.05% taker).
+  - `simulate_candle_exit(candle, side, stop_loss, take_profit, atr)`: Evaluates intra-candle stop and take-profit triggers with proper priority (worst-case stop fill when both trigger in one bar).
+- Fixed Paper Executor Bug: TP and SL triggers in `check_triggers_on_candle` pass explicit trigger prices to `close()`, ensuring take-profit exits fill at trigger price (e.g. $64,000) rather than falling back to current candle close ($60,000).
+- Backtest invariance verified: Running `trend_follow_v1` on TRAIN after migrating to the shared fill model yields 100% identical results (`$-1,507.21` return, 119 trades, 30.3% win rate).
+
+---
+
+## 9. Trade Journal & Execution Overlays (PostgreSQL)
+
+All trade lifecycle events (intents, order executions, position fills, and exits) are recorded directly into PostgreSQL:
+- **Database Table**: `trade_journal` (Alembic migration `0004_trade_journal_execution_fields.py`)
+  - Columns: `id`, `created_at`, `symbol`, `side`, `entry`, `sl`, `tp`, `size`, `leverage`, `status`, `pnl`, `exit_price`, `exit_time`, `exit_reason`, `fees_paid`, `trading_mode`, `orders`, `risk_decision`.
+- **API Overlays**: Served directly through the read-only `/api/overlays` endpoint via `load_execution_overlays`.
+  - Maps entries to `trade_entry` markers (green/red arrows) and exits to `trade_exit` markers (sky-blue circles).
+  - Source agent labeled as `exec:testnet` or `exec:paper`.
+  - File-based JSONL is retained strictly as an offline emergency fallback / local debug export.

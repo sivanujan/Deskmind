@@ -123,5 +123,94 @@ def load_backtest_overlays(
         return []
 
 
+async def load_execution_overlays(
+    symbol: str,
+    start: int | None = None,
+    end: int | None = None,
+    as_of: int | None = None,
+) -> list[Overlay]:
+    """Load execution trade overlays from PostgreSQL trade_journal table.
+
+    Converts executed entries and exits into chart MarkerOverlays.
+    """
+    overlays: list[Overlay] = []
+    try:
+        from sqlalchemy import select
+
+        from deskmind.db.models import TradeJournal
+        from deskmind.db.session import session_scope
+
+        async with session_scope() as session:
+            stmt = select(TradeJournal).where(TradeJournal.symbol == symbol)
+            res = await session.execute(stmt)
+            trades = res.scalars().all()
+
+        for t in trades:
+            mode = t.trading_mode or "live"
+            src = f"exec:{mode}"
+            entry_time = int(t.created_at.timestamp())
+
+            # Entry marker
+            if (as_of is None or entry_time <= as_of) and (
+                (start is None or entry_time >= start) and (end is None or entry_time < end)
+            ):
+                overlays.append(
+                    MarkerOverlay(
+                        id=f"exec_{t.id}_entry",
+                        kind="trade_entry",
+                        source_agent=src,
+                        agent_version="1.0.0",
+                        schema_version=1,
+                        confirmed_at=entry_time,
+                        time=entry_time,
+                        position="below" if t.side == "long" else "above",
+                        shape="arrowUp" if t.side == "long" else "arrowDown",
+                        color="#22c55e" if t.side == "long" else "#ef4444",
+                        text=f"{t.side.upper()} {t.size} @ {t.entry}",
+                        meta={
+                            "symbol": t.symbol,
+                            "price": float(t.entry),
+                            "cid": t.client_order_id or "",
+                            "trading_mode": mode,
+                        },
+                    )
+                )
+
+            # Exit marker (if closed)
+            exit_dt = t.exit_time
+            if t.status == "closed" and exit_dt is not None and t.exit_price is not None:
+                exit_time = int(exit_dt.timestamp())
+                if (as_of is None or exit_time <= as_of) and (
+                    (start is None or exit_time >= start) and (end is None or exit_time < end)
+                ):
+                    overlays.append(
+                        MarkerOverlay(
+                            id=f"exec_{t.id}_exit",
+                            kind="trade_exit",
+                            source_agent=src,
+                            agent_version="1.0.0",
+                            schema_version=1,
+                            confirmed_at=exit_time,
+                            time=exit_time,
+                            position="above" if t.side == "long" else "below",
+                            shape="circle",
+                            color="#38bdf8",
+                            text=f"EXIT ({t.exit_reason or 'close'}) PnL: ${t.pnl:.2f}",
+                            meta={
+                                "symbol": t.symbol,
+                                "price": float(t.exit_price),
+                                "pnl": float(t.pnl),
+                                "cid": t.client_order_id or "",
+                                "trading_mode": mode,
+                            },
+                        )
+                    )
+    except Exception:
+        # Fallback gracefully if database is not reachable
+        pass
+
+    return overlays
+
+
 if __name__ == "__main__":
     print(json.dumps(json_schema(), indent=2, sort_keys=True))

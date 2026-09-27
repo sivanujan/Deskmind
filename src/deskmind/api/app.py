@@ -177,6 +177,10 @@ def create_app(
             from deskmind.api.overlays import load_backtest_overlays
 
             overlays.extend(load_backtest_overlays(run_id, sym, start, end, as_of))
+        else:
+            from deskmind.api.overlays import load_execution_overlays
+
+            overlays.extend(await load_execution_overlays(sym, start, end, as_of))
         return OverlayResponse(symbol=sym, timeframe=tf, overlays=overlays)
 
     @app.get("/api/backtest/runs")

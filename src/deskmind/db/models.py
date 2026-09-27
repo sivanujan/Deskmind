@@ -113,6 +113,12 @@ class TradeJournal(Base):
     head_agent_reasoning: Mapped[str | None] = mapped_column(Text)
     risk_decision: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     client_order_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    exit_price: Mapped[Decimal | None] = mapped_column(PRICE)
+    exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    exit_reason: Mapped[str | None] = mapped_column(String(32))
+    fees_paid: Mapped[Decimal | None] = mapped_column(PRICE)
+    trading_mode: Mapped[str] = mapped_column(String(16), server_default="paper", nullable=False)
+    orders: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
 
 
 class StrategyLibrary(Base):

@@ -358,38 +358,73 @@ class BinanceTestnetExecutor(BaseExecutor):
         stop_price = round_price(intent.stop_loss, filters.tick_size)
         tp_price = round_price(intent.take_profit, filters.tick_size)
 
+        # 6. Place Exchange-Side Protective Stop Loss and Take Profit
+        # Using Binance Algo Service (/fapi/v1/algoOrder) per current Binance USDT-M specification
+        stop_price = round_price(intent.stop_loss, filters.tick_size)
+        tp_price = round_price(intent.take_profit, filters.tick_size)
+
         stop_order = None
         tp_order = None
         stop_placed = False
 
-        # Stop placement with retries
+        # Stop placement with retries using Algo Service
         for attempt in range(1, 4):
             try:
-                sl_resp = await self.client.request(
-                    "POST",
-                    "/fapi/v1/order",
-                    params={
-                        "symbol": symbol,
-                        "side": protective_side,
-                        "type": "STOP_MARKET",
-                        "quantity": str(exec_qty),
-                        "stopPrice": str(stop_price),
-                        "reduceOnly": "true",
-                        "workingType": WorkingType.CONTRACT_PRICE.value,
-                        "newClientOrderId": sl_cid,
-                    },
-                    signed=True,
-                    weight=1,
+                # Try modern Algo Service first
+                try:
+                    sl_resp = await self.client.request(
+                        "POST",
+                        "/fapi/v1/algoOrder",
+                        params={
+                            "symbol": symbol,
+                            "side": protective_side,
+                            "algoType": "CONDITIONAL",
+                            "type": "STOP_MARKET",
+                            "quantity": str(exec_qty),
+                            "triggerPrice": str(stop_price),
+                            "reduceOnly": "true",
+                            "workingType": WorkingType.CONTRACT_PRICE.value,
+                            "clientAlgoId": sl_cid,
+                            "positionSide": "BOTH",
+                        },
+                        signed=True,
+                        weight=1,
+                    )
+                except BinanceAPIException as algo_err:
+                    # If endpoint is unknown on an older mock/stub, fallback to legacy order endpoint
+                    if algo_err.code in (-4059, -1002, 404):
+                        sl_resp = await self.client.request(
+                            "POST",
+                            "/fapi/v1/order",
+                            params={
+                                "symbol": symbol,
+                                "side": protective_side,
+                                "type": "STOP_MARKET",
+                                "quantity": str(exec_qty),
+                                "stopPrice": str(stop_price),
+                                "reduceOnly": "true",
+                                "workingType": WorkingType.CONTRACT_PRICE.value,
+                                "newClientOrderId": sl_cid,
+                            },
+                            signed=True,
+                            weight=1,
+                        )
+                    else:
+                        raise
+
+                oid = str(sl_resp.get("algoId", sl_resp.get("orderId", "")))
+                status = str(
+                    sl_resp.get("orderStatus", sl_resp.get("status", OrderStatus.NEW.value))
                 )
                 stop_order = OrderInfo(
                     client_order_id=sl_cid,
-                    order_id=str(sl_resp.get("orderId", "")),
+                    order_id=oid,
                     symbol=symbol,
                     side=protective_side,
                     order_type=OrderType.STOP_MARKET.value,
                     qty=exec_qty,
                     stop_price=stop_price,
-                    status=str(sl_resp.get("status", OrderStatus.NEW.value)),
+                    status=status,
                     reduce_only=True,
                     working_type=WorkingType.CONTRACT_PRICE.value,
                     created_at_ms=now_ms,
@@ -397,7 +432,11 @@ class BinanceTestnetExecutor(BaseExecutor):
                 )
                 stop_placed = True
                 log.info(
-                    "protective_stop_placed", symbol=symbol, stop_price=str(stop_price), cid=sl_cid
+                    "protective_stop_placed",
+                    symbol=symbol,
+                    stop_price=str(stop_price),
+                    cid=sl_cid,
+                    algo_id=oid,
                 )
                 break
             except BinanceAPIException as e:
@@ -424,39 +463,73 @@ class BinanceTestnetExecutor(BaseExecutor):
                 timestamp_ms=now_ms,
             )
 
-        # Place Take Profit (non-critical, but reduce-only)
+        # Place Take Profit via Algo Service (non-critical, but reduce-only)
         try:
-            tp_resp = await self.client.request(
-                "POST",
-                "/fapi/v1/order",
-                params={
-                    "symbol": symbol,
-                    "side": protective_side,
-                    "type": "TAKE_PROFIT_MARKET",
-                    "quantity": str(exec_qty),
-                    "stopPrice": str(tp_price),
-                    "reduceOnly": "true",
-                    "workingType": WorkingType.CONTRACT_PRICE.value,
-                    "newClientOrderId": tp_cid,
-                },
-                signed=True,
-                weight=1,
+            try:
+                tp_resp = await self.client.request(
+                    "POST",
+                    "/fapi/v1/algoOrder",
+                    params={
+                        "symbol": symbol,
+                        "side": protective_side,
+                        "algoType": "CONDITIONAL",
+                        "type": "TAKE_PROFIT_MARKET",
+                        "quantity": str(exec_qty),
+                        "triggerPrice": str(tp_price),
+                        "reduceOnly": "true",
+                        "workingType": WorkingType.CONTRACT_PRICE.value,
+                        "clientAlgoId": tp_cid,
+                        "positionSide": "BOTH",
+                    },
+                    signed=True,
+                    weight=1,
+                )
+            except BinanceAPIException as algo_err:
+                if algo_err.code in (-4059, -1002, 404):
+                    tp_resp = await self.client.request(
+                        "POST",
+                        "/fapi/v1/order",
+                        params={
+                            "symbol": symbol,
+                            "side": protective_side,
+                            "type": "TAKE_PROFIT_MARKET",
+                            "quantity": str(exec_qty),
+                            "stopPrice": str(tp_price),
+                            "reduceOnly": "true",
+                            "workingType": WorkingType.CONTRACT_PRICE.value,
+                            "newClientOrderId": tp_cid,
+                        },
+                        signed=True,
+                        weight=1,
+                    )
+                else:
+                    raise
+
+            tp_oid = str(tp_resp.get("algoId", tp_resp.get("orderId", "")))
+            tp_status = str(
+                tp_resp.get("orderStatus", tp_resp.get("status", OrderStatus.NEW.value))
             )
             tp_order = OrderInfo(
                 client_order_id=tp_cid,
-                order_id=str(tp_resp.get("orderId", "")),
+                order_id=tp_oid,
                 symbol=symbol,
                 side=protective_side,
                 order_type=OrderType.TAKE_PROFIT_MARKET.value,
                 qty=exec_qty,
                 stop_price=tp_price,
-                status=str(tp_resp.get("status", OrderStatus.NEW.value)),
+                status=tp_status,
                 reduce_only=True,
                 working_type=WorkingType.CONTRACT_PRICE.value,
                 created_at_ms=now_ms,
                 updated_at_ms=now_ms,
             )
-            log.info("protective_tp_placed", symbol=symbol, tp_price=str(tp_price), cid=tp_cid)
+            log.info(
+                "protective_tp_placed",
+                symbol=symbol,
+                tp_price=str(tp_price),
+                cid=tp_cid,
+                algo_id=tp_oid,
+            )
         except BinanceAPIException as e:
             log.warning("tp_placement_failed", symbol=symbol, error=e.message)
 
@@ -570,20 +643,29 @@ class BinanceTestnetExecutor(BaseExecutor):
                 timestamp_ms=now_ms,
             )
 
-        # Cancel existing STOP_MARKET orders
+        # Cancel existing STOP_MARKET orders (checking both Algo and regular endpoints)
         open_orders = await self.get_open_orders(symbol)
         for o in open_orders:
             if o.order_type == OrderType.STOP_MARKET.value:
                 try:
                     await self.client.request(
                         "DELETE",
-                        "/fapi/v1/order",
-                        params={"symbol": symbol, "orderId": o.order_id},
+                        "/fapi/v1/algoOrder",
+                        params={"symbol": symbol, "algoId": o.order_id},
                         signed=True,
                         weight=1,
                     )
-                except Exception as e:
-                    log.warning("cancel_old_stop_warning", error=str(e))
+                except Exception:
+                    try:
+                        await self.client.request(
+                            "DELETE",
+                            "/fapi/v1/order",
+                            params={"symbol": symbol, "orderId": o.order_id},
+                            signed=True,
+                            weight=1,
+                        )
+                    except Exception as e:
+                        log.warning("cancel_old_stop_warning", error=str(e))
 
         filters = self._get_filters(symbol)
         rounded_stop = round_price(new_stop, filters.tick_size)
@@ -591,37 +673,65 @@ class BinanceTestnetExecutor(BaseExecutor):
         new_cid = f"dm_s_{symbol}_{now_ms % 100000}"
 
         try:
-            sl_resp = await self.client.request(
-                "POST",
-                "/fapi/v1/order",
-                params={
-                    "symbol": symbol,
-                    "side": protective_side,
-                    "type": "STOP_MARKET",
-                    "quantity": str(pos.qty),
-                    "stopPrice": str(rounded_stop),
-                    "reduceOnly": "true",
-                    "workingType": WorkingType.CONTRACT_PRICE.value,
-                    "newClientOrderId": new_cid,
-                },
-                signed=True,
-                weight=1,
-            )
+            try:
+                sl_resp = await self.client.request(
+                    "POST",
+                    "/fapi/v1/algoOrder",
+                    params={
+                        "symbol": symbol,
+                        "side": protective_side,
+                        "algoType": "CONDITIONAL",
+                        "type": "STOP_MARKET",
+                        "quantity": str(pos.qty),
+                        "triggerPrice": str(rounded_stop),
+                        "reduceOnly": "true",
+                        "workingType": WorkingType.CONTRACT_PRICE.value,
+                        "clientAlgoId": new_cid,
+                        "positionSide": "BOTH",
+                    },
+                    signed=True,
+                    weight=1,
+                )
+            except BinanceAPIException as algo_err:
+                if algo_err.code in (-4059, -1002, 404):
+                    sl_resp = await self.client.request(
+                        "POST",
+                        "/fapi/v1/order",
+                        params={
+                            "symbol": symbol,
+                            "side": protective_side,
+                            "type": "STOP_MARKET",
+                            "quantity": str(pos.qty),
+                            "stopPrice": str(rounded_stop),
+                            "reduceOnly": "true",
+                            "workingType": WorkingType.CONTRACT_PRICE.value,
+                            "newClientOrderId": new_cid,
+                        },
+                        signed=True,
+                        weight=1,
+                    )
+                else:
+                    raise
+
+            oid = str(sl_resp.get("algoId", sl_resp.get("orderId", "")))
+            status = str(sl_resp.get("orderStatus", sl_resp.get("status", OrderStatus.NEW.value)))
             stop_order = OrderInfo(
                 client_order_id=new_cid,
-                order_id=str(sl_resp.get("orderId", "")),
+                order_id=oid,
                 symbol=symbol,
                 side=protective_side,
                 order_type=OrderType.STOP_MARKET.value,
                 qty=pos.qty,
                 stop_price=rounded_stop,
-                status=str(sl_resp.get("status", OrderStatus.NEW.value)),
+                status=status,
                 reduce_only=True,
                 working_type=WorkingType.CONTRACT_PRICE.value,
                 created_at_ms=now_ms,
                 updated_at_ms=now_ms,
             )
-            log.info("stop_moved", symbol=symbol, new_stop=str(rounded_stop), cid=new_cid)
+            log.info(
+                "stop_moved", symbol=symbol, new_stop=str(rounded_stop), cid=new_cid, algo_id=oid
+            )
             return ExecutionResult(
                 success=True,
                 action="move_stop",
@@ -651,9 +761,19 @@ class BinanceTestnetExecutor(BaseExecutor):
                     signed=True,
                     weight=1,
                 )
-                canceled.append(sym)
             except Exception as e:
-                log.debug("cancel_all_info", symbol=sym, note=str(e))
+                log.debug("cancel_all_orders_info", symbol=sym, note=str(e))
+            try:
+                await self.client.request(
+                    "DELETE",
+                    "/fapi/v1/algoOpenOrders",
+                    params={"symbol": sym},
+                    signed=True,
+                    weight=1,
+                )
+            except Exception as e:
+                log.debug("cancel_all_algo_orders_info", symbol=sym, note=str(e))
+            canceled.append(sym)
         return canceled
 
     async def get_positions(self) -> dict[str, PositionInfo]:
@@ -713,31 +833,71 @@ class BinanceTestnetExecutor(BaseExecutor):
 
     async def get_open_orders(self, symbol: str | None = None) -> list[OrderInfo]:
         params = {"symbol": symbol} if symbol else {}
-        data = await self.client.request(
-            "GET", "/fapi/v1/openOrders", params=params, signed=True, weight=5
-        )
-        orders = []
-        for o in data:
-            orders.append(
-                OrderInfo(
-                    client_order_id=o.get("clientOrderId", ""),
-                    order_id=str(o.get("orderId", "")),
-                    symbol=o.get("symbol", ""),
-                    side=o.get("side", ""),
-                    order_type=o.get("type", ""),
-                    qty=Decimal(str(o.get("origQty", "0"))),
-                    executed_qty=Decimal(str(o.get("executedQty", "0"))),
-                    price=Decimal(str(o.get("price", "0"))),
-                    stop_price=Decimal(str(o.get("stopPrice")))
-                    if o.get("stopPrice") is not None
-                    else None,
-                    status=o.get("status", OrderStatus.NEW.value),
-                    reduce_only=bool(o.get("reduceOnly", False)),
-                    working_type=o.get("workingType", WorkingType.CONTRACT_PRICE.value),
-                    created_at_ms=int(o.get("time", 0)),
-                    updated_at_ms=int(o.get("updateTime", 0)),
-                )
+        orders: list[OrderInfo] = []
+
+        # 1. Standard open orders
+        try:
+            data = await self.client.request(
+                "GET", "/fapi/v1/openOrders", params=params, signed=True, weight=5
             )
+            for o in data:
+                orders.append(
+                    OrderInfo(
+                        client_order_id=o.get("clientOrderId", ""),
+                        order_id=str(o.get("orderId", "")),
+                        symbol=o.get("symbol", ""),
+                        side=o.get("side", ""),
+                        order_type=o.get("type", ""),
+                        qty=Decimal(str(o.get("origQty", "0"))),
+                        executed_qty=Decimal(str(o.get("executedQty", "0"))),
+                        price=Decimal(str(o.get("price", "0"))),
+                        stop_price=Decimal(str(o.get("stopPrice")))
+                        if o.get("stopPrice") is not None
+                        else None,
+                        status=o.get("status", OrderStatus.NEW.value),
+                        reduce_only=bool(o.get("reduceOnly", False)),
+                        working_type=o.get("workingType", WorkingType.CONTRACT_PRICE.value),
+                        created_at_ms=int(o.get("time", 0)),
+                        updated_at_ms=int(o.get("updateTime", 0)),
+                    )
+                )
+        except Exception as e:
+            log.warning("get_open_orders_error", error=str(e))
+
+        # 2. Algo conditional open orders
+        try:
+            algo_data = await self.client.request(
+                "GET", "/fapi/v1/openAlgoOrders", params=params, signed=True, weight=1
+            )
+            raw_algo_list = (
+                algo_data
+                if isinstance(algo_data, list)
+                else (algo_data.get("orders", []) if isinstance(algo_data, dict) else [])
+            )
+            for a in raw_algo_list:
+                orders.append(
+                    OrderInfo(
+                        client_order_id=a.get("clientAlgoId", ""),
+                        order_id=str(a.get("algoId", "")),
+                        symbol=a.get("symbol", ""),
+                        side=a.get("side", ""),
+                        order_type=a.get("orderType", a.get("type", "")),
+                        qty=Decimal(str(a.get("quantity", a.get("origQty", "0")))),
+                        executed_qty=Decimal(str(a.get("actualQty", a.get("executedQty", "0")))),
+                        price=Decimal(str(a.get("price", "0"))),
+                        stop_price=Decimal(str(a.get("triggerPrice", a.get("stopPrice", "0"))))
+                        if (a.get("triggerPrice") or a.get("stopPrice"))
+                        else None,
+                        status=a.get("orderStatus", a.get("status", OrderStatus.NEW.value)),
+                        reduce_only=bool(a.get("reduceOnly", True)),
+                        working_type=a.get("workingType", WorkingType.CONTRACT_PRICE.value),
+                        created_at_ms=int(a.get("time", 0)),
+                        updated_at_ms=int(a.get("updateTime", a.get("time", 0))),
+                    )
+                )
+        except Exception as e:
+            log.debug("get_open_algo_orders_info", error=str(e))
+
         return orders
 
     async def get_balance(self) -> BalanceInfo:

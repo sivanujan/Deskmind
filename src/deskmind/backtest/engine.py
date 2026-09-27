@@ -28,6 +28,7 @@ from typing import Any, Literal
 
 from deskmind.agents.trend.agent import SymbolTrendAgent
 from deskmind.agents.trend.models import Bar
+from deskmind.backtest.fills import calc_slippage_pct, simulate_candle_exit
 from deskmind.backtest.filters import SymbolFilters, load_symbol_filters, round_price
 from deskmind.backtest.liquidation import compute_liquidation_price, is_liquidated
 from deskmind.backtest.sizing import PositionSizer
@@ -250,11 +251,7 @@ class BacktestEngine:
 
     def _calc_slippage_pct(self, price: Decimal, atr: float | None) -> Decimal:
         """Slippage = fixed_bps + atr_factor * (atr / price)."""
-        base = self.slippage_bps * Decimal("0.0001")
-        if atr is not None and atr > 0 and price > Decimal("0"):
-            dynamic = self.slippage_atr_factor * (Decimal(str(atr)) / price)
-            return base + dynamic
-        return base
+        return calc_slippage_pct(price, atr, self.slippage_bps, self.slippage_atr_factor)
 
     def run(self) -> BacktestResult:
         logger.info("Loading market data for %s from %s to %s", self.symbols, self.start, self.end)
@@ -584,49 +581,27 @@ class BacktestEngine:
                         exit_price = b_open
                         exit_reason = "liquidation"
                     else:
-                        # 3. Stop-Loss & Take-Profit check on last price kline
-                        # By Invariant (b), pos.stop_loss is strictly inside pos.liquidation_price.
-                        # Thus, as price moves from b_open toward adverse extreme, SL hits FIRST.
-                        if pos.side == "long":
-                            # Gap check: opened below stop
-                            if b_open <= pos.stop_loss:
-                                raw_exit = b_open * (Decimal("1") - slip_pct)
-                                exit_price = round_price(raw_exit, filters.tick_size)
-                                exit_reason = "stop_loss"
-                            # Both SL and TP hit in same bar -> conservative: SL hit first!
-                            elif b_low <= pos.stop_loss and b_high >= pos.take_profit:
+                        cand_exit_price, cand_exit_reason, cand_is_maker, cand_slip_pct = (
+                            simulate_candle_exit(
+                                pos_side=pos.side,
+                                stop_loss=pos.stop_loss,
+                                take_profit=pos.take_profit,
+                                b_open=b_open,
+                                b_high=b_high,
+                                b_low=b_low,
+                                tick_size=filters.tick_size,
+                                atr=atr_val,
+                                slippage_bps=self.slippage_bps,
+                                slippage_atr_factor=self.slippage_atr_factor,
+                            )
+                        )
+                        if cand_exit_reason is not None:
+                            exit_price = cand_exit_price
+                            exit_reason = cand_exit_reason
+                            is_maker = cand_is_maker
+                            slip_pct = cand_slip_pct
+                            if exit_reason == "sl_tp_same_bar":
                                 self.same_bar_sl_tp_count += 1
-                                raw_exit = pos.stop_loss * (Decimal("1") - slip_pct)
-                                exit_price = round_price(raw_exit, filters.tick_size)
-                                exit_reason = "sl_tp_same_bar"
-                            elif b_low <= pos.stop_loss:
-                                raw_exit = pos.stop_loss * (Decimal("1") - slip_pct)
-                                exit_price = round_price(raw_exit, filters.tick_size)
-                                exit_reason = "stop_loss"
-                            elif b_high >= pos.take_profit:
-                                exit_price = pos.take_profit
-                                exit_reason = "take_profit"
-                                is_maker = True
-
-                        elif pos.side == "short":
-                            # Gap check: opened above stop
-                            if b_open >= pos.stop_loss:
-                                raw_exit = b_open * (Decimal("1") + slip_pct)
-                                exit_price = round_price(raw_exit, filters.tick_size)
-                                exit_reason = "stop_loss"
-                            elif b_high >= pos.stop_loss and b_low <= pos.take_profit:
-                                self.same_bar_sl_tp_count += 1
-                                raw_exit = pos.stop_loss * (Decimal("1") + slip_pct)
-                                exit_price = round_price(raw_exit, filters.tick_size)
-                                exit_reason = "sl_tp_same_bar"
-                            elif b_high >= pos.stop_loss:
-                                raw_exit = pos.stop_loss * (Decimal("1") + slip_pct)
-                                exit_price = round_price(raw_exit, filters.tick_size)
-                                exit_reason = "stop_loss"
-                            elif b_low <= pos.take_profit:
-                                exit_price = pos.take_profit
-                                exit_reason = "take_profit"
-                                is_maker = True
 
                         # 4. If neither SL nor TP triggered, check for mark price liq divergence
                         if exit_reason is None:

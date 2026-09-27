@@ -178,6 +178,63 @@ class FakeBinanceClient:
                     )
             return order_data
 
+        if path == "/fapi/v1/algoOrder" and method == "POST":
+            if self.should_fail_orders:
+                raise self.fail_order_error
+            cid = params.get("clientAlgoId", f"fake_algo_{len(self.orders)}")
+            sym = params.get("symbol", "BTCUSDT")
+            order_data = {
+                "symbol": sym,
+                "algoId": len(self.orders) + 1,
+                "orderId": len(self.orders) + 1,
+                "clientAlgoId": cid,
+                "clientOrderId": cid,
+                "side": params.get("side"),
+                "algoType": params.get("algoType", "CONDITIONAL"),
+                "orderType": params.get("type"),
+                "type": params.get("type"),
+                "orderStatus": "NEW",
+                "status": "NEW",
+                "quantity": params.get("quantity"),
+                "origQty": params.get("quantity"),
+                "executedQty": "0",
+                "triggerPrice": params.get("triggerPrice"),
+                "stopPrice": params.get("triggerPrice"),
+                "workingType": params.get("workingType"),
+                "reduceOnly": True,
+                "time": int(time.time() * 1000),
+                "updateTime": int(time.time() * 1000),
+            }
+            self.orders[cid] = order_data
+            return order_data
+
+        if path == "/fapi/v1/algoOrder" and method == "DELETE":
+            aid = str(params.get("algoId"))
+            for _cid, o in list(self.orders.items()):
+                if str(o.get("algoId")) == aid or str(o.get("orderId")) == aid:
+                    o["orderStatus"] = "CANCELED"
+                    o["status"] = "CANCELED"
+                    return {"algoId": aid, "code": "200", "msg": "success"}
+            return {"algoId": aid, "code": "200", "msg": "success"}
+
+        if path == "/fapi/v1/algoOpenOrders" and method == "DELETE":
+            sym = params.get("symbol")
+            for o in self.orders.values():
+                if (sym is None or o.get("symbol") == sym) and o.get("algoType") == "CONDITIONAL":
+                    o["orderStatus"] = "CANCELED"
+                    o["status"] = "CANCELED"
+            return {"code": 200, "msg": "success"}
+
+        if path == "/fapi/v1/openAlgoOrders":
+            sym = params.get("symbol")
+            return [
+                o
+                for o in self.orders.values()
+                if (o.get("orderStatus") == "NEW" or o.get("status") == "NEW")
+                and (sym is None or o.get("symbol") == sym)
+                and o.get("algoType") == "CONDITIONAL"
+            ]
+
         if path == "/fapi/v1/order" and method == "DELETE":
             oid = str(params.get("orderId"))
             for _cid, o in list(self.orders.items()):
@@ -326,7 +383,11 @@ async def test_stop_failure_emergency_flatten_and_halt():
     orig_request = fake_client.request
 
     async def fail_stop_request(method, path, params=None, signed=False, weight=1):
-        if path == "/fapi/v1/order" and params and params.get("type") == "STOP_MARKET":
+        if (
+            path in ("/fapi/v1/order", "/fapi/v1/algoOrder")
+            and params
+            and params.get("type") == "STOP_MARKET"
+        ):
             raise BinanceAPIException(code=-1003, message="Rate limit or internal error")
         return await orig_request(method, path, params=params, signed=signed, weight=weight)
 
@@ -688,3 +749,58 @@ def test_fault_injection_hooks():
     # Clear fault
     injector.set_fault("stop_failure", enabled=False)
     assert injector.is_fault_active("stop_failure") is False
+
+
+# -----------------------------------------------------------------------------
+# 14. Paper Executor Exit Price & Shared Fill Model Test
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_paper_executor_tp_sl_exit_price_shared_fill_model():
+    """Verify TP fills at target price (not entry), and SL fills with slippage, sharing backtest fills."""
+    paper = PaperExecutor(initial_cash=Decimal("10000.0"))
+    paper.set_price("BTCUSDT", last_price=Decimal("60000.0"), mark_price=Decimal("60000.0"))
+
+    intent = IntentPayload(
+        symbol="BTCUSDT",
+        side="long",
+        expected_entry=Decimal("60000.0"),
+        stop_loss=Decimal("58000.0"),
+        take_profit=Decimal("64000.0"),
+        setup_id="tp_bug_test_001",
+    )
+    decision = RiskDecision(
+        status="approved",
+        qty=Decimal("0.05"),
+        leverage=5,
+        notional=Decimal("3000.0"),
+    )
+
+    open_res = await paper.open(decision, intent, setup_id=intent.setup_id)
+    assert open_res.success is True
+    assert open_res.order.executed_qty == Decimal("0.05")
+    # Entry price includes slippage
+    assert open_res.order.avg_price > Decimal("60000.0")
+
+    # Simulate candle high hitting TP at 64,500 (TP target is 64,000)
+    results = await paper.check_triggers_on_candle(
+        symbol="BTCUSDT",
+        high=Decimal("64500.0"),
+        low=Decimal("59800.0"),
+        timestamp_ms=1700000000000,
+    )
+    assert len(results) == 1
+    tp_res = results[0]
+    assert tp_res.success is True
+    assert tp_res.order.side == "SELL"
+    # Invariant: TP fill must be near 64,000, NOT below entry (59,934)
+    assert tp_res.order.avg_price == Decimal("64000.0")
+    # Net PnL must be positive
+    net_pnl = Decimal(tp_res.metadata["pnl"])
+    assert net_pnl > Decimal("100.0")
+    assert tp_res.metadata["reason"] == "take_profit"
+
+    # Verify positions are flat
+    positions = await paper.get_positions()
+    assert "BTCUSDT" not in positions

@@ -7,10 +7,12 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from deskmind.backtest.filters import SymbolFilters, round_price, round_qty
+from deskmind.backtest.fills import calc_slippage_pct, simulate_candle_exit, simulate_market_fill
+from deskmind.backtest.filters import SymbolFilters, round_qty
 from deskmind.backtest.liquidation import compute_liquidation_price
 from deskmind.config import (
     DEFAULT_INITIAL_CASH,
+    DEFAULT_MAKER_FEE_RATE,
     DEFAULT_SLIPPAGE_ATR_FACTOR,
     DEFAULT_SLIPPAGE_BPS,
     DEFAULT_TAKER_FEE_RATE,
@@ -42,6 +44,7 @@ class PaperExecutor(BaseExecutor):
     def __init__(
         self,
         initial_cash: Decimal = DEFAULT_INITIAL_CASH,
+        maker_fee_rate: Decimal = DEFAULT_MAKER_FEE_RATE,
         taker_fee_rate: Decimal = DEFAULT_TAKER_FEE_RATE,
         slippage_bps: Decimal = DEFAULT_SLIPPAGE_BPS,
         slippage_atr_factor: Decimal = DEFAULT_SLIPPAGE_ATR_FACTOR,
@@ -49,6 +52,7 @@ class PaperExecutor(BaseExecutor):
     ) -> None:
         self.cash = initial_cash
         self.initial_cash = initial_cash
+        self.maker_fee_rate = maker_fee_rate
         self.taker_fee_rate = taker_fee_rate
         self.slippage_bps = slippage_bps
         self.slippage_atr_factor = slippage_atr_factor
@@ -97,10 +101,7 @@ class PaperExecutor(BaseExecutor):
         )
 
     def _calc_slippage_pct(self, price: Decimal, atr: Decimal | None) -> Decimal:
-        slip = self.slippage_bps / Decimal("10000")
-        if atr is not None and atr > Decimal("0") and price > Decimal("0"):
-            slip += self.slippage_atr_factor * (atr / price)
-        return slip
+        return calc_slippage_pct(price, atr, self.slippage_bps, self.slippage_atr_factor)
 
     async def get_ticker_price(self, symbol: str) -> tuple[Decimal, Decimal]:
         if symbol in self._prices:
@@ -145,14 +146,15 @@ class PaperExecutor(BaseExecutor):
             last_price = intent.expected_entry
 
         atr = self._atrs.get(symbol, last_price * Decimal("0.02"))
-        slip_pct = self._calc_slippage_pct(last_price, atr)
-
-        if intent.side == "long":
-            fill_price = round_price(last_price * (Decimal("1") + slip_pct), filters.tick_size)
-            side_str = "BUY"
-        else:
-            fill_price = round_price(last_price * (Decimal("1") - slip_pct), filters.tick_size)
-            side_str = "SELL"
+        side_str = "BUY" if intent.side == "long" else "SELL"
+        fill_price, _slip_pct = simulate_market_fill(
+            price=last_price,
+            side=side_str,
+            tick_size=filters.tick_size,
+            atr=atr,
+            slippage_bps=self.slippage_bps,
+            slippage_atr_factor=self.slippage_atr_factor,
+        )
 
         # Deterministic clientOrderId from setup_id
         if setup_id:
@@ -281,6 +283,8 @@ class PaperExecutor(BaseExecutor):
         symbol: str,
         reason: str = "manual_close",
         qty: Decimal | None = None,
+        explicit_exit_price: Decimal | None = None,
+        is_maker: bool = False,
     ) -> ExecutionResult:
         now_ms = int(time.time() * 1000)
         pos = self._positions.get(symbol)
@@ -297,17 +301,27 @@ class PaperExecutor(BaseExecutor):
         filters = self._get_filters(symbol)
         last_price, _ = await self.get_ticker_price(symbol)
         atr = self._atrs.get(symbol, last_price * Decimal("0.02"))
-        slip_pct = self._calc_slippage_pct(last_price, atr)
 
         close_side = "SELL" if pos.side == "long" else "BUY"
+        if explicit_exit_price is not None:
+            fill_price = explicit_exit_price
+        else:
+            fill_price, _ = simulate_market_fill(
+                price=last_price,
+                side=close_side,
+                tick_size=filters.tick_size,
+                atr=atr,
+                slippage_bps=self.slippage_bps,
+                slippage_atr_factor=self.slippage_atr_factor,
+            )
+
         if close_side == "SELL":
-            fill_price = round_price(last_price * (Decimal("1") - slip_pct), filters.tick_size)
             gross_pnl = (fill_price - pos.entry_price) * close_qty
         else:
-            fill_price = round_price(last_price * (Decimal("1") + slip_pct), filters.tick_size)
             gross_pnl = (pos.entry_price - fill_price) * close_qty
 
-        fee = fill_price * close_qty * self.taker_fee_rate
+        fee_rate = self.maker_fee_rate if is_maker else self.taker_fee_rate
+        fee = fill_price * close_qty * fee_rate
         net_pnl = gross_pnl - fee
         self.cash += gross_pnl - fee
 
@@ -462,19 +476,30 @@ class PaperExecutor(BaseExecutor):
         if pos is None or not pos.is_open:
             return results
 
-        # Invariant: SL hit first if both touched
-        sl_hit = (pos.side == "long" and low <= (pos.stop_loss_price or Decimal("0"))) or (
-            pos.side == "short" and high >= (pos.stop_loss_price or Decimal("Infinity"))
-        )
-        tp_hit = (
-            pos.side == "long" and high >= (pos.take_profit_price or Decimal("Infinity"))
-        ) or (pos.side == "short" and low <= (pos.take_profit_price or Decimal("0")))
+        filters = self._get_filters(symbol)
+        last_price, _ = await self.get_ticker_price(symbol)
+        atr = self._atrs.get(symbol, last_price * Decimal("0.02"))
 
-        if sl_hit:
-            res = await self.close(symbol, reason="stop_loss")
-            results.append(res)
-        elif tp_hit:
-            res = await self.close(symbol, reason="take_profit")
+        exit_price, exit_reason, is_maker, _ = simulate_candle_exit(
+            pos_side=pos.side,
+            stop_loss=pos.stop_loss_price,
+            take_profit=pos.take_profit_price,
+            b_open=last_price,
+            b_high=high,
+            b_low=low,
+            tick_size=filters.tick_size,
+            atr=atr,
+            slippage_bps=self.slippage_bps,
+            slippage_atr_factor=self.slippage_atr_factor,
+        )
+
+        if exit_reason is not None and exit_price is not None:
+            res = await self.close(
+                symbol,
+                reason=exit_reason,
+                explicit_exit_price=exit_price,
+                is_maker=is_maker,
+            )
             results.append(res)
 
         return results

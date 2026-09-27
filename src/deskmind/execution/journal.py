@@ -171,6 +171,8 @@ class TradeJournalManager:
                     head_agent_reasoning=None,
                     risk_decision=risk_decision,
                     client_order_id=client_order_id,
+                    trading_mode=self.trading_mode,
+                    fees_paid=Decimal("0"),
                 )
                 session.add(entry)
             log.info("trade_journal_entry_recorded", symbol=symbol, cid=client_order_id)
@@ -223,6 +225,10 @@ class TradeJournalManager:
                 if tj is not None:
                     tj.status = "closed"
                     tj.pnl = pnl
+                    tj.exit_price = exit_price
+                    tj.exit_time = now_dt
+                    tj.exit_reason = reason
+                    tj.fees_paid = fees
                     if tj.risk_decision:
                         dec = dict(tj.risk_decision)
                         dec["exit"] = {
