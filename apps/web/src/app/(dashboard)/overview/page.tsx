@@ -7,7 +7,7 @@ import { api, type SystemStatus, type LiveStatus } from "@/lib/api";
 export default function OverviewPage() {
   const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
-  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   const fetchStatus = () => {
     void Promise.allSettled([api.systemStatus(), api.liveStatus()]).then(([sys, live]) => {
@@ -60,9 +60,10 @@ export default function OverviewPage() {
 
           <button
             onClick={fetchStatus}
+            suppressHydrationWarning
             className="rounded border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground transition-colors"
           >
-            Refresh ({lastRefreshed.toLocaleTimeString()})
+            Refresh{lastRefreshed ? ` (${lastRefreshed.toLocaleTimeString()})` : ""}
           </button>
         </div>
       </div>

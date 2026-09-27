@@ -114,7 +114,7 @@ export default function AgentsPage() {
               </div>
               <div className="rounded bg-surface-2 p-2 text-center">
                 <span className="text-[11px] text-muted">Last Cycle</span>
-                <div className="mt-1 text-[11px] text-muted truncate">
+                <div suppressHydrationWarning className="mt-1 text-[11px] text-muted truncate">
                   {new Date(agent.last_run).toLocaleTimeString()}
                 </div>
               </div>

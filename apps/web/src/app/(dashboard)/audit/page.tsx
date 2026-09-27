@@ -96,7 +96,7 @@ export default function AuditLogPage() {
               {logs.length > 0 ? (
                 logs.map((log) => (
                   <tr key={log.id} className="hover:bg-surface-2/40">
-                    <td className="py-2.5 font-mono text-muted">{new Date(log.timestamp).toLocaleString()}</td>
+                    <td suppressHydrationWarning className="py-2.5 font-mono text-muted">{new Date(log.timestamp).toLocaleString()}</td>
                     <td className="py-2.5 font-semibold text-foreground">{log.user}</td>
                     <td className="py-2.5">
                       <span className="font-mono text-accent">{log.action}</span>
