@@ -78,8 +78,14 @@ class BaseStrategy(ABC):
     name: str = "base"
     version: str = "1.0.0"
 
+    # Declared defaults are the single source for the strategy's parameters (the dashboard shows
+    # them); constructor params override them.
+    default_params: dict[str, Any] = {}  # noqa: RUF012
+    uses_agents: tuple[str, ...] = ()
+    timeframes: tuple[str, ...] = ()
+
     def __init__(self, params: dict[str, Any] | None = None) -> None:
-        self.params = params or {}
+        self.params = {**self.default_params, **(params or {})}
 
     @abstractmethod
     def on_bar(self, contexts: dict[str, StrategyContext]) -> list[Intent]:

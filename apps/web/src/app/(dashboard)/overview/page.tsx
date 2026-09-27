@@ -1,274 +1,124 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type SystemStatus, type LiveStatus } from "@/lib/api";
+import { api } from "@/lib/api";
+import { Badge, Card, Empty, ErrorBox, KV, PageHeader, RefreshButton, fmtAge, useApi, val } from "@/components/ui";
+
+// GET /api/system/status (supervisor + trade service status file + risk_state.json),
+// GET /api/live/status (live data health) and GET /api/control/pending (approval gate).
+// Unknown values are shown as unknown, never as a healthy default.
 
 export default function OverviewPage() {
-  const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);
-  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const sys = useApi(api.systemStatus, 5000);
+  const live = useApi(api.liveStatus, 5000);
+  const pending = useApi(api.listApprovals, 5000);
+  const s = sys.data;
+  const l = live.data;
 
-  const fetchStatus = () => {
-    void Promise.allSettled([api.systemStatus(), api.liveStatus()]).then(([sys, live]) => {
-      if (sys.status === "fulfilled") setSysStatus(sys.value);
-      if (live.status === "fulfilled") setLiveStatus(live.value);
-      setLastRefreshed(new Date());
-    });
+  const reload = () => {
+    void sys.reload();
+    void live.reload();
+    void pending.reload();
   };
-
-  useEffect(() => {
-    let mounted = true;
-    const run = () => {
-      void Promise.allSettled([api.systemStatus(), api.liveStatus()]).then(([sys, live]) => {
-        if (!mounted) return;
-        if (sys.status === "fulfilled") setSysStatus(sys.value);
-        if (live.status === "fulfilled") setLiveStatus(live.value);
-        setLastRefreshed(new Date());
-      });
-    };
-    run();
-    const interval = setInterval(run, 5000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, []);
-
-  const tradingMode = sysStatus?.trading_mode ?? "testnet";
-  const approvalMode = sysStatus?.approval_mode ?? "auto";
-  const riskState = sysStatus?.risk_state ?? "normal";
-  const services = sysStatus?.services ?? {};
 
   return (
     <div className="flex-1 space-y-6 p-6">
-      {/* Top Banner: Hard Safety Badge & System State */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface p-4">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">Mission Control Overview</h1>
-          <p className="text-xs text-muted">
-            Continuous real-time surveillance of executors, agents, data freshness, and risk limits.
-          </p>
-        </div>
+      <PageHeader title="Overview" subtitle="Live system state. Anything the backend does not know is shown as unknown.">
+        {s && <Badge tone="accent">{s.mode_badge} · no live trading</Badge>}
+        <RefreshButton onClick={reload} />
+      </PageHeader>
+      <ErrorBox error={sys.error || live.error} />
 
-        <div className="flex items-center gap-3">
-          {/* HARD SAFETY BADGE */}
-          <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent">
-            <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-            <span>OPERATING MODE: {tradingMode.toUpperCase()} (NO LIVE TRADING ALLOWED)</span>
-          </div>
-
-          <button
-            onClick={fetchStatus}
-            suppressHydrationWarning
-            className="rounded border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground transition-colors"
-          >
-            Refresh{lastRefreshed ? ` (${lastRefreshed.toLocaleTimeString()})` : ""}
-          </button>
-        </div>
-      </div>
-
-      {/* Grid: 4 Metric Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Card 1: Risk State */}
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted">Risk Manager State</span>
-            <span
-              className={`rounded px-2 py-0.5 text-xs font-bold ${
-                riskState === "normal"
-                  ? "bg-up/20 text-up"
-                  : riskState === "half_risk"
-                  ? "bg-warn/20 text-warn"
-                  : "bg-down/20 text-down"
-              }`}
-            >
-              {riskState.replace("_", " ").toUpperCase()}
-            </span>
-          </div>
-          <div className="mt-3">
-            <div className="text-2xl font-bold text-foreground">
-              {sysStatus?.circuit_breaker_tripped ? "TRIPPED" : "HEALTHY"}
-            </div>
-            <p className="mt-1 text-xs text-muted">
-              {sysStatus?.circuit_breaker_tripped
-                ? "Circuit breaker latched: halt & close orders"
-                : "All circuit breakers within thresholds"}
-            </p>
-          </div>
-          <div className="mt-3 border-t border-border pt-2 text-right">
-            <Link href="/risk" className="text-xs font-medium text-accent hover:underline">
-              Inspect Risk &rarr;
-            </Link>
-          </div>
-        </div>
+        <Card
+          title="Risk Manager"
+          right={
+            s?.risk_state ? <Badge tone={s.risk_state === "normal" ? "up" : "down"}>{s.risk_state}</Badge> : <Badge tone="muted">unknown</Badge>
+          }
+        >
+          {s && !s.risk_state && <Empty>Trade service not running and no risk_state.json: breaker state unknown.</Empty>}
+          {s?.risk_state && <KV k="Source" v={s.risk_state_source} />}
+          {s?.risk_details && <KV k="Consecutive losses" v={s.risk_details.consecutive_losses} />}
+          <Link href="/risk" className="block text-right text-xs text-accent hover:underline">
+            Risk page →
+          </Link>
+        </Card>
 
-        {/* Card 2: Data Freshness */}
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted">Data Freshness</span>
-            <span
-              className={`rounded px-2 py-0.5 text-xs font-bold ${
-                liveStatus?.level === "green"
-                  ? "bg-up/20 text-up"
-                  : liveStatus?.level === "amber"
-                  ? "bg-warn/20 text-warn"
-                  : "bg-down/20 text-down"
-              }`}
-            >
-              {(liveStatus?.level ?? "UNKNOWN").toUpperCase()}
-            </span>
-          </div>
-          <div className="mt-3">
-            <div className="text-2xl font-bold text-foreground">
-              {liveStatus?.clock_drift_ms !== null && liveStatus?.clock_drift_ms !== undefined
-                ? `${liveStatus.clock_drift_ms} ms`
-                : "Synced"}
-            </div>
-            <p className="mt-1 text-xs text-muted">
-              Clock drift vs Binance server. Heartbeat age: {liveStatus?.heartbeat_age_s?.toFixed(1) ?? "0.0"}s
-            </p>
-          </div>
-          <div className="mt-3 border-t border-border pt-2 text-right">
-            <Link href="/chart" className="text-xs font-medium text-accent hover:underline">
-              Open Charts &rarr;
-            </Link>
-          </div>
-        </div>
+        <Card
+          title="Market data"
+          right={<Badge tone={l?.level === "green" ? "up" : l?.level === "amber" ? "accent" : l ? "down" : "muted"}>{l?.level ?? "unknown"}</Badge>}
+        >
+          <KV k="Service heartbeat" v={fmtAge(l?.heartbeat_age_s)} />
+          <KV k="Clock drift vs Binance" v={l?.clock_drift_ms !== null && l?.clock_drift_ms !== undefined ? `${l.clock_drift_ms} ms` : val(null)} />
+          <Link href="/chart" className="block text-right text-xs text-accent hover:underline">
+            Chart →
+          </Link>
+        </Card>
 
-        {/* Card 3: Execution & Approvals */}
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted">Approval Pipeline</span>
-            <span className="rounded bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted uppercase">
-              {approvalMode}
-            </span>
-          </div>
-          <div className="mt-3">
-            <div className="text-2xl font-bold text-foreground">
-              {sysStatus?.open_positions_count ?? 0}
-            </div>
-            <p className="mt-1 text-xs text-muted">Active open positions in current session</p>
-          </div>
-          <div className="mt-3 border-t border-border pt-2 text-right">
-            <Link href="/control" className="text-xs font-medium text-accent hover:underline">
-              Pending Approvals &rarr;
-            </Link>
-          </div>
-        </div>
+        <Card title="Positions & approvals" right={s && <Badge tone="muted">{s.approval_mode} approval</Badge>}>
+          <KV k="Open positions" v={s?.open_positions ? s.open_positions.length : val(null)} hint={s && !s.open_positions ? "trade service not running" : undefined} />
+          <KV k="Pending approvals" v={pending.data ? pending.data.length : val(null)} />
+          <Link href="/control" className="block text-right text-xs text-accent hover:underline">
+            Control →
+          </Link>
+        </Card>
 
-        {/* Card 4: Daily Activity */}
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted">Today&apos;s Order Activity</span>
-            <span className="text-xs text-muted">Session</span>
-          </div>
-          <div className="mt-3">
-            <div className="text-2xl font-bold text-foreground">0 Pending</div>
-            <p className="mt-1 text-xs text-muted">Intents generated: 0 | Orders placed: 0</p>
-          </div>
-          <div className="mt-3 border-t border-border pt-2 text-right">
-            <Link href="/trades" className="text-xs font-medium text-accent hover:underline">
-              Trade Journal &rarr;
-            </Link>
-          </div>
-        </div>
+        <Card title="Trade service stats">
+          {s?.stats ? (
+            Object.entries(s.stats).map(([k, v]) => <KV key={k} k={k} v={v} />)
+          ) : (
+            <Empty>No data yet: trade service not running{s?.trade_status_age_s != null ? ` (status file ${Math.round(s.trade_status_age_s)} s old)` : ""}.</Empty>
+          )}
+          <Link href="/trades" className="block text-right text-xs text-accent hover:underline">
+            Journal →
+          </Link>
+        </Card>
       </div>
 
-      {/* Services Health Table */}
-      <div className="rounded-lg border border-border bg-surface p-5">
-        <div className="flex items-center justify-between border-b border-border pb-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Child Services Supervision</h2>
-            <p className="text-xs text-muted">Processes managed by local supervisor with exponential backoff</p>
-          </div>
-          <Link
-            href="/control"
-            className="rounded bg-accent/20 border border-accent/40 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/30"
-          >
-            Manage Services
-          </Link>
-        </div>
-
-        <div className="mt-4 overflow-x-auto">
+      <Card title="Supervised services">
+        {s && Object.keys(s.services).length === 0 && <Empty>No services registered with the supervisor.</Empty>}
+        {s && Object.keys(s.services).length > 0 && (
           <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-border text-muted">
-                <th className="pb-2 font-medium">Service Name</th>
-                <th className="pb-2 font-medium">Process Status</th>
-                <th className="pb-2 font-medium">PID</th>
-                <th className="pb-2 font-medium">Uptime</th>
-                <th className="pb-2 font-medium">Restarts</th>
-                <th className="pb-2 font-medium">Last Diagnostic / Error</th>
+            <thead className="text-muted">
+              <tr>
+                {["Service", "Status", "PID", "Uptime", "Restarts", "Last exit code"].map((h) => (
+                  <th key={h} className="pb-2 font-normal">
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {Object.keys(services).length > 0 ? (
-                Object.entries(services).map(([key, svc]) => (
-                  <tr key={key} className="hover:bg-surface-2/40">
-                    <td className="py-2.5 font-semibold text-foreground capitalize">{key} Daemon</td>
-                    <td className="py-2.5">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium ${
-                          svc.status === "running"
-                            ? "bg-up/20 text-up"
-                            : svc.status === "crashing"
-                            ? "bg-down/20 text-down"
-                            : "bg-muted/20 text-muted"
-                        }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${
-                            svc.status === "running" ? "bg-up" : "bg-muted"
-                          }`}
-                        />
-                        {svc.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="py-2.5 font-mono text-muted">{svc.pid ?? "—"}</td>
-                    <td className="py-2.5 text-muted">{svc.uptime_seconds.toFixed(0)}s</td>
-                    <td className="py-2.5 text-muted">{svc.restart_count}</td>
-                    <td className="py-2.5 font-mono text-xs text-muted">
-                      {svc.last_error ?? "Operational / Normal"}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="py-4 text-center text-muted">
-                    Supervisor offline. Start services via Control panel or run:{" "}
-                    <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-accent">
-                      uv run deskmind supervisor
-                    </code>
+              {Object.entries(s.services).map(([name, svc]) => (
+                <tr key={name}>
+                  <td className="py-2 font-semibold">{name}</td>
+                  <td>
+                    <Badge tone={svc.status === "running" ? "up" : svc.status === "crashing" ? "down" : "muted"}>{svc.status}</Badge>
                   </td>
+                  <td className="font-mono">{val(svc.pid)}</td>
+                  <td className="font-mono">{svc.status === "running" ? `${svc.uptime_s.toFixed(0)} s` : val(null)}</td>
+                  <td className="font-mono">{svc.restart_count}</td>
+                  <td className="font-mono">{val(svc.last_exit_code)}</td>
                 </tr>
-              )}
+              ))}
             </tbody>
           </table>
-        </div>
-      </div>
+        )}
+      </Card>
 
-      {/* Active Alerts Panel */}
-      <div className="rounded-lg border border-border bg-surface p-5">
-        <h2 className="text-sm font-semibold text-foreground">Surveillance Alerts & Log Feed</h2>
-        <div className="mt-3 space-y-2">
-          {liveStatus?.reasons && liveStatus.reasons.length > 0 ? (
-            liveStatus.reasons.map((r, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between rounded border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn"
-              >
-                <span>⚠️ {r}</span>
-                <span className="font-mono text-xs text-muted">Freshness Monitor</span>
-              </div>
-            ))
-          ) : (
-            <div className="flex items-center gap-2 rounded border border-up/30 bg-up/5 px-3 py-2 text-xs text-up">
-              <span>✓ All surveillance feeds normal. Zero active warnings.</span>
-            </div>
-          )}
-        </div>
-      </div>
+      <Card title="Alerts">
+        {(s?.alerts ?? []).map((a, i) => (
+          <div key={`t${i}`} className="rounded border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+            trade service: {a}
+          </div>
+        ))}
+        {(l?.reasons ?? []).map((r, i) => (
+          <div key={`l${i}`} className="rounded border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+            market data: {r}
+          </div>
+        ))}
+        {s && l && s.alerts.length === 0 && l.reasons.length === 0 && <Empty>No alerts reported by the trade service or the live data service.</Empty>}
+      </Card>
     </div>
   );
 }

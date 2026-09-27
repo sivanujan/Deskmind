@@ -68,6 +68,10 @@ def hash_password(password: str, salt: bytes | None = None) -> str:
 
 def verify_password(plain_password: str, stored_hash: str) -> bool:
     """Verify plain password against stored PBKDF2 hash, or fallback to dev password."""
+    if not plain_password:
+        # Never accept an empty password, even if a hash of "" was stored by mistake
+        # (e.g. a password prompt that did not capture input on a Windows terminal).
+        return False
     if not stored_hash:
         # Dev default if not configured in .env: allow 'admin' / 'admin123'
         return plain_password in ("admin", "admin123", "change-me")

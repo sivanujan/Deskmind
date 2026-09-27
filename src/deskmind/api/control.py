@@ -190,29 +190,60 @@ async def get_csrf(
 async def get_system_status(
     supervisor: Annotated[SupervisorManager, Depends(get_supervisor)],
 ) -> dict[str, Any]:
+    """Real status only: trade-service status file + breaker state file, else explicit unknown."""
+    from deskmind.api.dashboard import TRADE_STATUS_FRESH_S, read_trade_status
+
     settings = get_settings()
     services = supervisor.get_status()
-
+    status_data, age = read_trade_status()
+    fresh = status_data is not None and age is not None and age <= TRADE_STATUS_FRESH_S
+    breaker = _breaker_file_state()
+    if fresh and status_data:
+        risk_state = status_data.get("breaker_state")
+        source = "trade service status"
+    elif breaker:
+        risk_state = breaker["halt_state"]
+        source = "risk state file"
+    else:
+        risk_state = None  # unknown: no trade status and no breaker state file
+        source = None
     return {
         "mode_badge": "DEMO / TESTNET" if settings.trading_mode == "testnet" else "PAPER",
         "trading_mode": settings.trading_mode,
         "approval_mode": settings.approval_mode,
         "live_trading_allowed": False,  # Non-negotiable safety badge
         "services": services,
-        "risk_state": {
-            "circuit_breaker": "normal",
-            "drawdown_pct": 0.0,
-            "consecutive_losses": 0,
-            "max_drawdown_limit_pct": 15.0,
-        },
-        "today_stats": {
-            "intents": 0,
-            "approvals": 0,
-            "rejections": 0,
-            "orders": 0,
-        },
-        "open_positions": [],
-        "alerts": [],
+        "risk_state": risk_state,
+        "risk_state_source": source,
+        "circuit_breaker_tripped": None if risk_state is None else risk_state != "normal",
+        "risk_details": breaker,
+        "trade_status_age_s": age,
+        "stats": status_data.get("stats") if fresh and status_data else None,
+        "open_positions": status_data.get("positions", []) if fresh and status_data else None,
+        "alerts": list(status_data.get("warnings", [])) if fresh and status_data else [],
+    }
+
+
+def _breaker_file_state() -> dict[str, Any] | None:
+    """Circuit breaker state persisted by the Risk Manager (`deskmind risk status` reads it)."""
+    from deskmind.risk.breakers import CircuitBreakerTracker
+
+    path = get_settings().data_dir / "risk_state.json"
+    if not path.exists():
+        return None
+    t = CircuitBreakerTracker.load_state(path)
+    dd = (
+        float((t.peak_equity - t.start_of_day_equity) / t.peak_equity) if t.peak_equity > 0 else 0.0
+    )
+    return {
+        "halt_state": t.halt_state,
+        "peak_equity": str(t.peak_equity),
+        "start_of_day_equity": str(t.start_of_day_equity),
+        "drawdown_pct_of_peak": dd,
+        "consecutive_losses": t.consecutive_losses,
+        "cooldown_until_ms": t.cooldown_until_ms,
+        "transitions": [dict(vars(x)) for x in t.transitions[-50:]],
+        "file": str(path),
     }
 
 
@@ -289,20 +320,38 @@ async def set_modes(
         )
 
     ip = get_client_ip(request)
-    # Record mode update in audit log
+    settings = get_settings()
     await record_audit_action(
-        action="set_trading_mode",
+        action="set_trading_mode_refused",
         user=session.username,
-        details={"trading_mode": req.trading_mode, "approval_mode": req.approval_mode},
+        details={
+            "requested": {"trading_mode": req.trading_mode, "approval_mode": req.approval_mode}
+        },
         ip_address=ip,
+        status="not_applied",
     )
-    return {"trading_mode": req.trading_mode, "approval_mode": req.approval_mode}
+    # Modes come from .env (TRADING_MODE / APPROVAL_MODE) and are read by the trade service at
+    # start. Changing them at runtime is not implemented, so say so instead of faking success.
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"Not applied: modes are set in .env (currently TRADING_MODE={settings.trading_mode}, "
+            f"APPROVAL_MODE={settings.approval_mode}) and take effect when the trade service "
+            "restarts."
+        ),
+    )
+
+
+def _approval_gate() -> Any:
+    from deskmind.execution.approval import ApprovalGate
+
+    return ApprovalGate(mode="manual", trading_mode=get_settings().trading_mode)
 
 
 @router.get("/api/control/pending")
 async def get_pending_approvals() -> list[dict[str, Any]]:
-    """Return pending trade intents awaiting human confirmation."""
-    return []
+    """Pending trade intents from the approval gate (same store as `deskmind trade pending`)."""
+    return [r.to_dict() for r in _approval_gate().get_pending()]
 
 
 @router.post("/api/control/approve", dependencies=[Depends(require_csrf)])
@@ -312,12 +361,19 @@ async def approve_trade(
     session: Annotated[SessionData, Depends(get_current_session)],
 ) -> dict[str, Any]:
     ip = get_client_ip(request)
+    ok = _approval_gate().approve(req.req_id, note=f"Approved via dashboard by {session.username}")
     await record_audit_action(
         action="approve_trade",
         user=session.username,
-        details={"req_id": req.req_id},
+        details={"req_id": req.req_id, "applied": ok},
         ip_address=ip,
+        status="success" if ok else "failed",
     )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{req.req_id} is not pending (unknown, expired or already resolved)",
+        )
     return {"req_id": req.req_id, "status": "approved"}
 
 
@@ -328,12 +384,19 @@ async def reject_trade(
     session: Annotated[SessionData, Depends(get_current_session)],
 ) -> dict[str, Any]:
     ip = get_client_ip(request)
+    ok = _approval_gate().reject(req.req_id, note=f"Rejected via dashboard by {session.username}")
     await record_audit_action(
         action="reject_trade",
         user=session.username,
-        details={"req_id": req.req_id},
+        details={"req_id": req.req_id, "applied": ok},
         ip_address=ip,
+        status="success" if ok else "failed",
     )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{req.req_id} is not pending (unknown, expired or already resolved)",
+        )
     return {"req_id": req.req_id, "status": "rejected"}
 
 
@@ -344,7 +407,11 @@ async def trigger_kill_switch(
     session: Annotated[SessionData, Depends(get_current_session)],
     supervisor: Annotated[SupervisorManager, Depends(get_supervisor)],
 ) -> dict[str, Any]:
-    """Emergency Kill Switch: closes all positions, cancels orders, halts system."""
+    """Emergency stop: stops every supervised service (live, trend, trade).
+
+    It does not close positions or cancel orders; open positions keep their exchange-side
+    stop-loss and take-profit orders.
+    """
     if req.confirm != "KILL":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -376,14 +443,40 @@ async def reset_circuit_breaker(
             detail="Typed confirmation 'RESET' is required.",
         )
 
+    import time as _time
+
+    from deskmind.risk.breakers import CircuitBreakerTracker
+
     ip = get_client_ip(request)
+    path = get_settings().data_dir / "risk_state.json"
+    tracker = CircuitBreakerTracker.load_state(path) if path.exists() else None
+    if tracker is None or tracker.halt_state != "full_stop":
+        state = tracker.halt_state if tracker else "no state file"
+        await record_audit_action(
+            action="circuit_breaker_reset",
+            user=session.username,
+            details={"applied": False, "state": state},
+            ip_address=ip,
+            status="not_applied",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Not applied: breaker state is '{state}'. Manual reset only applies to "
+                "'full_stop'; other states clear by their own hysteresis rules."
+            ),
+        )
+    tracker.reset_full_stop(
+        current_equity=tracker.start_of_day_equity, timestamp_ms=int(_time.time() * 1000)
+    )
+    tracker.save_state(path)
     await record_audit_action(
         action="circuit_breaker_reset",
         user=session.username,
-        details={"reset": True},
+        details={"applied": True, "from": "full_stop"},
         ip_address=ip,
     )
-    return {"status": "reset", "circuit_breaker": "normal"}
+    return {"status": "reset", "circuit_breaker": tracker.halt_state}
 
 
 # -----------------------------------------------------------------------------
@@ -544,8 +637,9 @@ async def list_journal_trades(
                 for t in trades
             ]
     except Exception as e:
-        log.debug("fetch_journal_trades_error", error=str(e))
-        return []
+        # Surface the failure: an empty list would look like "no trades".
+        log.warning("fetch_journal_trades_error", error=str(e))
+        raise HTTPException(status_code=503, detail=f"trade_journal unavailable: {e}") from e
 
 
 # -----------------------------------------------------------------------------
@@ -559,49 +653,6 @@ async def list_audit_logs(
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     return await get_audit_logs(limit=limit, action=action)
-
-
-@router.get("/api/strategies")
-async def list_strategies() -> list[dict[str, Any]]:
-    """Return available strategies from strategy_library."""
-    return [
-        {
-            "name": "trend_follow_v1",
-            "version": "1.0.0",
-            "description": (
-                "Multi-timeframe trend following with swing structures and BOS confirmation."
-            ),
-            "symbols": list(get_settings().data_symbols),
-            "status": "untested",
-            "parameters": {
-                "fast_period": 20,
-                "slow_period": 50,
-                "risk_per_trade_pct": 1.0,
-            },
-        }
-    ]
-
-
-@router.get("/api/account/info")
-async def get_account_info() -> dict[str, Any]:
-    """Return read-only mainnet account sync summary."""
-    from deskmind.config import (
-        DEFAULT_MAINTENANCE_BRACKETS,
-        DEFAULT_MAKER_FEE_RATE,
-        DEFAULT_TAKER_FEE_RATE,
-    )
-
-    return {
-        "status": "read_only",
-        "source": "binance_mainnet_readonly",
-        "vip_level": "VIP0",
-        "default_fees": {
-            "maker_rate": str(DEFAULT_MAKER_FEE_RATE),
-            "taker_rate": str(DEFAULT_TAKER_FEE_RATE),
-        },
-        "default_mmr_tier_1": str(DEFAULT_MAINTENANCE_BRACKETS[0][1]),
-        "notes": "Mainnet data is strictly read-only for metadata verification.",
-    }
 
 
 # -----------------------------------------------------------------------------

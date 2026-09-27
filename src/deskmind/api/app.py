@@ -182,6 +182,10 @@ def create_app(
             from deskmind.api.overlays import load_execution_overlays
 
             overlays.extend(await load_execution_overlays(sym, start, end, as_of))
+        if as_of is None:  # the user's own imported fills (not agent knowledge; not in replay)
+            from deskmind.api.overlays import load_external_trade_overlays
+
+            overlays.extend(await load_external_trade_overlays(sym, iv, start, end))
         return OverlayResponse(symbol=sym, timeframe=tf, overlays=overlays)
 
     @app.get("/api/backtest/runs")
@@ -189,6 +193,15 @@ def create_app(
         from deskmind.backtest.registry import list_runs_local
 
         return list_runs_local()
+
+    @app.get("/api/backtest/runs/{run_id}")
+    async def get_backtest_run(run_id: str) -> dict[str, Any]:
+        from deskmind.backtest.registry import get_run_local
+
+        rec = get_run_local(run_id)
+        if rec is None:
+            raise HTTPException(404, f"backtest run {run_id} not found")
+        return rec
 
     @app.get("/api/agents/trend/report", response_model=TrendReportResponse)
     async def get_trend_report(
@@ -222,7 +235,9 @@ def create_app(
         await stream_chart(websocket, app.state.redis, sym, tf)
 
     from deskmind.api.control import router as control_router
+    from deskmind.api.dashboard import router as dashboard_router
 
     app.include_router(control_router)
+    app.include_router(dashboard_router)
 
     return app

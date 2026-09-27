@@ -54,7 +54,15 @@ function fromInput(v: string): number {
   return Math.floor(Date.parse(`${v}:00Z`) / 1000);
 }
 
-export default function ChartView({ initialSymbol, initialTf }: { initialSymbol: string; initialTf: string }) {
+export default function ChartView({
+  initialSymbol,
+  initialTf,
+  initialRunId = null,
+}: {
+  initialSymbol: string;
+  initialTf: string;
+  initialRunId?: string | null;
+}) {
   const router = useRouter();
   const chart = useRef<PriceChartHandle>(null);
   const [symbols, setSymbols] = useState<string[]>([initialSymbol]);
@@ -80,7 +88,7 @@ export default function ChartView({ initialSymbol, initialTf }: { initialSymbol:
   const olderState = useRef({ loading: false, exhausted: false });
 
   const [backtestRuns, setBacktestRuns] = useState<Array<{ run_id: string; strategy_name: string; split: string }>>([]);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId);
 
   const iv = TIMEFRAME_SECONDS[tf] ?? 900;
   const key = `${symbol}|${tf}|${replayT ?? "live"}|${selectedRunId ?? "none"}`;

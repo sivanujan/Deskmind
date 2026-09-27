@@ -24,14 +24,15 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const [tradingMode, setTradingMode] = useState<string>("testnet");
-  const [riskState, setRiskState] = useState<string>("normal");
+  const [tradingMode, setTradingMode] = useState<string | null>(null);
+  const [riskState, setRiskState] = useState<string | null>(null);
   const [user, setUser] = useState<string | null>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [usernameInput, setUsernameInput] = useState("admin");
   const [passwordInput, setPasswordInput] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
 
   useEffect(() => {
     // Initial fetch of status & user
@@ -43,20 +44,15 @@ export default function DashboardLayout({
       })
       .catch(() => {});
 
-    api.systemStatus()
-      .then((status) => {
-        setTradingMode(status.trading_mode);
-        setRiskState(status.risk_state);
-      })
-      .catch(() => {});
+    const updateStatus = (status: { trading_mode: string; risk_state: string | null }) => {
+      setTradingMode(status.trading_mode);
+      setRiskState(status.risk_state); // null = unknown, shown as such
+    };
+
+    api.systemStatus().then(updateStatus).catch(() => {});
 
     const interval = setInterval(() => {
-      api.systemStatus()
-        .then((status) => {
-          setTradingMode(status.trading_mode);
-          setRiskState(status.risk_state);
-        })
-        .catch(() => {});
+      api.systemStatus().then(updateStatus).catch(() => {});
     }, 10000);
 
     return () => clearInterval(interval);
@@ -134,20 +130,22 @@ export default function DashboardLayout({
                 tradingMode === "paper" ? "bg-accent" : "bg-warn"
               }`}
             />
-            {tradingMode === "paper" ? "PAPER" : "TESTNET / DEMO"}
+            {tradingMode === null ? "MODE UNKNOWN" : tradingMode === "paper" ? "PAPER" : "TESTNET / DEMO"}
           </span>
 
           {/* Risk State Badge */}
           <span
             className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium ${
-              riskState === "normal"
+              riskState === null
+                ? "border-border text-muted"
+                : riskState === "normal"
                 ? "border-up/40 bg-up/10 text-up"
                 : riskState === "half_risk"
                 ? "border-warn/40 bg-warn/10 text-warn"
                 : "border-down/40 bg-down/10 text-down font-bold"
             }`}
           >
-            {riskState.replace("_", " ").toUpperCase()}
+            {riskState === null ? "RISK UNKNOWN" : riskState.replace("_", " ").toUpperCase()}
           </span>
 
           {/* User profile / Login */}

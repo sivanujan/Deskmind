@@ -123,7 +123,36 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
   versions: read `apps/web/node_modules/next/dist/docs/` before changing it (`next lint` is gone,
   use `npm run lint`; `searchParams` are async; `middleware` is now `proxy`).
   Keep the TradingView attribution (logo + footer link) required by Lightweight Charts.
-- Auth is not implemented yet: add it in `apps/web/src/app/(dashboard)/layout.tsx` + `proxy.ts`.
+- Dashboard login (`api/auth.py`, `DASHBOARD_PASSWORD_HASH`; set it with
+  `uv run python scripts/set_dashboard_password.py`). Control actions are POSTs that need a session
+  + CSRF token; none of them places, modifies or cancels an order.
+
+## Dashboard truth rule
+- The dashboard shows ONLY data from a backend endpoint that reads the real source of truth. No
+  mock data, placeholder numbers or UI-side defaults (`?? "normal"`, `?? 50000`). Missing data is an
+  explicit empty state ("No data yet", "Not built yet — Step 8") or `null` + `reason` from the API.
+- Truth endpoints (`src/deskmind/api/dashboard.py`): `/api/dashboard/agents` (agents/registry.py +
+  Redis health + agent_reports), `/api/dashboard/strategies` (strategy module docstrings,
+  `default_params`, backtest registry), `/api/dashboard/risk` (RiskConfig, hard caps, the comments
+  in risk/config.py, equity source per mode, breaker), `/api/dashboard/account` (read-only mainnet
+  snapshot, never used for sizing), `/api/dashboard/backtest-meta` (BACKTEST_SPLITS, registry).
+- Adding an agent = add it to `agents/registry.py`; planned agents go in `PLANNED`.
+- `tests/test_dashboard_truth.py` fails on hardcoded risk limits, agent names/versions, strategy
+  names/params or mock fallbacks in `apps/web/src`, on frontend calls to endpoints that do not
+  exist, and when the truth endpoints drift from their sources.
+
+## Read-only mainnet key + my Binance history
+- `data/mainnet_readonly.py` is the ONLY code that talks to mainnet with a key
+  (`BINANCE_MAINNET_READONLY_API_KEY/SECRET`). Double lock: GET only + `ALLOWLISTED_ENDPOINTS`
+  checked before any network call, and `check_permissions()` refuses keys with trading, withdraw,
+  transfer or margin permission. Its balance is display-only; the Risk Manager never sizes from it.
+- A futures refusal becomes "Needs futures read access — not enabled (by design)". Never suggest
+  enabling futures (or anything else) on that key.
+- The user's own fills go to `external_trades` (migration 0006), never `trade_journal`. Dedupe:
+  unique (source, market, symbol, trade_id); CSV rows without an id get a content hash.
+  `uv run deskmind account import-history [--since YYYY-MM-DD]` (API, futures ~3 months) and
+  `uv run deskmind account import-csv FILE [--market spot|futures]` (Binance export), or upload on
+  Trades & Journal. The chart overlays them as source `binance:history`.
 
 ## Overlay contract (schema version 1) — what agents draw on the chart
 - Source of truth: `src/deskmind/api/overlays.py` (Pydantic). Mirrors: TypeScript

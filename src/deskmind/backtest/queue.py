@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,7 +28,6 @@ class BacktestSubmitRequest(BaseModel):
     end_date: str | None = None
     initial_cash: Decimal = Decimal("10000.0")
     warmup_days: int = 30
-    seed: int | None = None
 
 
 @dataclass
@@ -164,36 +164,33 @@ class BacktestQueueManager:
         log.info("starting_backtest_job", job_id=rec.job_id)
 
         try:
-            # Simulated progress increments for demonstration and real engine harness
-            for p in range(1, 11):
-                await asyncio.sleep(0.2)
-                rec.progress_pct = float(p * 10)
-                await self._broadcast_progress(
-                    rec.job_id,
-                    {
-                        "job_id": rec.job_id,
-                        "status": "running",
-                        "progress_pct": rec.progress_pct,
-                        "trades_count": rec.trades_count,
-                    },
-                )
+            # The real event-driven engine (same call as `deskmind backtest run`). It reports no
+            # intermediate progress, so progress_pct stays 0 until the run finishes.
+            from deskmind.backtest.runner import run_backtest
 
-            # Mark completed with dummy/real results
+            req = rec.request
+            # CPU-bound: run on its own event loop in a worker thread so the API stays responsive.
+            res = await asyncio.to_thread(
+                asyncio.run,
+                run_backtest(
+                    strategy_name=req.get("strategy", "trend_follow_v1"),
+                    split=req.get("split", "train"),
+                    symbols=req.get("symbols") or None,
+                    start_date=req.get("start_date"),
+                    end_date=req.get("end_date"),
+                    initial_cash=Decimal(str(req.get("initial_cash", "10000"))),
+                    warmup_days=int(req.get("warmup_days", 30)),
+                    notes=f"dashboard job {rec.job_id}",
+                ),
+            )
+            m = res["metrics"]
+            metrics = dataclasses.asdict(m) if dataclasses.is_dataclass(m) else dict(m)
             rec.status = "completed"
-            strat = rec.request.get("strategy", "trend")
-            sp = rec.request.get("split", "train")
-            ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-            rec.run_id = f"{strat}_{sp}_{ts}"
-            rec.metrics = {
-                "trades": 119,
-                "net_return_usd": -1507.21,
-                "net_return_pct": -15.07,
-                "max_drawdown_pct": -15.07,
-                "win_rate_pct": 30.3,
-                "profit_factor": 0.72,
-                "sharpe_ratio": -1.10,
-                "small_sample_warning": False,  # >= 100 trades
-            }
+            rec.run_id = res["run_id"]
+            rec.trades_count = res["trades_count"]
+            rec.progress_pct = 100.0
+            rec.finished_at = datetime.now(UTC).isoformat()
+            rec.metrics = {k: v for k, v in metrics.items() if not isinstance(v, dict | list)}
             await self._broadcast_progress(
                 rec.job_id,
                 {

@@ -32,6 +32,17 @@ log = get_logger(__name__)
 
 AGENT_REPORT_CHANNEL = "deskmind:agent_report"
 HEALTH_KEY = f"{B.PREFIX}:agents:{AGENT_NAME}:health"
+ERRORS_KEY = f"{B.PREFIX}:agents:{AGENT_NAME}:errors"  # zset: score = time ms, member = error
+
+
+async def record_error(redis: Redis, error: str) -> None:
+    """Keep a timestamped error log (last 7 days) so the dashboard can count real errors."""
+    now = B.now_ms()
+    pipe = redis.pipeline(transaction=False)
+    pipe.zadd(ERRORS_KEY, {f"{now}:{error[:300]}": now})
+    pipe.zremrangebyscore(ERRORS_KEY, 0, now - 7 * 86_400_000)
+    pipe.hset(HEALTH_KEY, mapping={"last_error": error[:300], "last_error_at": now})
+    await pipe.execute()
 
 
 # ---------------------------------------------------------------- batch / backfill
@@ -169,6 +180,7 @@ class LiveTrendRunner:
         await self.redis.hset(
             HEALTH_KEY,
             mapping={
+                "state": "running",
                 "heartbeat": B.now_ms(),
                 "last_report": out.report["as_of"],
                 "reports": self.reports,
@@ -197,7 +209,10 @@ class LiveTrendRunner:
                         await self.on_bar_close(json.loads(msg["data"]))
                     except Exception as exc:  # keep running; the next event catches up
                         log.error("trend_event_failed", error=str(exc), event=msg["data"])
-                await self.redis.hset(HEALTH_KEY, mapping={"heartbeat": B.now_ms()})
+                        await record_error(self.redis, str(exc))
+                await self.redis.hset(
+                    HEALTH_KEY, mapping={"state": "running", "heartbeat": B.now_ms()}
+                )
         finally:
             await pubsub.unsubscribe(B.BAR_CLOSE_CHANNEL)
             await pubsub.aclose()

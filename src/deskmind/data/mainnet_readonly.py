@@ -51,8 +51,20 @@ ALLOWLISTED_ENDPOINTS: frozenset[str] = frozenset(
         "/fapi/v1/commissionRate",
         "/fapi/v1/account",
         "/fapi/v2/account",
+        # Trade-history import (read-only, USER_DATA GETs; checked against current Binance docs):
+        "/fapi/v1/userTrades",  # futures fills per symbol, <= 7-day windows, last 3 months only
+        "/fapi/v1/income",  # futures income (REALIZED_PNL, COMMISSION, ...), last 3 months only
+        "/api/v3/myTrades",  # spot fills per symbol, paged by fromId (full history)
+        "/api/v3/account",  # spot balances: used only to discover which spot symbols to query
     }
 )
+
+FUTURES_NOT_ENABLED = "Needs futures read access — not enabled (by design)"
+
+
+class FuturesReadNotEnabled(Exception):
+    """Futures read endpoints refused or skipped because the key has no futures permission."""
+
 
 FORBIDDEN_PERMISSION_KEYS: frozenset[str] = frozenset(
     {
@@ -149,8 +161,8 @@ class MainnetReadOnlyClient:
             log.critical("mainnet_readonly_path_violation", path=path)
             raise MainnetReadOnlySecurityViolation(msg)
 
-        # 3. Determine base URL
-        if path.startswith("/sapi/"):
+        # 3. Determine base URL (spot /api and /sapi on api.binance.com, futures on fapi)
+        if path.startswith(("/sapi/", "/api/")):
             base_url = self.settings.binance_mainnet_api_url.rstrip("/")
         else:
             base_url = self.settings.binance_mainnet_futures_url.rstrip("/")
@@ -289,6 +301,89 @@ class MainnetReadOnlyClient:
             except Exception as e:
                 log.warning("get_futures_account_info_error", error=str(e))
                 return None
+
+    # ------------------------------------------------------------ trade history (read-only)
+
+    async def _futures_get(self, path: str, params: dict[str, Any]) -> Any:
+        """Futures GET that turns a permission refusal into FuturesReadNotEnabled."""
+        if not self.futures_enabled:
+            raise FuturesReadNotEnabled(FUTURES_NOT_ENABLED)
+        try:
+            return await self.request("GET", path, params=params, signed=True)
+        except httpx.HTTPStatusError as exc:
+            body: dict[str, Any] = {}
+            with contextlib.suppress(Exception):
+                body = exc.response.json()
+            msg = str(body.get("msg", "")).lower()
+            if (
+                exc.response.status_code in (401, 403)
+                or body.get("code") == -2015
+                or ("permission" in msg or "not enabled" in msg)
+            ):
+                self.futures_enabled = False
+                raise FuturesReadNotEnabled(FUTURES_NOT_ENABLED) from exc
+            raise
+
+    async def get_futures_income(
+        self, start_ms: int, end_ms: int, income_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """All futures income rows in [start, end] (paged; Binance keeps ~3 months)."""
+        out: list[dict[str, Any]] = []
+        cursor = start_ms
+        while cursor <= end_ms:
+            params: dict[str, Any] = {"startTime": cursor, "endTime": end_ms, "limit": 1000}
+            if income_type:
+                params["incomeType"] = income_type
+            rows = await self._futures_get("/fapi/v1/income", params)
+            if not rows:
+                break
+            out.extend(rows)
+            if len(rows) < 1000:
+                break
+            cursor = int(rows[-1]["time"]) + 1
+        return out
+
+    async def get_futures_user_trades(
+        self, symbol: str, start_ms: int, end_ms: int
+    ) -> list[dict[str, Any]]:
+        """Futures fills for one symbol, walking 7-day windows (Binance's maximum)."""
+        week = 7 * 86_400_000
+        out: list[dict[str, Any]] = []
+        w_start = start_ms
+        while w_start <= end_ms:
+            w_end = min(w_start + week - 1, end_ms)
+            cursor = w_start
+            while True:
+                rows = await self._futures_get(
+                    "/fapi/v1/userTrades",
+                    {"symbol": symbol, "startTime": cursor, "endTime": w_end, "limit": 1000},
+                )
+                out.extend(rows)
+                if len(rows) < 1000:
+                    break
+                cursor = int(rows[-1]["time"]) + 1
+            w_start = w_end + 1
+        return out
+
+    async def get_spot_balances(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", "/api/v3/account", params={"omitZeroBalances": "true"})
+        return list(data.get("balances", []))
+
+    async def get_spot_my_trades(self, symbol: str) -> list[dict[str, Any]]:
+        """Full spot fill history for one symbol, paged by trade id (fromId)."""
+        out: list[dict[str, Any]] = []
+        from_id = 0
+        while True:
+            rows = await self.request(
+                "GET",
+                "/api/v3/myTrades",
+                params={"symbol": symbol, "fromId": from_id, "limit": 1000},
+            )
+            out.extend(rows)
+            if len(rows) < 1000:
+                break
+            from_id = int(rows[-1]["id"]) + 1
+        return out
 
     async def sync_account(self) -> dict[str, Any]:
         """Perform full read-only metadata synchronization and configuration comparison."""

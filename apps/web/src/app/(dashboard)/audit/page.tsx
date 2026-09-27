@@ -95,8 +95,8 @@ export default function AuditLogPage() {
             <tbody className="divide-y divide-border">
               {logs.length > 0 ? (
                 logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-surface-2/40">
-                    <td suppressHydrationWarning className="py-2.5 font-mono text-muted">{new Date(log.timestamp).toLocaleString()}</td>
+                  <tr key={log.id ?? `${log.created_at}-${log.action}`} className="hover:bg-surface-2/40">
+                    <td suppressHydrationWarning className="py-2.5 font-mono text-muted">{new Date(log.created_at).toISOString().replace("T", " ").slice(0, 19)}</td>
                     <td className="py-2.5 font-semibold text-foreground">{log.user}</td>
                     <td className="py-2.5">
                       <span className="font-mono text-accent">{log.action}</span>

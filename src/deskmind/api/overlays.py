@@ -214,3 +214,80 @@ async def load_execution_overlays(
 
 if __name__ == "__main__":
     print(json.dumps(json_schema(), indent=2, sort_keys=True))
+
+
+EXTERNAL_SOURCE = "binance:history"
+
+
+async def load_external_trade_overlays(
+    symbol: str,
+    interval_ms: int,
+    start: int | None = None,
+    end: int | None = None,
+    limit: int = 2000,
+) -> list[Overlay]:
+    """The user's own imported Binance fills (external_trades) as chart markers.
+
+    Fills are grouped per candle and side (one marker per bar and direction) so a busy bar stays
+    readable; the hover details list the count, total qty, average price, fees and realized PnL.
+    """
+    from collections import defaultdict
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from deskmind.data.external_trades import list_trades
+    from deskmind.db.session import session_scope
+
+    try:
+        async with session_scope() as session:
+            trades = await list_trades(
+                session,
+                symbol=symbol,
+                start=datetime.fromtimestamp(start, UTC) if start is not None else None,
+                end=datetime.fromtimestamp(end, UTC) if end is not None else None,
+                limit=limit,
+            )
+    except Exception:
+        return []
+    groups: dict[tuple[int, str, str], list] = defaultdict(list)
+    for t in trades:
+        bar = int(t.time.timestamp() * 1000) // interval_ms * interval_ms
+        groups[(bar, t.side, t.market)].append(t)
+    out: list[Overlay] = []
+    for (bar, side, market), fills in sorted(groups.items()):
+        qty = sum((f.qty for f in fills), Decimal(0))
+        notional = sum((f.price * f.qty for f in fills), Decimal(0))
+        pnl = [f.realized_pnl for f in fills if f.realized_pnl is not None]
+        fees: dict[str, Decimal] = defaultdict(Decimal)
+        for f in fills:
+            if f.fee is not None and f.fee_asset:
+                fees[f.fee_asset] += f.fee
+        buy = side == "BUY"
+        out.append(
+            MarkerOverlay(
+                id=f"{EXTERNAL_SOURCE}:{market}:{side}:{bar}",
+                kind=f"binance_{side.lower()}",
+                source_agent=EXTERNAL_SOURCE,
+                agent_version="import",
+                time=bar // 1000,
+                confirmed_at=int(max(f.time for f in fills).timestamp()),
+                position="below" if buy else "above",
+                shape="arrowUp" if buy else "arrowDown",
+                color="#2196f3" if buy else "#ff9800",
+                text=f"{'B' if buy else 'S'}{'' if len(fills) == 1 else f'x{len(fills)}'}",
+                meta={
+                    "source": "your Binance history (read-only import)",
+                    "market": market,
+                    "side": side,
+                    "fills": len(fills),
+                    "qty": str(qty),
+                    "avg_price": str((notional / qty).quantize(Decimal("0.00000001")))
+                    if qty
+                    else None,
+                    "fees": ", ".join(f"{v} {k}" for k, v in fees.items()) or None,
+                    "realized_pnl": str(sum(pnl, Decimal(0))) if pnl else None,
+                    "first_fill": min(f.time for f in fills).isoformat(),
+                },
+            )
+        )
+    return out

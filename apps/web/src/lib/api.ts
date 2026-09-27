@@ -1,5 +1,6 @@
 /**
- * Typed client for the Deskmind Dashboard API (GETs & POSTs under /api/control/*).
+ * Typed client for the Deskmind API. Every function calls an endpoint that exists in the backend
+ * (tests/test_no_fake_ui.py checks this against the FastAPI routes).
  * Strictly PAPER and TESTNET only. LIVE TRADING IS FORBIDDEN.
  */
 import type { OverlayResponse } from "./overlays";
@@ -104,197 +105,260 @@ export interface LiveMessage {
 }
 
 // ----------------------------------------------------------------------------
-// Dashboard Control Interfaces (Part 2)
+// Dashboard types: each mirrors a real backend response. No field here may be filled in by the
+// UI when the backend has no value — show an empty state instead (see tests/test_no_fake_ui.py).
 // ----------------------------------------------------------------------------
 
 export interface ServiceState {
   name: string;
   status: "stopped" | "starting" | "running" | "crashing" | "stopping";
   pid: number | null;
-  uptime_seconds: number;
+  uptime_s: number; // matches SupervisorManager.get_status()
   restart_count: number;
-  last_error: string | null;
+  last_exit_code: number | null;
+  enabled: boolean;
+}
+
+export interface BreakerTransition {
+  timestamp_ms: number;
+  timestamp_iso: string;
+  from_state: string;
+  to_state: string;
+  reason: string;
+}
+
+export interface BreakerFileState {
+  halt_state: string;
+  peak_equity: string;
+  start_of_day_equity: string;
+  drawdown_pct_of_peak: number;
+  consecutive_losses: number;
+  cooldown_until_ms: number;
+  transitions: BreakerTransition[];
+  file: string;
 }
 
 export interface SystemStatus {
+  mode_badge: string;
   trading_mode: "paper" | "testnet";
   approval_mode: "auto" | "manual";
-  risk_state: "normal" | "half_risk" | "halt_and_close";
-  circuit_breaker_tripped: boolean;
+  live_trading_allowed: false;
   services: Record<string, ServiceState>;
-  open_positions_count: number;
-  timestamp: number;
+  /** null = unknown (trade service not running and no breaker state file). */
+  risk_state: string | null;
+  risk_state_source: string | null;
+  circuit_breaker_tripped: boolean | null;
+  risk_details: BreakerFileState | null;
+  trade_status_age_s: number | null;
+  stats: Record<string, number> | null;
+  open_positions: Array<Record<string, unknown>> | null;
+  alerts: string[];
 }
 
-export interface PendingApproval {
-  intent_id: string;
-  symbol: string;
-  direction: "LONG" | "SHORT";
-  strategy: string;
-  entry_price: number;
-  stop_loss: number;
-  take_profit: number;
-  quantity: number;
-  risk_decision: {
-    status: string;
-    approved_fraction?: number;
-    reason?: string;
+/** ApprovalRequest.to_dict() from execution/approval.py (decimals as strings). */
+export interface ApprovalRequest {
+  id: string;
+  intent: {
+    symbol: string;
+    side: string;
+    expected_entry: string;
+    stop_loss: string;
+    take_profit: string;
+    strategy_name: string;
+    strategy_version: string;
+    setup_id: string;
   };
-  expires_at: number;
+  decision: { approved: boolean; leverage: number; qty: string; notional: string; liquidation_price: string };
+  account: { equity: string; available_balance: string };
+  market: { mark_price: string; atr: string };
+  status: string;
   created_at: number;
+  expires_at: number;
+  resolved_at: number | null;
+  resolution_note: string | null;
 }
 
 export interface BacktestJob {
   job_id: string;
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
-  progress: number;
-  request: {
-    strategy: string;
-    split: "train" | "validation";
-    symbols: string[];
-    start_date?: string;
-    end_date?: string;
-  };
-  submitted_at: number;
-  started_at?: number;
-  completed_at?: number;
-  result_run_id?: string;
-  error?: string;
+  created_at: number | string | null;
+  started_at: number | string | null;
+  finished_at: number | string | null;
+  progress_pct: number;
+  run_id: string | null;
+  error: string | null;
+  metrics: Record<string, unknown> | null;
+  request: Record<string, unknown>;
 }
 
-export interface BacktestRunDetail {
+/** A run record from reports/backtests/registry.json. */
+export interface BacktestRun {
   run_id: string;
   strategy_name: string;
+  strategy_version: string;
   split: string;
+  start_date: string;
+  end_date: string;
   created_at: string;
-  metrics: {
-    trade_count: number;
-    win_rate: number;
-    sharpe_ratio: number;
-    cagr_pct: number;
-    max_drawdown_pct: number;
-    profit_factor: number;
-    total_pnl: number;
-    maker_fees: number;
-    taker_fees: number;
-    slippage_cost: number;
-    funding_fees: number;
-  };
-  trades: Array<{
-    trade_id: string;
-    symbol: string;
-    direction: string;
-    entry_time: string;
-    exit_time: string;
-    entry_price: number;
-    exit_price: number;
-    size: number;
-    pnl: number;
-    pnl_pct: number;
-    exit_reason: string;
-  }>;
-  equity_curve?: Array<{ time: number; equity: number; drawdown_pct: number }>;
-  breaker_events?: Array<{ timestamp: string; state: string; reason: string }>;
-  rejections?: Record<string, number>;
+  status: string;
+  symbols: string[];
+  params: Record<string, unknown>;
+  agent_versions: Record<string, unknown>;
+  engine_version: string;
+  git_commit: string | null;
+  notes: string | null;
+  metrics: Record<string, unknown>;
 }
 
-export interface TradeJournalEntry {
-  trade_id: string;
+export interface BacktestMeta {
+  splits: Record<string, { start: string; end: string; ui_allowed: boolean }>;
+  strategies: string[];
+  defaults: { warmup_days: number; initial_cash: string; symbols: string[] };
+}
+
+export interface JournalTrade {
+  id: number;
+  created_at: string;
   symbol: string;
-  direction: "LONG" | "SHORT";
-  status: "OPEN" | "CLOSED" | "CANCELLED";
-  entry_price: number;
-  exit_price?: number;
-  quantity: number;
-  pnl?: number;
-  pnl_pct?: number;
-  entry_time: string;
-  exit_time?: string;
-  strategy: string;
-  fees: number;
-  funding: number;
-  slippage: number;
-  risk_decision?: {
-    status: string;
-    reason?: string;
-    circuit_breaker_state?: string;
-  };
-  orders?: Array<{ order_id: string; type: string; price: number; status: string }>;
-  fills?: Array<{ fill_id: string; price: number; qty: number; fee: number }>;
+  side: string;
+  entry: number;
+  sl: number;
+  tp: number;
+  size: number;
+  leverage: number | null;
+  status: string;
+  pnl: number | null;
+  exit_price: number | null;
+  exit_reason: string | null;
+  trading_mode: string | null;
+  client_order_id: string;
 }
 
 export interface AuditLogEntry {
-  id: number;
-  timestamp: string;
-  user: string;
+  id?: number;
+  created_at: string;
   action: string;
-  status: string;
-  ip_address: string;
+  user: string;
   details: Record<string, unknown>;
+  ip_address: string | null;
+  status: string;
 }
 
-export interface AgentStatus {
+export interface AgentRuntime {
+  state: "running" | "stopped" | "never_run" | "unknown";
+  reason: string | null;
+  heartbeat_age_s?: number | null;
+  last_report_as_of?: string | null;
+  reports_since_start?: number | null;
+  last_error?: string | null;
+  last_error_at?: number | null;
+  errors_24h?: number;
+  last_report_stored_at?: string | null;
+  last_report_stored_as_of?: string | null;
+  reports_stored_24h?: number;
+  reports_error?: string;
+}
+
+export interface AgentEntry {
   name: string;
   version: string;
-  status: "online" | "idle" | "error" | "recovering";
-  last_run: string;
-  latency_ms: number;
-  errors_24h: number;
-  last_report_summary?: string;
+  kind: string;
+  spec: string;
+  summary: string;
+  spec_intro: string | null;
+  params: Record<string, unknown>;
+  runtime: AgentRuntime;
 }
 
-export interface StrategyInfo {
-  id: string;
+export interface AgentsResponse {
+  agents: AgentEntry[];
+  planned: Array<{ name: string; roadmap_step: number; summary: string }>;
+}
+
+export interface StrategyEntry {
   name: string;
+  version: string;
   description: string;
-  timeframe: string;
-  edge_status: "verified" | "no_edge" | "untested";
-  parameters: Record<string, unknown>;
-  author: string;
+  params: Record<string, unknown>;
+  agent_params: Record<string, unknown>;
+  uses_agents: string[];
+  timeframes: string[];
+  runs_total: number;
+  runs_by_split: Record<string, number>;
+  latest_by_split: Record<string, Record<string, unknown>>;
+  validation_status: string;
 }
 
-export interface AccountInfo {
-  source: string;
-  date: string;
-  balances: Array<{ asset: string; wallet_balance: number; unrealized_pnl: number; margin_balance: number }>;
-  margin_ratio_pct: number;
-  vip0_fee_rates: { maker: number; taker: number };
-  account_fee_rates?: { maker: number; taker: number };
-  restrictions: {
-    can_trade: boolean;
-    can_future_trade: boolean;
-    can_withdraw: boolean;
-    can_deposit: boolean;
+export interface RiskResponse {
+  config: Record<string, string | number | boolean>;
+  /** Inline comments / section headers from risk/config.py, keyed by field name. */
+  notes: Record<string, string>;
+  groups: Record<string, string>;
+  hard_caps: Record<string, string | number>;
+  trading_mode: string;
+  equity_by_mode: Record<string, { used_when: string; source: string; starting_equity: string | null }>;
+  current_equity: {
+    value: string | null;
+    available: string | null;
+    source: string;
+    status_age_s: number | null;
+    reason: string | null;
   };
-  mmr_brackets: Array<{ tier: number; max_notional: number; mmr_rate_pct: number }>;
+  breaker: {
+    state: string | null;
+    source: string | null;
+    kill_switch_halted: boolean | null;
+    file: BreakerFileState | null;
+    reason: string | null;
+  };
 }
 
-export interface RiskStateInfo {
-  state: "normal" | "half_risk" | "halt_and_close";
-  current_drawdown_pct: number;
-  peak_equity: number;
-  current_equity: number;
-  thresholds: {
-    half_risk_trigger: number;
-    half_risk_hysteresis: number;
-    halt_trigger: number;
-    halt_hysteresis: number;
-    halt_min_days: number;
-  };
-  limits: {
-    max_position_notional_usdt: number;
-    max_leverage: number;
-    daily_loss_limit_pct: number;
-    max_open_trades: number;
-    atr_stop_multiplier: number;
-  };
-  breaker_history: Array<{
-    timestamp: string;
-    previous_state: string;
-    new_state: string;
-    reason: string;
-  }>;
+export interface AccountResponse {
+  read_only: true;
+  used_for_sizing: false;
+  key_configured: boolean;
+  snapshot: string | null;
+  reason: string | null;
+  synced_at?: string;
+  permissions?: Record<string, boolean>;
+  futures_read?: boolean;
+  futures_reason?: string | null;
+  balances?: Array<{ asset: string; wallet_balance: string; unrealized_pnl: string; margin_balance: string }>;
+  commission_rates?: Record<string, Record<string, unknown>>;
+  brackets?: Record<string, Array<Record<string, unknown>>>;
+  comparison?: Record<string, Array<Record<string, unknown>>>;
 }
+
+export interface ExternalTrade {
+  source: "api" | "csv";
+  market: "spot" | "futures";
+  symbol: string;
+  side: string;
+  price: string;
+  qty: string;
+  quote_qty: string | null;
+  fee: string | null;
+  fee_asset: string | null;
+  realized_pnl: string | null;
+  time: number;
+  order_id: string | null;
+  trade_id: string;
+}
+
+export interface ExternalTradeStats {
+  trades: number;
+  per_symbol: Record<string, number>;
+  fees_by_asset: Record<string, string>;
+  pnl_fills: {
+    winning: number;
+    losing: number;
+    zero_pnl: number;
+    win_rate: number | null;
+    realized_pnl_total: string;
+    note: string;
+  };
+}
+
 
 // ----------------------------------------------------------------------------
 // CSRF & Session Management
@@ -378,65 +442,68 @@ export const api = {
   logout: () => post<{ ok: boolean }>("/api/auth/logout"),
   me: () => get<{ username: string; authenticated: boolean; mode: string }>("/api/auth/me"),
 
-  // System & Service Control
+  // System & service control
   systemStatus: () => get<SystemStatus>("/api/system/status"),
   serviceControl: (service: "live" | "trend" | "trade", action: "start" | "stop" | "restart") =>
-    post<{ status: string; service: string }>("/api/control/service", { service, action }),
+    post<{ service: string; action: string; success: boolean }>("/api/control/service", { service, action }),
   stopAllServices: (confirm: string) =>
-    post<{ status: string; stopped: Record<string, boolean> }>("/api/control/service/stop-all", { confirm }),
+    post<{ success: boolean; results: Record<string, boolean> }>("/api/control/service/stop-all", { confirm }),
   setMode: (trading_mode: "paper" | "testnet", approval_mode: "auto" | "manual") =>
-    post<{ status: string; trading_mode: string; approval_mode: string }>("/api/control/mode", {
-      trading_mode,
-      approval_mode,
-    }),
-  listApprovals: () => get<PendingApproval[]>("/api/control/approvals"),
-  decideApproval: (intentId: string, action: "approve" | "reject") =>
-    post<{ status: string; intent_id: string }>(`/api/control/approvals/${intentId}`, { action }),
-  killSwitch: (confirm: string) =>
-    post<{ status: string; message: string }>("/api/control/kill", { confirm }),
+    post<{ trading_mode: string; approval_mode: string }>("/api/control/mode", { trading_mode, approval_mode }),
+  listApprovals: () => get<ApprovalRequest[]>("/api/control/pending"),
+  decideApproval: (reqId: string, action: "approve" | "reject") =>
+    post<{ req_id: string; status: string }>(`/api/control/${action}`, { req_id: reqId }),
+  killSwitch: (confirm: string) => post<{ status: string; message: string }>("/api/control/kill", { confirm }),
   resetBreaker: (confirm: string) =>
-    post<{ status: string; message: string }>("/api/control/breaker/reset", { confirm }),
+    post<{ status: string; circuit_breaker: string }>("/api/control/breaker/reset", { confirm }),
 
   // Backtest Lab
+  backtestMeta: () => get<BacktestMeta>("/api/dashboard/backtest-meta"),
   submitBacktest: (req: {
     strategy: string;
     split: "train" | "validation";
     symbols: string[];
-    start_date?: string;
-    end_date?: string;
-    warmup_bars?: number;
-    seeds?: number[];
-  }) => post<BacktestJob>("/api/control/backtest/submit", req),
-  cancelBacktest: (jobId: string) => post<{ status: string }>(`/api/control/backtest/${jobId}/cancel`),
-  backtestJobs: () => get<BacktestJob[]>("/api/control/backtest/jobs"),
-  backtestJobStatus: (jobId: string) => get<BacktestJob>(`/api/control/backtest/jobs/${jobId}`),
-  backtestRuns: () => get<Array<{ run_id: string; strategy_name: string; split: string; created_at?: string }>>("/api/control/backtest/registry"),
-  backtestRunDetail: (runId: string) => get<BacktestRunDetail>(`/api/control/backtest/runs/${runId}`),
+    warmup_days?: number;
+    initial_cash?: string;
+  }) => post<{ job_id: string; status: string }>("/api/control/backtest/submit", req),
+  cancelBacktest: (jobId: string) =>
+    post<{ job_id: string; cancelled: boolean }>("/api/control/backtest/cancel", { job_id: jobId }),
+  backtestJobs: () => get<BacktestJob[]>("/api/backtest/jobs"),
+  backtestJobStatus: (jobId: string) => get<BacktestJob>(`/api/backtest/jobs/${encodeURIComponent(jobId)}`),
+  backtestRuns: () => get<BacktestRun[]>("/api/backtest/runs"),
+  backtestRunDetail: (runId: string) => get<BacktestRun>(`/api/backtest/runs/${encodeURIComponent(runId)}`),
   compareRuns: (runA: string, runB: string) =>
-    get<{ run_a: BacktestRunDetail; run_b: BacktestRunDetail }>("/api/control/backtest/compare", {
-      run_a: runA,
-      run_b: runB,
-    }),
+    get<{ run_a: BacktestRun; run_b: BacktestRun }>("/api/backtest/compare", { run_a: runA, run_b: runB }),
   backtestSocketUrl: (jobId: string) => `${WS_URL}/ws/backtest/${encodeURIComponent(jobId)}`,
 
-  // Journal & Trades
-  journal: (params?: { symbol?: string; status?: string; limit?: number; offset?: number }) =>
-    get<TradeJournalEntry[]>("/api/control/journal", params),
-  journalDetail: (tradeId: string) => get<TradeJournalEntry>(`/api/control/journal/${tradeId}`),
+  // Journal (Deskmind's own trades) & the user's imported Binance history
+  journal: (params?: { symbol?: string; status?: string; limit?: number }) =>
+    get<JournalTrade[]>("/api/journal/trades", params),
+  externalTrades: (params?: { market?: string; symbol?: string; start?: number; end?: number; limit?: number }) =>
+    get<{ totals_by_market: Record<string, number>; trades: ExternalTrade[] }>("/api/external-trades", params),
+  externalTradeStats: (params?: { market?: string; symbol?: string; start?: number; end?: number }) =>
+    get<ExternalTradeStats>("/api/external-trades/stats", params),
+  uploadTradeCsv: async (file: File, market?: "spot" | "futures") => {
+    const url = new URL("/api/external-trades/upload", API_URL);
+    url.searchParams.set("filename", file.name);
+    if (market) url.searchParams.set("market", market);
+    const headers: Record<string, string> = { "Content-Type": "text/csv" };
+    const token = getCsrfToken();
+    if (token) headers["X-CSRF-Token"] = token;
+    const res = await fetch(url, { method: "POST", headers, credentials: "include", body: await file.text() });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as { market: string; rows: number; inserted: number; duplicates: number };
+  },
 
-  // Risk
-  riskState: () => get<RiskStateInfo>("/api/control/risk/state"),
-
-  // Agents
-  agents: () => get<AgentStatus[]>("/api/control/agents"),
-
-  // Strategies
-  strategies: () => get<StrategyInfo[]>("/api/control/strategies"),
-
-  // Account (Part 1 read-only)
-  accountInfo: () => get<AccountInfo>("/api/control/account/info"),
+  // Truth endpoints (registry, strategy classes, RiskConfig, read-only mainnet snapshot)
+  agents: () => get<AgentsResponse>("/api/dashboard/agents"),
+  strategies: () => get<StrategyEntry[]>("/api/dashboard/strategies"),
+  risk: () => get<RiskResponse>("/api/dashboard/risk"),
+  account: () => get<AccountResponse>("/api/dashboard/account"),
 
   // Audit
-  auditLogs: (params?: { limit?: number; offset?: number; action?: string }) =>
-    get<AuditLogEntry[]>("/api/control/audit/logs", params),
+  auditLogs: (params?: { limit?: number; action?: string }) => get<AuditLogEntry[]>("/api/audit/logs", params),
 };

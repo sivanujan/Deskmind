@@ -1,522 +1,282 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api, type BacktestJob, type BacktestRunDetail } from "@/lib/api";
+import { api, type BacktestJob, type BacktestRun } from "@/lib/api";
+import { Badge, Card, Empty, ErrorBox, KV, Loading, PageHeader, fmtTime, num, useApi, val } from "@/components/ui";
 
-export default function BacktestLabPage() {
-  const [strategy, setStrategy] = useState("trend_follow_v1");
-  const [symbols, setSymbols] = useState("BTCUSDT,ETHUSDT");
+// Splits, strategies and defaults come from GET /api/dashboard/backtest-meta (config.BACKTEST_SPLITS,
+// STRATEGY_REGISTRY). Runs come from reports/backtests/registry.json. Metric keys are the engine's own.
+
+const METRIC_ROWS: Array<[string, string, number]> = [
+  ["total_trades", "Trades", 0],
+  ["win_rate_pct", "Win rate %", 1],
+  ["expectancy_r", "Expectancy (R)", 3],
+  ["profit_factor", "Profit factor", 2],
+  ["net_return_usd", "Net return (USD)", 2],
+  ["net_return_pct", "Net return %", 2],
+  ["max_drawdown_pct", "Max drawdown %", 2],
+  ["sharpe_ratio", "Sharpe", 2],
+  ["sortino_ratio", "Sortino", 2],
+  ["total_fees_paid", "Fees paid (USD)", 2],
+  ["total_funding_paid", "Funding paid (USD)", 2],
+  ["total_slippage_paid", "Slippage (USD)", 2],
+  ["total_costs_usd", "Total costs (USD)", 2],
+  ["skipped_signals_count", "Skipped signals", 0],
+];
+
+function Metrics({ m }: { m: Record<string, unknown> }) {
+  return (
+    <>
+      {METRIC_ROWS.map(([key, label, d]) => (
+        <KV key={key} k={label} v={key in m ? num(m[key], d) : val(null)} />
+      ))}
+    </>
+  );
+}
+
+export default function BacktestPage() {
+  const meta = useApi(api.backtestMeta);
+  const runs = useApi(api.backtestRuns);
+  const [strategy, setStrategy] = useState("");
   const [split, setSplit] = useState<"train" | "validation">("train");
-  const [warmupBars, setWarmupBars] = useState("200");
-  const [seeds, setSeeds] = useState("42");
-
-  const [activeJob, setActiveJob] = useState<BacktestJob | null>(null);
-  const [activeRun, setActiveRun] = useState<BacktestRunDetail | null>(null);
-  const [registryRuns, setRegistryRuns] = useState<Array<{ run_id: string; strategy_name: string; split: string; created_at?: string }>>([]);
-
-  const [compareA, setCompareA] = useState("");
-  const [compareB, setCompareB] = useState("");
-  const [compareResult, setCompareResult] = useState<{ run_a: BacktestRunDetail; run_b: BacktestRunDetail } | null>(null);
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [symbols, setSymbols] = useState<string[] | null>(null);
+  const [warmup, setWarmup] = useState("");
+  const [cash, setCash] = useState("");
+  const [job, setJob] = useState<BacktestJob | null>(null);
+  const [selected, setSelected] = useState<BacktestRun | null>(null);
+  const [compare, setCompare] = useState<{ a: string; b: string }>({ a: "", b: "" });
+  const [compared, setCompared] = useState<{ run_a: BacktestRun; run_b: BacktestRun } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const loadRegistry = async () => {
+  const m = meta.data;
+  const strat = strategy || m?.strategies[0] || "";
+  const syms = symbols ?? m?.defaults.symbols ?? [];
+
+  useEffect(() => () => wsRef.current?.close(), []);
+
+  const submit = async () => {
+    setErr(null);
     try {
-      const runs = await api.backtestRuns();
-      setRegistryRuns(runs);
-      if (runs.length > 0 && !activeRun) {
-        // Load first run by default if none active
-        loadRunDetail(runs[0].run_id);
-      }
-    } catch {
-      // Ignored
-    }
-  };
-
-  const loadRunDetail = async (runId: string) => {
-    try {
-      const detail = await api.backtestRunDetail(runId);
-      setActiveRun(detail);
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to load run details");
-    }
-  };
-
-  useEffect(() => {
-    let mounted = true;
-    void api.backtestRuns().then((runs) => {
-      if (!mounted) return;
-      setRegistryRuns(runs);
-      if (runs.length > 0) {
-        void api.backtestRunDetail(runs[0].run_id).then((detail) => {
-          if (mounted) setActiveRun(detail);
-        }).catch(() => {});
-      }
-    }).catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg("");
-    setIsSubmitting(true);
-
-    const symbolList = symbols.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-    const seedList = seeds.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
-
-    try {
-      const job = await api.submitBacktest({
-        strategy,
-        split, // train or validation ONLY (hard safety rule)
-        symbols: symbolList,
-        warmup_bars: parseInt(warmupBars, 10) || 200,
-        seeds: seedList.length > 0 ? seedList : [42],
+      const r = await api.submitBacktest({
+        strategy: strat,
+        split,
+        symbols: syms,
+        warmup_days: warmup ? Number(warmup) : undefined,
+        initial_cash: cash || undefined,
       });
-
-      setActiveJob(job);
-
-      // Connect to WebSocket for streaming progress
-      if (wsRef.current) wsRef.current.close();
-      const ws = new WebSocket(api.backtestSocketUrl(job.job_id));
+      const j = await api.backtestJobStatus(r.job_id);
+      setJob(j);
+      wsRef.current?.close();
+      const ws = new WebSocket(api.backtestSocketUrl(r.job_id));
       wsRef.current = ws;
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          setActiveJob((prev) => (prev ? { ...prev, progress: data.progress, status: data.status } : null));
-          if (data.status === "completed" && data.result_run_id) {
-            loadRunDetail(data.result_run_id);
-            loadRegistry();
-            ws.close();
-          }
-        } catch {
-          // JSON parse ignore
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data) as Partial<BacktestJob>;
+        setJob((prev) => (prev ? { ...prev, ...msg } : prev));
+        if (msg.status === "completed" || msg.status === "failed" || msg.status === "cancelled") {
+          void runs.reload();
+          if (msg.run_id) void api.backtestRunDetail(msg.run_id).then(setSelected);
         }
       };
-
-      ws.onerror = () => {
-        // Fallback polling if WS closed
-        const poll = setInterval(async () => {
-          const status = await api.backtestJobStatus(job.job_id);
-          setActiveJob(status);
-          if (status.status === "completed" || status.status === "failed") {
-            clearInterval(poll);
-            if (status.result_run_id) loadRunDetail(status.result_run_id);
-            loadRegistry();
-          }
-        }, 1000);
-      };
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to launch backtest");
-    } finally {
-      setIsSubmitting(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const handleCompare = async () => {
-    if (!compareA || !compareB) return;
+  const doCompare = async () => {
+    setErr(null);
     try {
-      const res = await api.compareRuns(compareA, compareB);
-      setCompareResult(res);
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to compare runs");
+      setCompared(await api.compareRuns(compare.a, compare.b));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const metrics = activeRun?.metrics;
-  const isSmallSample = (metrics?.trade_count ?? 0) < 100;
+  const runList = runs.data ? [...runs.data].reverse() : [];
 
   return (
     <div className="flex-1 space-y-6 p-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Backtest Laboratory</h1>
-          <p className="text-xs text-muted">
-            Launch verified historical simulations on Train and Validation splits with rigorous cost modeling.
-          </p>
-        </div>
+      <PageHeader title="Backtest" subtitle="Runs the real event-driven engine (same as `deskmind backtest run`). The test split is CLI-only." />
+      <ErrorBox error={meta.error || runs.error || err} />
+      <Loading loading={meta.loading} />
 
-        <div className="rounded border border-accent/30 bg-accent/10 px-3 py-1 text-xs text-accent font-medium">
-          Split Safety: TEST split locked (CLI only)
-        </div>
-      </div>
-
-      {errorMsg && (
-        <div className="rounded border border-down/40 bg-down/10 p-3 text-xs text-down">
-          {errorMsg}
-        </div>
-      )}
-
-      {/* Top Grid: Config & Job Status */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Backtest Launch Form */}
-        <div className="rounded-lg border border-border bg-surface p-5 lg:col-span-2">
-          <h2 className="text-sm font-semibold text-foreground border-b border-border pb-2">
-            Configure New Simulation Run
-          </h2>
-
-          <form onSubmit={handleSubmit} className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-xs font-medium text-muted">Strategy</label>
-              <select
-                value={strategy}
-                onChange={(e) => setStrategy(e.target.value)}
-                className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-accent focus:outline-hidden"
-              >
-                <option value="trend_follow_v1">trend_follow_v1 (BOS + Trendline)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-muted">Data Split (UI Locked)</label>
-              <select
-                value={split}
-                onChange={(e) => setSplit(e.target.value as "train" | "validation")}
-                className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-accent focus:outline-hidden"
-              >
-                <option value="train">TRAIN (2021-01 to 2023-01)</option>
-                <option value="validation">VALIDATION (2023-01 to 2024-01)</option>
-                {/* Notice: 'test' split is strictly excluded from UI options */}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-muted">Symbols (comma-separated)</label>
-              <input
-                type="text"
-                value={symbols}
-                onChange={(e) => setSymbols(e.target.value)}
-                className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-accent focus:outline-hidden"
-                placeholder="BTCUSDT,ETHUSDT,SOLUSDT"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-muted">Warmup Bars</label>
-              <input
-                type="number"
-                value={warmupBars}
-                onChange={(e) => setWarmupBars(e.target.value)}
-                className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-accent focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-muted">RNG Seeds</label>
-              <input
-                type="text"
-                value={seeds}
-                onChange={(e) => setSeeds(e.target.value)}
-                className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-accent focus:outline-hidden"
-                placeholder="42, 123"
-              />
-            </div>
-
-            <div className="flex items-end">
+        <Card title="New run">
+          {!m && <Empty>No metadata yet.</Empty>}
+          {m && (
+            <div className="space-y-3 text-xs">
+              <label className="block">
+                <span className="text-muted">Strategy</span>
+                <select value={strat} onChange={(e) => setStrategy(e.target.value)} className="mt-1 w-full rounded border border-border bg-background px-2 py-1">
+                  {m.strategies.map((s) => (
+                    <option key={s}>{s}</option>
+                  ))}
+                </select>
+              </label>
+              <div>
+                <span className="text-muted">Split</span>
+                <div className="mt-1 flex gap-2">
+                  {Object.entries(m.splits).map(([name, sp]) => (
+                    <button
+                      key={name}
+                      disabled={!sp.ui_allowed}
+                      onClick={() => setSplit(name as "train" | "validation")}
+                      title={sp.ui_allowed ? "" : "CLI only (locked holdout)"}
+                      className={`flex-1 rounded border px-2 py-1 disabled:opacity-40 ${split === name ? "border-accent bg-accent/15 text-accent" : "border-border"}`}
+                    >
+                      {name}
+                      <span className="block text-[10px] text-muted">
+                        {sp.start} → {sp.end}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className="text-muted">Symbols (DATA_SYMBOLS)</span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {m.defaults.symbols.map((s) => (
+                    <label key={s} className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={syms.includes(s)}
+                        onChange={(e) => setSymbols(e.target.checked ? [...syms, s] : syms.filter((x) => x !== s))}
+                      />
+                      {s}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <label className="block">
+                <span className="text-muted">Warm-up days</span>
+                <input
+                  value={warmup}
+                  onChange={(e) => setWarmup(e.target.value)}
+                  placeholder={String(m.defaults.warmup_days)}
+                  className="mt-1 w-full rounded border border-border bg-background px-2 py-1 font-mono"
+                />
+              </label>
+              <label className="block">
+                <span className="text-muted">Initial cash (USDT)</span>
+                <input
+                  value={cash}
+                  onChange={(e) => setCash(e.target.value)}
+                  placeholder={m.defaults.initial_cash}
+                  className="mt-1 w-full rounded border border-border bg-background px-2 py-1 font-mono"
+                />
+              </label>
               <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full rounded bg-accent py-2 text-xs font-semibold text-white hover:bg-accent/80 transition-colors disabled:opacity-50"
+                disabled={!strat || syms.length === 0 || job?.status === "running" || job?.status === "queued"}
+                onClick={() => void submit()}
+                className="w-full rounded border border-accent/40 bg-accent/20 py-2 font-semibold text-accent disabled:opacity-40"
               >
-                {isSubmitting ? "Submitting Job..." : "Queue Backtest Run"}
+                Run backtest
               </button>
+              {job && (
+                <div className="rounded bg-surface-2 p-2">
+                  <KV k="Job" v={job.job_id.slice(0, 8)} />
+                  <KV k="Status" v={job.status} />
+                  <KV k="Progress" v={job.status === "running" ? "running (engine reports no partial progress)" : `${job.progress_pct}%`} />
+                  {job.error && <KV k="Error" v={<span className="text-down">{job.error}</span>} />}
+                  {job.status === "running" && (
+                    <button onClick={() => void api.cancelBacktest(job.job_id)} className="mt-1 text-down underline">
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-          </form>
-        </div>
+          )}
+        </Card>
 
-        {/* Live Job Progress / Status */}
-        <div className="rounded-lg border border-border bg-surface p-5 flex flex-col justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground border-b border-border pb-2">
-              Queue & Job Status
-            </h2>
-            {activeJob ? (
-              <div className="mt-4 space-y-3">
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted">Job ID:</span>
-                  <span className="font-mono text-foreground">{activeJob.job_id.slice(0, 14)}...</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted">Status:</span>
-                  <span className="font-bold uppercase text-accent">{activeJob.status}</span>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs text-muted">
-                    <span>Progress:</span>
-                    <span>{(activeJob.progress * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="h-2 w-full rounded-full bg-surface-2 overflow-hidden">
-                    <div
-                      className="h-full bg-accent transition-all duration-300"
-                      style={{ width: `${Math.max(5, activeJob.progress * 100)}%` }}
-                    />
-                  </div>
-                </div>
-
-                {activeJob.status === "running" && (
-                  <button
-                    onClick={() => api.cancelBacktest(activeJob.job_id)}
-                    className="mt-2 w-full rounded border border-down/40 bg-down/10 py-1 text-xs text-down hover:bg-down/20"
+        <Card title="Runs (registry.json)" className="lg:col-span-2">
+          {runs.data && runs.data.length === 0 && <Empty>No backtest runs yet.</Empty>}
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-left text-xs">
+              <tbody className="divide-y divide-border">
+                {runList.map((r) => (
+                  <tr
+                    key={r.run_id}
+                    onClick={() => setSelected(r)}
+                    className={`cursor-pointer hover:bg-surface-2 ${selected?.run_id === r.run_id ? "bg-surface-2" : ""}`}
                   >
-                    Cancel Execution
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="py-8 text-center text-xs text-muted">
-                No active job running. Select or submit a run to monitor progress.
-              </div>
-            )}
+                    <td className="py-1.5 font-mono">{r.run_id}</td>
+                    <td>
+                      <Badge tone={r.split === "train" ? "muted" : "accent"}>{r.split}</Badge>
+                    </td>
+                    <td className="font-mono">{num(r.metrics.total_trades, 0)} trades</td>
+                    <td className="font-mono">{num(r.metrics.expectancy_r, 3)} R</td>
+                    <td className="font-mono">{num(r.metrics.net_return_pct, 2)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-
-          <div className="mt-4 border-t border-border pt-3 text-[11px] text-muted">
-            Concurrency limited to 1-2 workers to protect system stability.
-          </div>
-        </div>
+        </Card>
       </div>
 
-      {/* Results View */}
-      {activeRun ? (
-        <div className="space-y-6">
-          {/* Small Sample Warning */}
-          {isSmallSample && (
-            <div className="flex items-center gap-3 rounded-lg border border-warn/40 bg-warn/10 p-4 text-xs text-warn">
-              <span className="text-lg">⚠️</span>
-              <div>
-                <span className="font-bold">Small Sample Warning: </span>
-                This simulation produced only {metrics?.trade_count ?? 0} trades (&lt; 100 trades threshold).
-                Statistical metrics (Sharpe ratio, win rate) are subject to high variance and are not statistically significant.
-              </div>
+      {selected && (
+        <Card
+          title={<span className="font-mono">{selected.run_id}</span>}
+          right={
+            <Link href={`/chart?runId=${encodeURIComponent(selected.run_id)}`} className="text-xs text-accent underline">
+              Trades on chart →
+            </Link>
+          }
+        >
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div>
+              <KV k="Strategy" v={`${selected.strategy_name} v${selected.strategy_version}`} />
+              <KV k="Split" v={`${selected.split} (${selected.start_date} → ${selected.end_date})`} />
+              <KV k="Symbols" v={selected.symbols.join(", ")} />
+              <KV k="Created" v={fmtTime(selected.created_at)} />
+              <KV k="Engine" v={val(selected.engine_version)} />
+              <KV k="Git commit" v={val(selected.git_commit)} />
+              <KV k="Agents" v={val(selected.agent_versions)} />
+              <KV k="Params" v={val(selected.params)} />
+              <KV k="Notes" v={val(selected.notes)} />
+              {Number(selected.metrics.total_trades ?? 0) < 100 && (
+                <p className="mt-2 text-[11px] text-warn">Fewer than 100 trades: too small a sample to judge an edge.</p>
+              )}
             </div>
-          )}
-
-          {/* Key Metrics Grid */}
-          <div className="rounded-lg border border-border bg-surface p-5">
-            <div className="flex flex-wrap items-center justify-between border-b border-border pb-3">
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">
-                  Run Results: <span className="font-mono text-accent">{activeRun.run_id}</span>
-                </h2>
-                <p className="text-xs text-muted">
-                  Strategy: {activeRun.strategy_name} | Split: {activeRun.split.toUpperCase()}
-                </p>
-              </div>
-              <Link
-                href={`/chart?runId=${activeRun.run_id}`}
-                className="rounded bg-accent/20 border border-accent/40 px-3 py-1 text-xs text-accent hover:bg-accent/30"
-              >
-                Inspect Trades on Chart &rarr;
-              </Link>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
-              <div className="rounded bg-surface-2 p-3 text-center">
-                <span className="text-[11px] text-muted">Trade Count</span>
-                <div className="mt-1 text-lg font-bold text-foreground">{metrics?.trade_count ?? 0}</div>
-              </div>
-              <div className="rounded bg-surface-2 p-3 text-center">
-                <span className="text-[11px] text-muted">Sharpe Ratio</span>
-                <div className="mt-1 text-lg font-bold text-foreground">{metrics?.sharpe_ratio?.toFixed(2) ?? "—"}</div>
-              </div>
-              <div className="rounded bg-surface-2 p-3 text-center">
-                <span className="text-[11px] text-muted">Win Rate</span>
-                <div className="mt-1 text-lg font-bold text-foreground">
-                  {metrics?.win_rate ? `${(metrics.win_rate * 100).toFixed(1)}%` : "0.0%"}
-                </div>
-              </div>
-              <div className="rounded bg-surface-2 p-3 text-center">
-                <span className="text-[11px] text-muted">Max Drawdown</span>
-                <div className="mt-1 text-lg font-bold text-down">
-                  {metrics?.max_drawdown_pct ? `${(metrics.max_drawdown_pct * 100).toFixed(1)}%` : "0.0%"}
-                </div>
-              </div>
-              <div className="rounded bg-surface-2 p-3 text-center">
-                <span className="text-[11px] text-muted">Total Net PnL</span>
-                <div
-                  className={`mt-1 text-lg font-bold ${
-                    (metrics?.total_pnl ?? 0) >= 0 ? "text-up" : "text-down"
-                  }`}
-                >
-                  ${metrics?.total_pnl?.toFixed(2) ?? "0.00"}
-                </div>
-              </div>
-              <div className="rounded bg-surface-2 p-3 text-center">
-                <span className="text-[11px] text-muted">Profit Factor</span>
-                <div className="mt-1 text-lg font-bold text-foreground">
-                  {metrics?.profit_factor?.toFixed(2) ?? "—"}
-                </div>
-              </div>
-            </div>
-
-            {/* Cost Breakdown */}
-            <div className="mt-4 rounded-md border border-border bg-background p-4">
-              <span className="text-xs font-semibold text-foreground">Conservative Friction & Cost Audit</span>
-              <div className="mt-2 grid grid-cols-2 gap-4 sm:grid-cols-4 text-xs">
-                <div>
-                  <span className="text-muted">Maker Fees (0.02%):</span>
-                  <div className="font-mono text-foreground">${metrics?.maker_fees?.toFixed(2) ?? "0.00"}</div>
-                </div>
-                <div>
-                  <span className="text-muted">Taker Fees (0.05%):</span>
-                  <div className="font-mono text-foreground">${metrics?.taker_fees?.toFixed(2) ?? "0.00"}</div>
-                </div>
-                <div>
-                  <span className="text-muted">Slippage Cost:</span>
-                  <div className="font-mono text-foreground">${metrics?.slippage_cost?.toFixed(2) ?? "0.00"}</div>
-                </div>
-                <div>
-                  <span className="text-muted">Funding Payments:</span>
-                  <div className="font-mono text-foreground">${metrics?.funding_fees?.toFixed(2) ?? "0.00"}</div>
-                </div>
-              </div>
+            <div>
+              <Metrics m={selected.metrics} />
             </div>
           </div>
-
-          {/* Rejections Table */}
-          {activeRun.rejections && Object.keys(activeRun.rejections).length > 0 && (
-            <div className="rounded-lg border border-border bg-surface p-5">
-              <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider text-muted">
-                Risk Manager Intent Rejections Breakdown
-              </h3>
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-border text-muted">
-                      <th className="pb-1.5 font-medium">Rejection Reason Code</th>
-                      <th className="pb-1.5 font-medium text-right">Intent Count</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {Object.entries(activeRun.rejections).map(([reason, count]) => (
-                      <tr key={reason}>
-                        <td className="py-2 font-mono text-foreground">{reason}</td>
-                        <td className="py-2 font-mono text-right text-warn">{count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border bg-surface p-8 text-center text-xs text-muted">
-          Select a run from the registry below to display comprehensive performance analytics.
-        </div>
+        </Card>
       )}
 
-      {/* Compare Runs Tool */}
-      <div className="rounded-lg border border-border bg-surface p-5">
-        <h2 className="text-sm font-semibold text-foreground border-b border-border pb-2">
-          Compare Historical Runs
-        </h2>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <select
-            value={compareA}
-            onChange={(e) => setCompareA(e.target.value)}
-            className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground"
-          >
-            <option value="">Select Run A...</option>
-            {registryRuns.map((r) => (
-              <option key={r.run_id} value={r.run_id}>
-                {r.run_id} ({r.split})
-              </option>
-            ))}
-          </select>
-
-          <span className="text-xs text-muted">vs</span>
-
-          <select
-            value={compareB}
-            onChange={(e) => setCompareB(e.target.value)}
-            className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground"
-          >
-            <option value="">Select Run B...</option>
-            {registryRuns.map((r) => (
-              <option key={r.run_id} value={r.run_id}>
-                {r.run_id} ({r.split})
-              </option>
-            ))}
-          </select>
-
-          <button
-            onClick={handleCompare}
-            disabled={!compareA || !compareB}
-            className="rounded bg-accent/20 border border-accent/40 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/30 disabled:opacity-40"
-          >
-            Compare Side-by-Side
+      <Card title="Compare two runs">
+        <div className="flex flex-wrap gap-2 text-xs">
+          {(["a", "b"] as const).map((k) => (
+            <select
+              key={k}
+              value={compare[k]}
+              onChange={(e) => setCompare({ ...compare, [k]: e.target.value })}
+              className="rounded border border-border bg-background px-2 py-1 font-mono"
+            >
+              <option value="">run {k.toUpperCase()}…</option>
+              {runList.map((r) => (
+                <option key={r.run_id}>{r.run_id}</option>
+              ))}
+            </select>
+          ))}
+          <button disabled={!compare.a || !compare.b} onClick={() => void doCompare()} className="rounded border border-border px-3 py-1 disabled:opacity-40">
+            Compare
           </button>
         </div>
-
-        {compareResult && (
-          <div className="mt-4 grid grid-cols-2 gap-4 border-t border-border pt-4 text-xs">
-            <div className="rounded bg-surface-2 p-3">
-              <div className="font-mono font-bold text-accent">{compareResult.run_a.run_id}</div>
-              <div className="mt-2 space-y-1 text-muted">
-                <div>Trades: {compareResult.run_a.metrics?.trade_count}</div>
-                <div>Sharpe: {compareResult.run_a.metrics?.sharpe_ratio?.toFixed(2)}</div>
-                <div>Drawdown: {(compareResult.run_a.metrics?.max_drawdown_pct * 100).toFixed(1)}%</div>
-                <div>Net PnL: ${compareResult.run_a.metrics?.total_pnl?.toFixed(2)}</div>
+        {compared && (
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            {[compared.run_a, compared.run_b].map((r) => (
+              <div key={r.run_id} className="rounded bg-surface-2 p-3">
+                <div className="mb-1 font-mono text-xs">{r.run_id}</div>
+                <Metrics m={r.metrics} />
               </div>
-            </div>
-
-            <div className="rounded bg-surface-2 p-3">
-              <div className="font-mono font-bold text-accent">{compareResult.run_b.run_id}</div>
-              <div className="mt-2 space-y-1 text-muted">
-                <div>Trades: {compareResult.run_b.metrics?.trade_count}</div>
-                <div>Sharpe: {compareResult.run_b.metrics?.sharpe_ratio?.toFixed(2)}</div>
-                <div>Drawdown: {(compareResult.run_b.metrics?.max_drawdown_pct * 100).toFixed(1)}%</div>
-                <div>Net PnL: ${compareResult.run_b.metrics?.total_pnl?.toFixed(2)}</div>
-              </div>
-            </div>
+            ))}
           </div>
         )}
-      </div>
-
-      {/* Registry Table */}
-      <div className="rounded-lg border border-border bg-surface p-5">
-        <h2 className="text-sm font-semibold text-foreground border-b border-border pb-2">
-          Run Registry Archive
-        </h2>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-border text-muted">
-                <th className="pb-2 font-medium">Run ID</th>
-                <th className="pb-2 font-medium">Strategy</th>
-                <th className="pb-2 font-medium">Split</th>
-                <th className="pb-2 font-medium">Timestamp</th>
-                <th className="pb-2 font-medium text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {registryRuns.map((r) => (
-                <tr key={r.run_id} className="hover:bg-surface-2/40">
-                  <td className="py-2.5 font-mono text-accent">{r.run_id}</td>
-                  <td className="py-2.5 text-foreground">{r.strategy_name}</td>
-                  <td className="py-2.5 uppercase font-medium">{r.split}</td>
-                  <td className="py-2.5 text-muted">{r.created_at ?? "—"}</td>
-                  <td className="py-2.5 text-right">
-                    <button
-                      onClick={() => loadRunDetail(r.run_id)}
-                      className="rounded border border-border px-2 py-0.5 text-muted hover:text-foreground"
-                    >
-                      Load Metrics
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }

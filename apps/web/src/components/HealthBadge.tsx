@@ -18,7 +18,7 @@ export default function HealthBadge({ status, error }: { status: LiveStatus | nu
     : status
       ? [
           `service: ${status.state ?? "—"} · websocket: ${status.ws_state ?? "—"}`,
-          `heartbeat ${formatAge(status.heartbeat_age_s)} ago · reconnects ${status.reconnects ?? 0}`,
+          `heartbeat ${formatAge(status.heartbeat_age_s)} ago · reconnects ${status.reconnects ?? "unknown"}`,
           `clock drift ${status.clock_drift_ms ?? "—"} ms`,
           ...status.reasons,
         ].join("\n")

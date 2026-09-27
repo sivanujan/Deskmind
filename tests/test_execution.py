@@ -49,6 +49,29 @@ from deskmind.risk.breakers import CircuitBreakerTracker
 from deskmind.risk.models import AccountState, IntentPayload, MarketState, RiskDecision
 from deskmind.strategies.plumbing_stress_v1 import PlumbingStressV1
 
+
+@pytest.fixture(autouse=True)
+def _isolated_journal(tmp_path, monkeypatch):
+    """Keep these tests off the real Postgres and the repo's data/ directory.
+
+    The journal and reconciler fall back to JSONL when the database is unavailable; without this,
+    rows written by one test (same client_order_id) leak into the next and into the dev database.
+    """
+    from contextlib import asynccontextmanager
+
+    import deskmind.execution.journal as journal_mod
+    import deskmind.execution.reconcile as reconcile_mod
+
+    @asynccontextmanager
+    async def no_db():
+        raise RuntimeError("database disabled in unit tests")
+        yield
+
+    monkeypatch.setattr(journal_mod, "session_scope", no_db)
+    monkeypatch.setattr(reconcile_mod, "session_scope", no_db)
+    monkeypatch.chdir(tmp_path)
+
+
 # -----------------------------------------------------------------------------
 # Fakes & Fixtures
 # -----------------------------------------------------------------------------

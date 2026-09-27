@@ -24,10 +24,13 @@ from deskmind.strategies.base import BaseStrategy, Intent, StrategyContext
 class TrendFollowV1(BaseStrategy):
     name = "trend_follow_v1"
     version = "1.0.0"
+    default_params = {"r_multiple": 2.0}  # noqa: RUF012
+    uses_agents = ("trend",)
+    timeframes = ("1h", "15m")
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
-        self.r_multiple = Decimal(str(self.params.get("r_multiple", 2.0)))
+        self.r_multiple = Decimal(str(self.params["r_multiple"]))
 
     def on_bar(self, contexts: dict[str, StrategyContext]) -> list[Intent]:
         intents: list[Intent] = []

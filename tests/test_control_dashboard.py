@@ -186,7 +186,12 @@ def test_rejects_backtest_on_test_split(dashboard_app):
 # -----------------------------------------------------------------------------
 
 
-def test_typed_confirmations_enforced(dashboard_app):
+def test_typed_confirmations_enforced(dashboard_app, tmp_path, monkeypatch):
+    import deskmind.api.control as control_mod
+    from deskmind.risk.breakers import CircuitBreakerTracker
+
+    settings = make_test_settings().model_copy(update={"data_dir": tmp_path})
+    monkeypatch.setattr(control_mod, "get_settings", lambda: settings)
     client = TestClient(dashboard_app)
     login_resp = client.post(
         "/api/auth/login", json={"username": "admin", "password": "admin_pass_123"}
@@ -209,12 +214,24 @@ def test_typed_confirmations_enforced(dashboard_app):
     assert r_reset_bad.status_code == 400
     assert "RESET" in r_reset_bad.json()["detail"]
 
-    # Breaker Reset with 'RESET'
+    # Breaker Reset with 'RESET' but no full_stop recorded: refused, never a fake success
+    r_reset_none = client.post(
+        "/api/control/breaker/reset", json={"confirm": "RESET"}, headers=headers
+    )
+    assert r_reset_none.status_code == 409
+    assert "Not applied" in r_reset_none.json()["detail"]
+
+    # With a real full_stop in risk_state.json the reset is applied and persisted
+    tracker = CircuitBreakerTracker()
+    tracker._log_transition("full_stop", "test", 1_700_000_000_000)
+    tracker.save_state(tmp_path / "risk_state.json")
     r_reset_ok = client.post(
         "/api/control/breaker/reset", json={"confirm": "RESET"}, headers=headers
     )
     assert r_reset_ok.status_code == 200
     assert r_reset_ok.json()["status"] == "reset"
+    reloaded = CircuitBreakerTracker.load_state(tmp_path / "risk_state.json")
+    assert reloaded.halt_state != "full_stop"
 
     # 3. Stop All without 'STOP_ALL'
     r_stop_bad = client.post(
@@ -314,3 +331,43 @@ async def test_audit_logs_recorded():
     assert any(
         "test_audit_action" in a or "login" in a or "kill" in a or "service" in a for a in actions
     )
+
+
+@pytest.mark.asyncio
+async def test_backtest_job_reports_engine_result_not_placeholders(monkeypatch):
+    """A dashboard job runs the real engine entry point and reports exactly what it returned."""
+    import asyncio
+
+    import deskmind.backtest.runner as runner_mod
+
+    calls: list[dict] = []
+
+    async def fake_run_backtest(**kwargs):
+        calls.append(kwargs)
+        return {
+            "run_id": "trend_follow_v1_train_stub",
+            "metrics": {"total_trades": 7, "expectancy_r": 0.25, "per_symbol": {}},
+            "trades_count": 7,
+        }
+
+    monkeypatch.setattr(runner_mod, "run_backtest", fake_run_backtest)
+    queue_mgr = BacktestQueueManager(max_concurrency=1)
+    await queue_mgr.start()
+    try:
+        req = BacktestSubmitRequest(
+            strategy="trend_follow_v1", split="validation", symbols=["BTCUSDT"], warmup_days=5
+        )
+        job = await queue_mgr.submit_job(req)
+        for _ in range(100):
+            if queue_mgr.get_job(job.job_id).status in ("completed", "failed"):
+                break
+            await asyncio.sleep(0.05)
+        rec = queue_mgr.get_job(job.job_id)
+        assert rec.status == "completed", rec.error
+        assert rec.run_id == "trend_follow_v1_train_stub"
+        assert rec.metrics == {"total_trades": 7, "expectancy_r": 0.25}
+        assert calls[0]["split"] == "validation"
+        assert calls[0]["symbols"] == ["BTCUSDT"]
+        assert calls[0]["warmup_days"] == 5
+    finally:
+        await queue_mgr.stop()

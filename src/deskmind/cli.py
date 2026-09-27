@@ -1179,6 +1179,91 @@ def account_sync_cmd() -> None:
     asyncio.run(go())
 
 
+@account_app.command("import-history")
+def account_import_history_cmd(
+    since: str = typer.Option(
+        "", help="UTC start date (default: 90 days ago; Binance keeps ~3 months of futures fills)"
+    ),
+) -> None:
+    """Import YOUR Binance trade history (read-only key) into external_trades."""
+    from datetime import UTC, datetime, timedelta
+
+    from deskmind.data.external_trades import count_by_market, import_history, upsert_trades
+    from deskmind.data.mainnet_readonly import MainnetReadOnlyClient
+    from deskmind.db.session import session_scope
+
+    settings = get_settings()
+    if not settings.binance_mainnet_readonly_api_key.get_secret_value():
+        typer.echo(
+            "No read-only mainnet key configured: set BINANCE_MAINNET_READONLY_API_KEY and "
+            "BINANCE_MAINNET_READONLY_API_SECRET in .env (a key with Reading permission only)."
+        )
+        raise typer.Exit(code=1)
+    now = datetime.now(UTC)
+    start = datetime.fromisoformat(since).replace(tzinfo=UTC) if since else now - timedelta(days=90)
+
+    async def go() -> None:
+        client = MainnetReadOnlyClient(settings)
+        try:
+            typer.echo("Checking key permissions (read-only required)...")
+            await client.check_permissions()
+            res = await import_history(
+                client,
+                int(start.timestamp() * 1000),
+                int(now.timestamp() * 1000),
+                list(settings.data_symbols),
+            )
+        finally:
+            await client.close()
+        rows = res["rows"]
+        async with session_scope() as session:
+            inserted, skipped = await upsert_trades(session, rows)
+            totals = await count_by_market(session)
+        rep = res["report"]
+        typer.echo(f"\nWindow: {start:%Y-%m-%d} -> {now:%Y-%m-%d %H:%M} UTC")
+        for market in ("futures", "spot"):
+            info = rep.get(market, {})
+            if "skipped" in info:
+                typer.echo(f"{market:<8} skipped: {info['skipped']}")
+            elif "error" in info:
+                typer.echo(f"{market:<8} error: {info['error']}")
+            else:
+                n = sum(1 for r in rows if r.market == market)
+                syms = info.get("symbols") or info.get("symbols_with_trades") or []
+                typer.echo(f"{market:<8} {n} fills fetched, symbols: {', '.join(syms) or '-'}")
+        typer.echo(f"stored: {inserted} new, {skipped} already present")
+        typer.echo(f"external_trades now holds: {totals or 'nothing'}")
+        for r in rep.get("refused", []):
+            typer.echo(f"refused: {', '.join(r['endpoints'])}: {r['reason']}")
+
+    asyncio.run(go())
+
+
+@account_app.command("import-csv")
+def account_import_csv_cmd(
+    file: Path = typer.Argument(..., exists=True, readable=True, help="Binance trade-history CSV"),
+    market: str = typer.Option("", help="spot | futures (default: detect from the columns)"),
+) -> None:
+    """Import a Binance trade-history CSV export (spot or USD-M futures) into external_trades."""
+    from deskmind.data.external_trades import CsvFormatError, parse_trade_csv, upsert_trades
+    from deskmind.db.session import session_scope
+
+    try:
+        detected, rows = parse_trade_csv(file.read_text(encoding="utf-8-sig"), market or None)
+    except CsvFormatError as exc:
+        typer.echo(f"Could not read {file.name}: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    async def go() -> tuple[int, int]:
+        async with session_scope() as session:
+            return await upsert_trades(session, rows)
+
+    inserted, skipped = asyncio.run(go())
+    typer.echo(
+        f"{file.name}: {detected}, {len(rows)} rows, {inserted} new, {skipped} already present"
+    )
+
+
 @app.command("supervisor")
 def supervisor_cmd() -> None:
     """Run process supervisor monitoring live, trend, and trade background services."""

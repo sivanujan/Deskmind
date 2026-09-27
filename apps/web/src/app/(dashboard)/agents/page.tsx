@@ -1,132 +1,70 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, type AgentStatus } from "@/lib/api";
+import { api } from "@/lib/api";
+import { Badge, Card, Empty, ErrorBox, KV, Loading, PageHeader, RefreshButton, fmtAge, fmtTime, useApi, val } from "@/components/ui";
+
+// Everything on this page comes from GET /api/dashboard/agents, which reads the backend agent
+// registry (src/deskmind/agents/registry.py), the agent's Redis health hash and agent_reports.
 
 export default function AgentsPage() {
-  const [agents, setAgents] = useState<AgentStatus[]>([]);
-
-  const loadAgents = () => {
-    void api.agents().then(setAgents).catch(() => {
-      setAgents([
-        {
-          name: "Trend Agent",
-          version: "1.0.0",
-          status: "online",
-          last_run: new Date().toISOString(),
-          latency_ms: 45,
-          errors_24h: 0,
-          last_report_summary: "Multi-timeframe BOS and swing structure active on BTCUSDT, ETHUSDT.",
-        },
-        {
-          name: "Head Agent (LLM Risk)",
-          version: "0.2.0",
-          status: "idle",
-          last_run: new Date().toISOString(),
-          latency_ms: 820,
-          errors_24h: 0,
-          last_report_summary: "Macro regime: ranging. Sizing multiplier capped at 1.0x.",
-        },
-      ]);
-    });
-  };
-
-  useEffect(() => {
-    let mounted = true;
-    void api.agents().then((data) => {
-      if (mounted) setAgents(data);
-    }).catch(() => {
-      if (mounted) {
-        setAgents([
-          {
-            name: "Trend Agent",
-            version: "1.0.0",
-            status: "online",
-            last_run: new Date().toISOString(),
-            latency_ms: 45,
-            errors_24h: 0,
-            last_report_summary: "Multi-timeframe BOS and swing structure active on BTCUSDT, ETHUSDT.",
-          },
-          {
-            name: "Head Agent (LLM Risk)",
-            version: "0.2.0",
-            status: "idle",
-            last_run: new Date().toISOString(),
-            latency_ms: 820,
-            errors_24h: 0,
-            last_report_summary: "Macro regime: ranging. Sizing multiplier capped at 1.0x.",
-          },
-        ]);
-      }
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const { data, error, loading, reload } = useApi(api.agents, 15000);
 
   return (
     <div className="flex-1 space-y-6 p-6">
-      <div className="flex items-center justify-between border-b border-border pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Agent Diagnostics & Intelligence</h1>
-          <p className="text-xs text-muted">
-            Status, versions, inference latency, error metrics, and latest synthesized market intelligence reports.
-          </p>
-        </div>
+      <PageHeader title="Agents" subtitle="Agents that exist in the backend registry, with their real version and runtime state.">
+        <RefreshButton onClick={() => void reload()} />
+      </PageHeader>
+      <ErrorBox error={error} />
+      <Loading loading={loading} />
 
-        <button
-          onClick={loadAgents}
-          className="rounded border border-border bg-surface px-3 py-1.5 text-xs text-muted hover:text-foreground"
-        >
-          Refresh Agents
-        </button>
-      </div>
+      {data && data.agents.length === 0 && <Empty>No agents registered.</Empty>}
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        {agents.map((agent) => (
-          <div key={agent.name} className="rounded-lg border border-border bg-surface p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div>
-                <h2 className="text-base font-bold text-foreground">{agent.name}</h2>
-                <span className="font-mono text-xs text-muted">v{agent.version}</span>
-              </div>
-              <span
-                className={`rounded px-2.5 py-0.5 text-xs font-semibold uppercase ${
-                  agent.status === "online"
-                    ? "bg-up/20 text-up"
-                    : agent.status === "idle"
-                    ? "bg-accent/20 text-accent"
-                    : "bg-down/20 text-down"
-                }`}
-              >
-                {agent.status}
-              </span>
-            </div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {data?.agents.map((agent) => {
+          const rt = agent.runtime;
+          const tone = rt.state === "running" ? "up" : rt.state === "stopped" ? "down" : "muted";
+          return (
+            <Card
+              key={agent.name}
+              title={
+                <span>
+                  {agent.name} <span className="font-mono text-xs font-normal text-muted">v{agent.version} · {agent.kind}</span>
+                </span>
+              }
+              right={<Badge tone={tone}>{rt.state.replace("_", " ")}</Badge>}
+            >
+              <p className="text-xs text-muted">{agent.summary}</p>
+              {rt.reason && <p className="text-[11px] text-muted">State reason: {rt.reason}</p>}
 
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div className="rounded bg-surface-2 p-2 text-center">
-                <span className="text-[11px] text-muted">Latency</span>
-                <div className="mt-1 font-mono font-bold text-foreground">{agent.latency_ms}ms</div>
+              <div className="rounded bg-surface-2 p-3">
+                <KV k="Last heartbeat" v={fmtAge(rt.heartbeat_age_s)} />
+                <KV k="Last report (bar close)" v={fmtTime(rt.last_report_as_of)} />
+                <KV k="Last report stored" v={fmtTime(rt.last_report_stored_at)} />
+                <KV k="Reports stored (24h)" v={val(rt.reports_stored_24h)} />
+                <KV k="Reports since process start" v={val(rt.reports_since_start)} />
+                <KV k="Errors (24h)" v={val(rt.errors_24h)} />
+                <KV k="Last error" v={rt.last_error ? <span className="text-down">{rt.last_error}</span> : "none recorded"} />
+                {rt.reports_error && <KV k="agent_reports query" v={<span className="text-down">{rt.reports_error}</span>} />}
               </div>
-              <div className="rounded bg-surface-2 p-2 text-center">
-                <span className="text-[11px] text-muted">Errors (24h)</span>
-                <div className="mt-1 font-mono font-bold text-foreground">{agent.errors_24h}</div>
-              </div>
-              <div className="rounded bg-surface-2 p-2 text-center">
-                <span className="text-[11px] text-muted">Last Cycle</span>
-                <div suppressHydrationWarning className="mt-1 text-[11px] text-muted truncate">
-                  {new Date(agent.last_run).toLocaleTimeString()}
+
+              <details className="text-xs">
+                <summary className="cursor-pointer text-muted hover:text-foreground">Parameters ({agent.spec})</summary>
+                {agent.spec_intro && <p className="mt-2 text-muted">{agent.spec_intro}</p>}
+                <div className="mt-2 rounded bg-surface-2 p-3">
+                  {Object.entries(agent.params).map(([k, v]) => (
+                    <KV key={k} k={k} v={val(v)} />
+                  ))}
                 </div>
-              </div>
-            </div>
+              </details>
+            </Card>
+          );
+        })}
 
-            {agent.last_report_summary && (
-              <div className="rounded-md border border-border bg-background p-3 text-xs">
-                <span className="font-semibold text-foreground">Latest Synthesized Report:</span>
-                <p className="mt-1 text-muted leading-relaxed">{agent.last_report_summary}</p>
-              </div>
-            )}
-          </div>
+        {data?.planned.map((p) => (
+          <Card key={p.name} title={<span className="text-muted">{p.name}</span>} right={<Badge tone="muted">planned</Badge>}>
+            <Empty>Not built yet — Step {p.roadmap_step}</Empty>
+            <p className="text-xs text-muted">{p.summary}</p>
+          </Card>
         ))}
       </div>
     </div>
