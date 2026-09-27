@@ -180,3 +180,19 @@ class BacktestRun(Base):
     metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+
+
+class AuditLog(Base):
+    """Audit log of control actions taken from dashboard or CLI."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user: Mapped[str] = mapped_column(String(64), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="success")

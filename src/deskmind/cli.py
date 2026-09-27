@@ -35,6 +35,10 @@ trade_app = typer.Typer(
     help="Order execution and live/testnet trade management", no_args_is_help=True
 )
 app.add_typer(trade_app, name="trade")
+account_app = typer.Typer(
+    help="Mainnet read-only account and metadata synchronization", no_args_is_help=True
+)
+app.add_typer(account_app, name="account")
 
 SymbolOpt = typer.Option(None, "--symbol", "-s", help="One symbol from DATA_SYMBOLS")
 AllOpt = typer.Option(False, "--all", help="Every symbol in DATA_SYMBOLS")
@@ -1128,6 +1132,71 @@ def trade_inject_fault_cmd(
     except Exception as e:
         typer.secho(f"ERROR injecting fault: {e}", fg=typer.colors.RED, bold=True)
         raise typer.Exit(code=1) from e
+
+
+@account_app.command("sync")
+def account_sync_cmd() -> None:
+    """Fetch leverage brackets + commission rates via read-only mainnet client.
+
+    Saves snapshot with date/source and displays differences vs approximate MMR and VIP0 fees.
+    """
+    from deskmind.data.mainnet_readonly import MainnetReadOnlyClient
+
+    async def go() -> None:
+        client = MainnetReadOnlyClient()
+        try:
+            typer.echo("Connecting to Binance mainnet in strictly read-only mode...")
+            report = await client.sync_account()
+            typer.echo("\nMainnet sync completed. Snapshot saved to data/meta/")
+
+            # Print Fee Comparison Table
+            typer.echo("\n--- Commission Rate Comparison (Live vs VIP0 Config) ---")
+            typer.echo(
+                f"{'Symbol':<10} {'Config Maker':<14} {'Live Maker':<14} "
+                f"{'Config Taker':<14} {'Live Taker':<14}"
+            )
+            typer.echo("-" * 68)
+            for diff in report["comparison"]["fee_differences"]:
+                typer.echo(
+                    f"{diff['symbol']:<10} {diff['config_maker']:<14} {diff['live_maker']:<14} "
+                    f"{diff['config_taker']:<14} {diff['live_taker']:<14}"
+                )
+
+            # Print MMR Comparison Table
+            typer.echo("\n--- Tier 1 MMR Comparison (Live vs Config) ---")
+            typer.echo(
+                f"{'Symbol':<10} {'Config MMR':<14} {'Live MMR':<14} {'Diff':<14} {'Max Lev':<10}"
+            )
+            typer.echo("-" * 64)
+            for diff in report["comparison"]["mmr_differences"]:
+                typer.echo(
+                    f"{diff['symbol']:<10} {diff['config_mmr']:<14} {diff['live_mmr']:<14} "
+                    f"{diff['diff']:<14} {diff.get('max_leverage', 'N/A')!s:<10}"
+                )
+        finally:
+            await client.close()
+
+    asyncio.run(go())
+
+
+@app.command("supervisor")
+def supervisor_cmd() -> None:
+    """Run process supervisor monitoring live, trend, and trade background services."""
+    from deskmind.supervisor.manager import get_supervisor
+
+    async def go() -> None:
+        sup = get_supervisor()
+        await sup.start()
+        typer.echo("Deskmind Supervisor running. Press Ctrl+C to stop.")
+        stop_event = asyncio.Event()
+        try:
+            await stop_event.wait()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            typer.echo("\nStopping supervisor and all child services...")
+            await sup.stop()
+
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(go())
 
 
 if __name__ == "__main__":

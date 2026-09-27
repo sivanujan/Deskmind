@@ -111,6 +111,13 @@ def list_runs_local(registry_file: Path = REGISTRY_FILE) -> list[dict[str, Any]]
         return []
 
 
+def get_run_local(run_id: str, registry_file: Path = REGISTRY_FILE) -> dict[str, Any] | None:
+    for r in list_runs_local(registry_file):
+        if r.get("run_id") == run_id:
+            return r
+    return None
+
+
 async def list_runs_db(engine: AsyncEngine) -> list[dict[str, Any]]:
     from deskmind.db.session import async_sessionmaker
 

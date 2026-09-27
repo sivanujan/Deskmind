@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 ALLOWED_TRADING_MODES: tuple[str, ...] = ("paper", "testnet")
@@ -97,6 +97,26 @@ class Settings(BaseSettings):
     approval_mode: Literal["auto", "manual"] = "auto"
     testnet_price_divergence_max_pct: Decimal = Decimal("0.05")
 
+    # Binance Mainnet Read-Only API client (Part 1). Strictly read-only, never usable by executors.
+    binance_mainnet_readonly_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices(
+            "binance_mainnet_readonly_api_key",
+            "BINANCE_MAINNET_READONLY_API_KEY",
+        ),
+    )
+    binance_mainnet_readonly_api_secret: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices(
+            "binance_mainnet_readonly_api_secret",
+            "BINANCE_MAINNET_READONLY_API_SECRET",
+            "binance_mainnet_readonly_secret",
+            "BINANCE_MAINNET_READONLY_SECRET",
+        ),
+    )
+    binance_mainnet_api_url: str = "https://api.binance.com"
+    binance_mainnet_futures_url: str = "https://fapi.binance.com"
+
     # Public market data (klines, mark price, funding, exchangeInfo). Unauthenticated GETs only:
     # the market-data client has no way to send API keys or sign requests.
     binance_market_data_url: str = "https://fapi.binance.com"
@@ -120,6 +140,25 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr = SecretStr("")
     openrouter_model: str = DEFAULT_OPENROUTER_MODEL
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # Dashboard Control authentication & session settings (Part 2)
+    dashboard_username: str = Field(
+        default="admin",
+        validation_alias=AliasChoices("dashboard_username", "DASHBOARD_USERNAME"),
+    )
+    dashboard_password_hash: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("dashboard_password_hash", "DASHBOARD_PASSWORD_HASH"),
+    )
+    session_secret_key: SecretStr = Field(
+        default=SecretStr("deskmind-dashboard-dev-secret-key-change-in-prod"),
+        validation_alias=AliasChoices(
+            "session_secret_key",
+            "SESSION_SECRET_KEY",
+            "dashboard_secret_key",
+            "DASHBOARD_SECRET_KEY",
+        ),
+    )
 
     @field_validator("trading_mode", mode="before")
     @classmethod

@@ -86,7 +86,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.web_origins),
-        allow_methods=["GET"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -219,5 +220,9 @@ def create_app(
             return
         await websocket.accept()
         await stream_chart(websocket, app.state.redis, sym, tf)
+
+    from deskmind.api.control import router as control_router
+
+    app.include_router(control_router)
 
     return app

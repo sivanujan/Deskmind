@@ -46,6 +46,10 @@ class BinanceTestnetExecutor(BaseExecutor):
         settings: Settings | None = None,
         emergency_stop_timeout_s: float = 10.0,
     ) -> None:
+        if getattr(client, "IS_MAINNET_READONLY", False):
+            raise TypeError(
+                "SECURITY VIOLATION: BinanceTestnetExecutor cannot use MainnetReadOnlyClient"
+            )
         self.settings = settings or get_settings()
         self.client = client or BinanceFuturesClient(
             base_url=self.settings.binance_futures_base_url,
