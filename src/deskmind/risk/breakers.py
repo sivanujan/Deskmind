@@ -41,6 +41,8 @@ class CircuitBreakerTracker:
         self.today_realized_pnl = Decimal("0")
         self.consecutive_losses = 0
         self.cooldown_until_ms = 0
+        self.is_risk_halved = False
+        self.drawdown_halt_entered_ms = 0
         self.halt_state = (
             "normal"  # normal, daily_loss_halt, drawdown_halt, full_stop, streak_cooldown
         )
@@ -97,15 +99,26 @@ class CircuitBreakerTracker:
         if self.cooldown_until_ms > 0 and timestamp_ms >= self.cooldown_until_ms:
             self.cooldown_until_ms = 0
             if self.halt_state == "streak_cooldown":
+                # Reset the counter: the cooldown served as the penalty; start fresh.
+                self.consecutive_losses = 0
                 self._log_transition(
                     "normal",
-                    "24h loss streak cooldown expired",
+                    "24h loss streak cooldown expired; consecutive_losses reset to 0",
                     timestamp_ms,
                 )
 
-        # 4. Check drawdown limits
+        # 4. Check drawdown limits and risk halving
         if self.peak_equity > Decimal("0") and current_equity > Decimal("0"):
             drawdown = (self.peak_equity - current_equity) / self.peak_equity
+
+            # 4.1 Half-risk state with hysteresis:
+            # Latches True at >= 10% drawdown; clears only below 7% drawdown
+            if drawdown >= self.config.drawdown_halve_risk_pct:
+                self.is_risk_halved = True
+            elif self.is_risk_halved and drawdown < self.config.drawdown_halve_risk_recovery_pct:
+                self.is_risk_halved = False
+
+            # 4.2 Halt states
             if drawdown >= self.config.drawdown_full_stop_pct:
                 if self.halt_state != "full_stop":
                     self._log_transition(
@@ -115,18 +128,30 @@ class CircuitBreakerTracker:
                     )
             elif drawdown >= self.config.drawdown_halt_pct:
                 if self.halt_state == "normal":
+                    self.drawdown_halt_entered_ms = timestamp_ms
                     self._log_transition(
                         "drawdown_halt",
                         f"Drawdown {drawdown * 100:.1f}% reached 15% halt threshold",
                         timestamp_ms,
                     )
-            elif self.halt_state == "drawdown_halt" and drawdown < self.config.drawdown_halt_pct:
-                # Recovered above 15% drawdown
-                self._log_transition(
-                    "normal",
-                    f"Drawdown recovered to {drawdown * 100:.1f}% (< 15%)",
-                    timestamp_ms,
-                )
+            elif self.halt_state == "drawdown_halt":
+                # Latching with hysteresis: clears ONLY below 10% AND after 7 days
+                min_elapsed_ms = self.config.drawdown_halt_min_days * 86400 * 1000
+                elapsed_ms = timestamp_ms - self.drawdown_halt_entered_ms
+                if (
+                    drawdown < self.config.drawdown_halt_recovery_pct
+                    and elapsed_ms >= min_elapsed_ms
+                ):
+                    self.drawdown_halt_entered_ms = 0
+                    self._log_transition(
+                        "normal",
+                        (
+                            f"Drawdown halt cleared: drawdown {drawdown * 100:.1f}% "
+                            f"(< {self.config.drawdown_halt_recovery_pct * 100:.0f}%) "
+                            f"and {self.config.drawdown_halt_min_days} days elapsed"
+                        ),
+                        timestamp_ms,
+                    )
 
     def record_trade_exit(self, pnl: Decimal, exit_time_ms: int) -> None:
         """Call whenever a trade is exited to update streaks and daily PnL."""
@@ -135,8 +160,11 @@ class CircuitBreakerTracker:
         if pnl < Decimal("0"):
             self.consecutive_losses += 1
             if self.consecutive_losses >= self.config.consecutive_losses_threshold:
-                cooldown_dur_ms = self.config.consecutive_losses_cooldown_hours * 3600 * 1000
-                self.cooldown_until_ms = exit_time_ms + cooldown_dur_ms
+                # Root cause fix: only set cooldown timer if not already in cooldown.
+                # Subsequent losses during cooldown do not extend the cooldown timer.
+                if self.cooldown_until_ms == 0:
+                    cooldown_dur_ms = self.config.consecutive_losses_cooldown_hours * 3600 * 1000
+                    self.cooldown_until_ms = exit_time_ms + cooldown_dur_ms
                 if self.halt_state == "normal":
                     self._log_transition(
                         "streak_cooldown",
@@ -169,6 +197,18 @@ class CircuitBreakerTracker:
         )
         return True
 
+    def reset_drawdown_halt(self, timestamp_ms: int) -> bool:
+        """Manually reset the drawdown halt circuit breaker."""
+        if self.halt_state != "drawdown_halt":
+            return False
+        self.drawdown_halt_entered_ms = 0
+        self._log_transition(
+            "normal",
+            "Manual reset of drawdown halt executed",
+            timestamp_ms,
+        )
+        return True
+
     def get_account_state(
         self,
         equity: Decimal,
@@ -186,6 +226,8 @@ class CircuitBreakerTracker:
             halt_state=self.halt_state,
             start_of_day_equity=self.start_of_day_equity,
             cooldown_until_ms=self.cooldown_until_ms,
+            is_risk_halved=self.is_risk_halved,
+            drawdown_halt_entered_ms=self.drawdown_halt_entered_ms,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -196,6 +238,8 @@ class CircuitBreakerTracker:
             "today_realized_pnl": float(self.today_realized_pnl),
             "consecutive_losses": self.consecutive_losses,
             "cooldown_until_ms": self.cooldown_until_ms,
+            "is_risk_halved": self.is_risk_halved,
+            "drawdown_halt_entered_ms": self.drawdown_halt_entered_ms,
             "halt_state": self.halt_state,
             "current_day_utc": self.current_day_utc,
             "transitions_count": len(self.transitions),
@@ -224,6 +268,8 @@ class CircuitBreakerTracker:
             tracker.today_realized_pnl = Decimal(str(data.get("today_realized_pnl", "0")))
             tracker.consecutive_losses = int(data.get("consecutive_losses", 0))
             tracker.cooldown_until_ms = int(data.get("cooldown_until_ms", 0))
+            tracker.is_risk_halved = bool(data.get("is_risk_halved", False))
+            tracker.drawdown_halt_entered_ms = int(data.get("drawdown_halt_entered_ms", 0))
             tracker.halt_state = str(data.get("halt_state", "normal"))
             tracker.current_day_utc = str(data.get("current_day_utc", ""))
             return tracker

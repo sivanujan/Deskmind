@@ -20,6 +20,10 @@ class ReasonCode:
 
     # Rule 7: Portfolio limits
     PORTFOLIO_MAX_POSITIONS = "PORTFOLIO_MAX_POSITIONS"
+    POSITION_ALREADY_OPEN = "POSITION_ALREADY_OPEN"  # Engine-level, before RM
+
+    # Engine-level: duplicate setup deduplication (before RM)
+    DUPLICATE_SETUP_ID = "DUPLICATE_SETUP_ID"
 
     # Rule 8: Circuit breakers
     CIRCUIT_BREAKER_FULL_STOP = "CIRCUIT_BREAKER_FULL_STOP"
@@ -109,6 +113,8 @@ class AccountState:
     halt_state: str = "normal"  # normal, daily_loss_halt, drawdown_halt, full_stop, streak_cooldown
     start_of_day_equity: Decimal = Decimal("0")
     cooldown_until_ms: int = 0
+    is_risk_halved: bool | None = None
+    drawdown_halt_entered_ms: int = 0
 
 
 @dataclass

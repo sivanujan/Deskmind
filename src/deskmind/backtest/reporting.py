@@ -97,6 +97,8 @@ def generate_reports(
     end_dt = datetime.fromtimestamp(result.end_time_ms / 1000, UTC).strftime("%Y-%m-%d")
     h_time = metrics.avg_holding_time_minutes
 
+    is_shadow_mode = getattr(result, "is_shadow_mode", False) or "_no_cb" in run_id
+
     lines = [
         f"# Backtest Report: {strategy_name} (v{strategy_version})",
         f"**Run ID**: `{run_id}`  ",
@@ -104,42 +106,82 @@ def generate_reports(
         f"**Symbols**: {', '.join(symbols)}  ",
         f"**Generated**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}  ",
         "",
-        "## 1. Key Performance Metrics",
-        "",
-        "| Metric | Value |",
-        "|---|---|",
-        f"| Initial Cash | ${metrics.initial_cash:,.2f} |",
-        f"| Final Equity | ${metrics.final_equity:,.2f} |",
-        f"| Net Return | ${metrics.net_return_usd:+,.2f} ({metrics.net_return_pct:+.2f}%) |",
-        f"| CAGR | {metrics.cagr_pct:+.2f}% |",
-        f"| Max Drawdown | ${metrics.max_drawdown_usd:,.2f} ({metrics.max_drawdown_pct:.2f}%) |",
-        f"| Max Drawdown Duration | {metrics.max_drawdown_duration_days:.1f} days |",
-        f"| Sharpe Ratio | {metrics.sharpe_ratio:.2f} |",
-        f"| Sortino Ratio | {metrics.sortino_ratio:.2f} |",
-        f"| Profit Factor | {metrics.profit_factor:.2f} |",
-        f"| Total Trades | {metrics.total_trades} |",
-        (
-            f"| Win Rate | {metrics.win_rate_pct:.1f}% "
-            f"({metrics.winning_trades}W / {metrics.losing_trades}L) |"
-        ),
-        f"| Average R | {metrics.avg_r:+.2f}R |",
-        f"| Expectancy | {metrics.expectancy_r:+.2f}R ({metrics.expectancy_pct:+.2f}%) |",
-        f"| Gross Expectancy | {metrics.gross_expectancy_r:+.2f}R |",
-        f"| Avg Cost per Trade | {metrics.avg_cost_per_trade_r:.2f}R |",
-        f"| Avg Holding Time | {h_time:.1f} min ({h_time / 60:.1f}h) |",
-        f"| Market Exposure | {metrics.exposure_time_pct:.2f}% of time |",
-        f"| Total Fees Paid | ${metrics.total_fees_paid:,.2f} |",
-        f"| Total Funding Paid | ${metrics.total_funding_paid:,.2f} |",
-        f"| Total Slippage Paid | ${metrics.total_slippage_paid:,.2f} |",
-        f"| Liquidations | {metrics.liquidations_count} |",
-        f"| Same-Bar SL+TP Hits | {metrics.same_bar_sl_tp_count} (assumed SL first) |",
-        f"| Longest Losing Streak | {metrics.longest_losing_streak} trades |",
-        f"| Skipped Concurrent Signals | {metrics.skipped_signals_count} |",
-        "",
-        "## 2. Cost Breakdown",
-        "",
-        "| Component | Amount | Impact / Accounting |",
-        "|---|---|---|",
+    ]
+
+    if is_shadow_mode:
+        lines.extend(
+            [
+                "> [!NOTE]",
+                (
+                    "> **DIAGNOSTIC RUN — SHADOW MODE: "
+                    "Circuit breakers disabled (observational only).**"
+                ),
+                "",
+            ]
+        )
+
+    if metrics.total_trades < 100:
+        lines.extend(
+            [
+                "> [!WARNING]",
+                (
+                    f"> **Sample size too small for statistical significance "
+                    f"(N={metrics.total_trades} < 100); metrics indicative only.**"
+                ),
+                "",
+            ]
+        )
+
+    cb_status_str = (
+        "SHADOW MODE (Disabled / Observational Only)"
+        if is_shadow_mode
+        else "Active (15% halt, 20% stop, 4 losses/24h cooldown)"
+    )
+
+    lines.extend(
+        [
+            "## 1. Key Performance Metrics",
+            "",
+            "| Metric | Value |",
+            "|---|---|",
+            f"| Circuit Breaker Mode | {cb_status_str} |",
+            f"| Initial Cash | ${metrics.initial_cash:,.2f} |",
+            f"| Final Equity | ${metrics.final_equity:,.2f} |",
+            f"| Net Return | ${metrics.net_return_usd:+,.2f} ({metrics.net_return_pct:+.2f}%) |",
+            f"| CAGR | {metrics.cagr_pct:+.2f}% |",
+            (
+                f"| Max Drawdown | ${metrics.max_drawdown_usd:,.2f} "
+                f"({metrics.max_drawdown_pct:.2f}%) |"
+            ),
+            f"| Max Drawdown Duration | {metrics.max_drawdown_duration_days:.1f} days |",
+            f"| Sharpe Ratio | {metrics.sharpe_ratio:.2f} |",
+            f"| Sortino Ratio | {metrics.sortino_ratio:.2f} |",
+            f"| Profit Factor | {metrics.profit_factor:.2f} |",
+            f"| Total Trades | {metrics.total_trades} |",
+            (
+                f"| Win Rate | {metrics.win_rate_pct:.1f}% "
+                f"({metrics.winning_trades}W / {metrics.losing_trades}L) |"
+            ),
+            f"| Average R | {metrics.avg_r:+.2f}R |",
+            f"| Expectancy | {metrics.expectancy_r:+.2f}R ({metrics.expectancy_pct:+.2f}%) |",
+            f"| Gross Expectancy | {metrics.gross_expectancy_r:+.2f}R |",
+            f"| Avg Cost per Trade | {metrics.avg_cost_per_trade_r:.2f}R |",
+            f"| Avg Holding Time | {h_time:.1f} min ({h_time / 60:.1f}h) |",
+            f"| Market Exposure | {metrics.exposure_time_pct:.2f}% of time |",
+            f"| Total Fees Paid | ${metrics.total_fees_paid:,.2f} |",
+            f"| Total Funding Paid | ${metrics.total_funding_paid:,.2f} |",
+            f"| Total Slippage Paid | ${metrics.total_slippage_paid:,.2f} |",
+            f"| Liquidations | {metrics.liquidations_count} |",
+            f"| Same-Bar SL+TP Hits | {metrics.same_bar_sl_tp_count} (assumed SL first) |",
+            f"| Longest Losing Streak | {metrics.longest_losing_streak} trades |",
+            f"| Skipped Concurrent Signals | {metrics.skipped_signals_count} |",
+            f"| Position-Already-Open Skips | {getattr(result, 'position_open_skips', 0)} |",
+            f"| Duplicate Setup Skips | {getattr(result, 'duplicate_setup_skips', 0)} |",
+            "",
+            "## 2. Cost Breakdown",
+            "",
+            "| Component | Amount | Impact / Accounting |",
+            "|---|---|---|",
         (
             f"| Gross PnL (before costs) | ${metrics.gross_pnl_usd:+,.2f} | "
             "Strategy trading edge before friction |"
@@ -210,6 +252,7 @@ def generate_reports(
         "| Symbol | Start Price | End Price | Price Return | Net Return | Fees | Funding |",
         "|---|---|---|---|---|---|---|",
     ]
+)
 
     for s, b in bnh.items():
         lines.append(
@@ -235,7 +278,8 @@ def generate_reports(
         )
 
     # 4. Risk Manager & Circuit Breakers summary
-    rejection_counts: dict[str, int] = {}
+    first_rejection_counts: dict[str, int] = {}
+    all_rejection_counts: dict[str, int] = {}
     rej_data = []
     for r in result.rejected_intents:
         rej_data.append(
@@ -248,30 +292,92 @@ def generate_reports(
                 "decision": r.decision,
             }
         )
+        if r.reasons:
+            first_code = r.reasons[0]
+            first_rejection_counts[first_code] = first_rejection_counts.get(first_code, 0) + 1
         for code in r.reasons:
-            rejection_counts[code] = rejection_counts.get(code, 0) + 1
+            all_rejection_counts[code] = all_rejection_counts.get(code, 0) + 1
 
     with open(run_dir / "rejected_intents.json", "w", encoding="utf-8") as f:
         json.dump(rej_data, f, indent=2)
 
-    total_intents = len(result.trades) + len(result.rejected_intents)
+    total_evaluated = len(result.trades) + len(result.rejected_intents)
+    pos_open_skips = getattr(result, "position_open_skips", 0)
+    dup_setup_skips = getattr(result, "duplicate_setup_skips", 0)
+    concurrent_skips = result.skipped_signals_count
+    total_raw_signals = total_evaluated + pos_open_skips + dup_setup_skips + concurrent_skips
+
     lines.extend(
         [
             "",
             "## 4. Risk Manager & Circuit Breakers",
             "",
-            f"- **Total Intents Evaluated**: {total_intents}",
-            f"- **Approved Intents**: {len(result.trades)}",
-            f"- **Rejected Intents**: {len(result.rejected_intents)}",
+            "### Intent Accounting Pipeline",
             "",
-            "### Rejection Reasons Breakdown",
+            f"- **Total Raw Signals Emitted by Strategy**: {total_raw_signals:,}",
+            "  - **Discarded Prior to Risk Manager**:",
+            f"    - Position Already Open (1 position cap): {pos_open_skips:,}",
+            f"    - Duplicate Setup Re-emissions (same BOS event): {dup_setup_skips:,}",
+            f"    - Lower-Ranked Concurrent Signals: {concurrent_skips:,}",
+            f"- **Evaluated by Risk Manager**: {total_evaluated:,}",
+            f"    - Approved (Executed Trades): {len(result.trades):,}",
+            f"    - Rejected: {len(result.rejected_intents):,}",
             "",
-            "| Reason Code | Rejection Count |",
+            "### Raw Intent Generation Distribution",
+            (
+                f"- **Max Entry Signals in a Single 5m Bar**: "
+                f"{max(getattr(result, 'intent_distribution', {}).keys(), default=0)} "
+                f"(across {len(symbols)} symbols)"
+            ),
+            (
+                "- **Max Entry Signals per Symbol per Bar**: 1 "
+                "(by design: strategy emits at most 1 setup per symbol per bar)"
+            ),
+            "",
+            "| Signals in Bar | Bar Count | % of 5m Bars |",
+            "|---|---|---|",
+        ]
+    )
+    intent_dist = getattr(result, "intent_distribution", {})
+    total_bars = sum(intent_dist.values()) if intent_dist else 0
+    for n_sigs in sorted(intent_dist.keys()):
+        b_cnt = intent_dist[n_sigs]
+        b_pct = (b_cnt / total_bars * 100.0) if total_bars > 0 else 0.0
+        lines.append(f"| {n_sigs} signals | {b_cnt:,} | {b_pct:.2f}% |")
+
+    lines.extend(
+        [
+            "",
+            "### Primary Failing Reason (First Blocked Check)",
+            (
+                "*Each rejected intent is counted exactly once by the first rule that vetoed it. "
+                "Counts sum to total rejected intents.*"
+            ),
+            "",
+            "| Reason Code | Rejection Count | % of Rejections |",
+            "|---|---|---|",
+        ]
+    )
+    total_rej = len(result.rejected_intents)
+    for code, count in sorted(first_rejection_counts.items(), key=lambda x: x[1], reverse=True):
+        pct = (count / total_rej * 100.0) if total_rej > 0 else 0.0
+        lines.append(f"| {code} | {count:,} | {pct:.1f}% |")
+
+    lines.extend(
+        [
+            "",
+            "### All Failing Reasons (Compound Triggered Rules)",
+            (
+                "*Total times each rule was triggered across all rejected intents "
+                "(multiple failures per intent counted).*"
+            ),
+            "",
+            "| Reason Code | Trigger Count |",
             "|---|---|",
         ]
     )
-    for code, count in sorted(rejection_counts.items(), key=lambda x: x[1], reverse=True):
-        lines.append(f"| {code} | {count} |")
+    for code, count in sorted(all_rejection_counts.items(), key=lambda x: x[1], reverse=True):
+        lines.append(f"| {code} | {count:,} |")
 
     if result.circuit_breaker_transitions:
         lines.extend(
@@ -429,6 +535,80 @@ def _write_html_report(
     net_color = "#22c55e" if metrics.net_return_usd >= 0 else "#ef4444"
     fund_color = "#ef4444" if metrics.total_funding_paid >= 0 else "#22c55e"
 
+    warn_banner = ""
+    if metrics.total_trades < 100:
+        warn_banner = (
+            '<div style="background: #451a03; border: 1px solid #f59e0b; color: #fde047; '
+            'padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-weight: 500;">'
+            f"⚠️ <b>Sample size too small for statistical significance (N={metrics.total_trades} "
+            "&lt; 100); metrics indicative only.</b></div>"
+        )
+
+    is_shadow_mode = getattr(result, "is_shadow_mode", False) or "_no_cb" in run_id
+    shadow_banner = ""
+    if is_shadow_mode:
+        shadow_banner = (
+            '<div style="background: #1e1b4b; border: 1px solid #6366f1; color: #a5b4fc; '
+            'padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-weight: 500;">'
+            '🔬 <b>DIAGNOSTIC RUN &mdash; SHADOW MODE:</b> Circuit breakers disabled '
+            '(observational only). All position sizing and safety checks active, '
+            'breaker halts non-blocking.</div>'
+        )
+
+    rm_card_html = ""
+    if result.rejected_intents or result.circuit_breaker_transitions:
+        html_first_rejections: dict[str, int] = {}
+        for r in result.rejected_intents:
+            if r.reasons:
+                c = r.reasons[0]
+                html_first_rejections[c] = html_first_rejections.get(c, 0) + 1
+
+        tot_rej = len(result.rejected_intents)
+        rej_rows = "".join(
+            f"<tr><td><code>{code}</code></td><td><b>{cnt:,}</b></td>"
+            f"<td>{(cnt / tot_rej * 100):.1f}%</td></tr>"
+            for code, cnt in sorted(
+                html_first_rejections.items(), key=lambda x: x[1], reverse=True
+            )
+        )
+
+        cb_rows = ""
+        if result.circuit_breaker_transitions:
+            tr_cells = []
+            for tr in result.circuit_breaker_transitions:
+                dt_str = datetime.fromtimestamp(
+                    tr.get("timestamp_ms", 0) / 1000, UTC
+                ).strftime("%Y-%m-%d %H:%M")
+                tr_cells.append(
+                    f"<tr><td>{dt_str}</td>"
+                    f"<td>{tr.get('from_state')} &rarr; {tr.get('to_state')}</td>"
+                    f"<td>{tr.get('reason')}</td></tr>"
+                )
+            cb_rows = (
+                "<h3>Circuit Breaker Transitions</h3><table>"
+                "<tr><th>Time (UTC)</th><th>Transition</th><th>Reason</th></tr>"
+                + "".join(tr_cells)
+                + "</table>"
+            )
+
+        tot_eval = len(result.trades) + len(result.rejected_intents)
+        rm_card_html = f"""
+  <div class="card">
+    <h2>Risk Manager & Circuit Breaker Accounting</h2>
+    <p>
+      Evaluated: <b>{tot_eval:,}</b> |
+      Approved: <b style="color: #4ade80">{len(result.trades):,}</b> |
+      Rejected: <b style="color: #ef4444">{len(result.rejected_intents):,}</b>
+    </p>
+    <h3>Primary Failing Reason (First Blocked Check)</h3>
+    <table>
+      <thead><tr><th>Reason Code</th><th>Count</th><th>% Rejections</th></tr></thead>
+      <tbody>{rej_rows}</tbody>
+    </table>
+    {cb_rows}
+  </div>
+"""
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -463,6 +643,8 @@ def _write_html_report(
 </head>
 <body>
 <div class="container">
+  {shadow_banner}
+  {warn_banner}
   <h1>Backtest Audit Report: {strategy_name} (v{strategy_version})</h1>
   <div style="color: #94a3b8; margin-bottom: 20px;">
     Run ID: <code>{run_id}</code> | Split: <b>{split}</b> | Symbols: {", ".join(symbols)}
@@ -616,12 +798,15 @@ def _write_html_report(
       <tr><td>Same-Bar SL & TP</td><td><b>{metrics.same_bar_sl_tp_count}</b> (SL assumed first)</td>
       </tr>
       <tr><td>Skipped Concurrent Signals</td><td><b>{metrics.skipped_signals_count}</b></td></tr>
+      <tr><td>Position-Already-Open Skips</td><td><b>{metrics.position_open_skips}</b></td></tr>
+      <tr><td>Duplicate Setup Skips</td><td><b>{metrics.duplicate_setup_skips}</b></td></tr>
       <tr><td>Total Fees Paid</td><td><b>${metrics.total_fees_paid:,.2f}</b></td></tr>
       <tr><td>Total Funding Paid</td><td><b>${metrics.total_funding_paid:,.2f}</b></td></tr>
       <tr><td>Total Slippage Paid</td><td><b>${metrics.total_slippage_paid:,.2f}</b></td></tr>
       <tr><td>Longest Losing Streak</td><td><b>{metrics.longest_losing_streak}</b> trades</td></tr>
     </table>
   </div>
+  {rm_card_html}
 </div>
 </body>
 </html>

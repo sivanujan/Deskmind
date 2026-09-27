@@ -193,7 +193,9 @@ def evaluate(
     ):
         drawdown_pct = (account.peak_equity - account.equity) / account.peak_equity
 
-    if account.halt_state == "full_stop" or drawdown_pct >= config.drawdown_full_stop_pct:
+    if config.enable_circuit_breakers and (
+        account.halt_state == "full_stop" or drawdown_pct >= config.drawdown_full_stop_pct
+    ):
         reasons.append(
             Reason(
                 code=ReasonCode.CIRCUIT_BREAKER_FULL_STOP,
@@ -215,7 +217,9 @@ def evaluate(
         )
 
     # 8.3: Drawdown halt (15% drawdown)
-    if account.halt_state == "drawdown_halt" or drawdown_pct >= config.drawdown_halt_pct:
+    if config.enable_circuit_breakers and (
+        account.halt_state == "drawdown_halt" or drawdown_pct >= config.drawdown_halt_pct
+    ):
         reasons.append(
             Reason(
                 code=ReasonCode.CIRCUIT_BREAKER_DRAWDOWN_HALT,
@@ -250,7 +254,9 @@ def evaluate(
     ):
         is_daily_loss_halted = True
 
-    if account.halt_state == "daily_loss_halt" or is_daily_loss_halted:
+    if config.enable_circuit_breakers and (
+        account.halt_state == "daily_loss_halt" or is_daily_loss_halted
+    ):
         reasons.append(
             Reason(
                 code=ReasonCode.CIRCUIT_BREAKER_DAILY_LOSS,
@@ -266,7 +272,10 @@ def evaluate(
         reasons.append(
             Reason(
                 code=ReasonCode.CIRCUIT_BREAKER_DAILY_LOSS,
-                message=f"Daily loss check passed (loss ${abs(min(Decimal('0'), account.today_realized_pnl)):.2f} < ${daily_loss_limit:.2f})",
+                message=(
+                    f"Daily loss check passed (loss "
+                    f"${abs(min(Decimal('0'), account.today_realized_pnl)):.2f} < ${daily_loss_limit:.2f})"
+                ),
                 passed=True,
             )
         )
@@ -277,7 +286,7 @@ def evaluate(
         or (account.cooldown_until_ms > 0 and intent.timestamp_ms < account.cooldown_until_ms)
         or account.halt_state == "streak_cooldown"
     )
-    if is_in_cooldown:
+    if config.enable_circuit_breakers and is_in_cooldown:
         reasons.append(
             Reason(
                 code=ReasonCode.CIRCUIT_BREAKER_STREAK_COOLDOWN,
@@ -381,12 +390,20 @@ def evaluate(
     # Rule 1: Per-Trade Risk Determination (8.2: Halved if drawdown >= 10%)
     # --------------------------------------------------------------------------
     effective_risk_pct = config.risk_pct
-    if drawdown_pct >= config.drawdown_halve_risk_pct:
+    is_halved = (
+        account.is_risk_halved
+        if account.is_risk_halved is not None
+        else (drawdown_pct >= config.drawdown_halve_risk_pct)
+    )
+    if config.enable_circuit_breakers and is_halved:
         effective_risk_pct = config.risk_pct / Decimal("2")
         reasons.append(
             Reason(
                 code=ReasonCode.CIRCUIT_BREAKER_DRAWDOWN_RISK_HALVED,
-                message=f"Drawdown >= 10% ({drawdown_pct * 100:.1f}%): Risk per trade halved to {effective_risk_pct * 100:.2f}%",
+                message=(
+                    f"Drawdown >= 10% half-risk state active ({drawdown_pct * 100:.1f}%): "
+                    f"Risk per trade halved to {effective_risk_pct * 100:.2f}%"
+                ),
                 passed=True,
             )
         )

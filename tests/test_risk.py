@@ -413,6 +413,7 @@ def test_circuit_breaker_consecutive_losses_and_cooldown():
     t_after_24h = t0 + (25 * 3600 * 1000)
     tracker.on_time_and_equity(timestamp_ms=t_after_24h, current_equity=Decimal("9920"))
     assert tracker.halt_state == "normal"
+    assert tracker.consecutive_losses == 0
 
 
 # ------------------------------------------------------------------------------
@@ -546,3 +547,173 @@ def test_hypothesis_evaluator_invariants(
             config.liq_buffer_price_pct * entry_d,
         )
         assert dec.liquidation_price <= (intent.stop_loss - req_buf)
+
+
+# ------------------------------------------------------------------------------
+# 13. Hysteresis, Latching & Cooldown Extension Fixes
+# ------------------------------------------------------------------------------
+
+
+def test_drawdown_halt_latching_hysteresis_and_flapping_reproduction():
+    """Confirms 15% drawdown halt latches with hysteresis:
+    - Triggers at >= 15% drawdown.
+    - Flapping reproduction: floating around 14.8%-15.2% does NOT repeatedly cycle transitions.
+    - Does NOT clear if drawdown drops to 9.5% before 7 days have elapsed.
+    - Does NOT clear after 7 days if drawdown is still >= 10%.
+    - Clears to 'normal' ONLY when drawdown < 10% AND >= 7 days have elapsed.
+    - Can also be cleared immediately via manual reset (reset_drawdown_halt).
+    """
+    config = RiskConfig(
+        drawdown_halt_pct=Decimal("0.15"),
+        drawdown_halt_recovery_pct=Decimal("0.10"),
+        drawdown_halt_min_days=7,
+    )
+    tracker = CircuitBreakerTracker(config=config, initial_equity=Decimal("10000.0"))
+    t0 = 1672531200000  # 2023-01-01 00:00:00 UTC
+    one_day_ms = 86400 * 1000
+
+    # 1. Day 1: Equity drops to $8,450 (15.5% drawdown) -> triggers drawdown_halt
+    tracker.on_time_and_equity(t0, Decimal("8450.0"))
+    assert tracker.halt_state == "drawdown_halt"
+    assert tracker.drawdown_halt_entered_ms == t0
+    assert len(tracker.transitions) == 1
+
+    # 2. Flapping reproduction scenario:
+    # Equity fluctuates around 14.5% - 15.2% over days 1 to 4:
+    # Day 2: $8,520 (14.8% drawdown). Old unlatched code flapped back to 'normal'.
+    # With hysteresis: must REMAIN in 'drawdown_halt'.
+    tracker.on_time_and_equity(t0 + 1 * one_day_ms, Decimal("8520.0"))
+    assert tracker.halt_state == "drawdown_halt"
+    assert len(tracker.transitions) == 1  # No flapping transition!
+
+    # Day 3: $8,480 (15.2% drawdown).
+    tracker.on_time_and_equity(t0 + 2 * one_day_ms, Decimal("8480.0"))
+    assert tracker.halt_state == "drawdown_halt"
+    assert len(tracker.transitions) == 1  # Still no extra transition!
+
+    # Day 4: $8,550 (14.5% drawdown).
+    tracker.on_time_and_equity(t0 + 3 * one_day_ms, Decimal("8550.0"))
+    assert tracker.halt_state == "drawdown_halt"
+    assert len(tracker.transitions) == 1
+
+    # 3. Day 5 (t0 + 4 days): Equity improves to $9,100 (9.0% drawdown, < 10%).
+    # BUT only 4 days have elapsed (< 7 days required)!
+    # Must REMAIN in 'drawdown_halt'.
+    tracker.on_time_and_equity(t0 + 4 * one_day_ms, Decimal("9100.0"))
+    assert tracker.halt_state == "drawdown_halt"
+    assert len(tracker.transitions) == 1
+
+    # 4. Day 8 (t0 + 7 days): 7 days elapsed, but equity dipped to $8,900 (11% drawdown, >= 10%).
+    # Must REMAIN in 'drawdown_halt'.
+    tracker.on_time_and_equity(t0 + 7 * one_day_ms, Decimal("8900.0"))
+    assert tracker.halt_state == "drawdown_halt"
+    assert len(tracker.transitions) == 1
+
+    # 5. Day 8.5 (t0 + 7.5 days): 7+ days elapsed AND equity reaches $9,100 (9% drawdown, < 10%).
+    # Clears to 'normal'!
+    t_clear = t0 + int(7.5 * one_day_ms)
+    tracker.on_time_and_equity(t_clear, Decimal("9100.0"))
+    assert tracker.halt_state == "normal"
+    assert tracker.drawdown_halt_entered_ms == 0
+    assert len(tracker.transitions) == 2
+    assert tracker.transitions[1].to_state == "normal"
+    assert "Drawdown halt cleared" in tracker.transitions[1].reason
+
+    # 6. Manual reset test:
+    # Enter drawdown halt again at t_new
+    t_new = t_clear + one_day_ms
+    tracker.on_time_and_equity(t_new, Decimal("8400.0"))  # 16% drawdown
+    assert tracker.halt_state == "drawdown_halt"
+    # Call manual reset: clears immediately even if 0 days elapsed
+    res = tracker.reset_drawdown_halt(t_new + 3600_000)
+    assert res is True
+    assert tracker.halt_state == "normal"
+
+
+def test_half_risk_state_hysteresis():
+    """Confirms 10% half-risk state has hysteresis:
+    - Activates at >= 10% drawdown (is_risk_halved = True, risk halved in evaluate).
+    - Remains active when recovering to 8.0% drawdown (>= 7%).
+    - Deactivates (is_risk_halved = False) only when recovering strictly below 7%.
+    """
+    config = RiskConfig(
+        drawdown_halve_risk_pct=Decimal("0.10"),
+        drawdown_halve_risk_recovery_pct=Decimal("0.07"),
+    )
+    tracker = CircuitBreakerTracker(config=config, initial_equity=Decimal("10000.0"))
+    t = 1672531200000
+
+    # 1. 5% drawdown ($9,500): Normal risk (1%)
+    tracker.on_time_and_equity(t, Decimal("9500.0"))
+    assert tracker.is_risk_halved is False
+    acct = tracker.get_account_state(equity=Decimal("9500.0"), available_balance=Decimal("9500.0"))
+    intent = make_valid_intent()
+    market = make_valid_market()
+    dec = evaluate(intent, acct, market, config)
+    assert dec.effective_risk_pct == Decimal("0.01")
+
+    # 2. 10.5% drawdown ($8,950): Half-risk activated (0.5%)
+    tracker.on_time_and_equity(t + 3600_000, Decimal("8950.0"))
+    assert tracker.is_risk_halved is True
+    acct = tracker.get_account_state(equity=Decimal("8950.0"), available_balance=Decimal("8950.0"))
+    dec = evaluate(intent, acct, market, config)
+    assert dec.effective_risk_pct == Decimal("0.005")
+    assert any(r.code == ReasonCode.CIRCUIT_BREAKER_DRAWDOWN_RISK_HALVED for r in dec.reasons)
+
+    # 3. Recovers to 8.0% drawdown ($9,200): Hysteresis keeps half-risk active!
+    tracker.on_time_and_equity(t + 7200_000, Decimal("9200.0"))
+    assert tracker.is_risk_halved is True
+    acct = tracker.get_account_state(equity=Decimal("9200.0"), available_balance=Decimal("9200.0"))
+    dec = evaluate(intent, acct, market, config)
+    assert dec.effective_risk_pct == Decimal("0.005")
+
+    # 4. Recovers to 6.5% drawdown ($9,350, < 7%): Half-risk clears back to normal!
+    tracker.on_time_and_equity(t + 10800_000, Decimal("9350.0"))
+    assert tracker.is_risk_halved is False
+    acct = tracker.get_account_state(equity=Decimal("9350.0"), available_balance=Decimal("9350.0"))
+    dec = evaluate(intent, acct, market, config)
+    assert dec.effective_risk_pct == Decimal("0.01")
+
+
+def test_cooldown_timer_not_extended_by_subsequent_losses():
+    """Confirms root cause fix for 51h cooldown:
+    Subsequent losses during an active streak cooldown do NOT push the cooldown timer forward.
+    The cooldown timer expires 24h from the 4th loss, resetting consecutive_losses to 0.
+    """
+    config = RiskConfig(
+        consecutive_losses_threshold=4,
+        consecutive_losses_cooldown_hours=24,
+    )
+    tracker = CircuitBreakerTracker(config=config, initial_equity=Decimal("10000.0"))
+    t0 = 1672531200000
+    one_hour_ms = 3600 * 1000
+
+    # 4 consecutive losses of $10 (total $40, well within 3% daily limit):
+    tracker.record_trade_exit(Decimal("-10.0"), t0)
+    tracker.record_trade_exit(Decimal("-10.0"), t0 + 1 * one_hour_ms)
+    tracker.record_trade_exit(Decimal("-10.0"), t0 + 2 * one_hour_ms)
+    tracker.record_trade_exit(Decimal("-10.0"), t0 + 3 * one_hour_ms)
+
+    assert tracker.consecutive_losses == 4
+    assert tracker.halt_state == "streak_cooldown"
+    expected_cooldown_end = (t0 + 3 * one_hour_ms) + (24 * one_hour_ms)
+    assert tracker.cooldown_until_ms == expected_cooldown_end
+
+    # In shadow mode or with in-flight trades, loss #5 occurs 10 hours later
+    t_loss5 = t0 + 13 * one_hour_ms
+    tracker.record_trade_exit(Decimal("-10.0"), t_loss5)
+    assert tracker.consecutive_losses == 5
+    # The cooldown timer MUST NOT be pushed to t_loss5 + 24h!
+    assert tracker.cooldown_until_ms == expected_cooldown_end
+
+    # Loss #6 occurs 20 hours later
+    t_loss6 = t0 + 23 * one_hour_ms
+    tracker.record_trade_exit(Decimal("-10.0"), t_loss6)
+    assert tracker.consecutive_losses == 6
+    assert tracker.cooldown_until_ms == expected_cooldown_end
+
+    # When expected_cooldown_end arrives, cooldown clears and consecutive_losses resets to 0
+    tracker.on_time_and_equity(expected_cooldown_end, Decimal("9940.0"))
+    assert tracker.halt_state == "normal"
+    assert tracker.cooldown_until_ms == 0
+    assert tracker.consecutive_losses == 0

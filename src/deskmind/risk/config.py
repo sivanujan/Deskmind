@@ -46,9 +46,13 @@ class RiskConfig:
     max_open_positions: int = 1  # Exactly 1 position across all symbols
 
     # Rule 8: Circuit breakers
+    enable_circuit_breakers: bool = True
     daily_loss_limit_pct: Decimal = Decimal("0.03")  # 3% of start-of-day equity
     drawdown_halve_risk_pct: Decimal = Decimal("0.10")  # 10% drawdown -> halve risk
+    drawdown_halve_risk_recovery_pct: Decimal = Decimal("0.07")  # 7% recovery (hysteresis)
     drawdown_halt_pct: Decimal = Decimal("0.15")  # 15% drawdown -> halt new entries
+    drawdown_halt_recovery_pct: Decimal = Decimal("0.10")  # 10% recovery threshold (hysteresis)
+    drawdown_halt_min_days: int = 7  # minimum 7 days before drawdown halt clears
     drawdown_full_stop_pct: Decimal = Decimal("0.20")  # 20% drawdown -> full stop
     consecutive_losses_threshold: int = 4  # 4 consecutive losses -> cooldown
     consecutive_losses_cooldown_hours: int = 24  # 24 hour cooldown

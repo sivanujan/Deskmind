@@ -33,9 +33,10 @@ class TrendFollowV1(BaseStrategy):
         intents: list[Intent] = []
 
         for symbol, ctx in contexts.items():
-            # If account already has a position in this symbol, check if it needs management
-            # (In Phase 1, target and stop are static exchange-side orders, no trailing)
-            if ctx.account.open_position is not None:
+            if (
+                ctx.account.open_position is not None
+                and ctx.account.open_position.symbol == symbol
+            ):
                 continue
 
             timeframes = ctx.agent_report.get("timeframes", {})
@@ -84,6 +85,7 @@ class TrendFollowV1(BaseStrategy):
                         stop_loss=sl_price,
                         take_profit=tp_price,
                         ranking_score=score,
+                        setup_id=f"{symbol}:15m:{confirmed_at}:up",
                         metadata={
                             "rule": "1h_bullish+15m_bos_up",
                             "risk": str(risk),
@@ -119,6 +121,7 @@ class TrendFollowV1(BaseStrategy):
                         stop_loss=sl_price,
                         take_profit=tp_price,
                         ranking_score=score,
+                        setup_id=f"{symbol}:15m:{confirmed_at}:down",
                         metadata={
                             "rule": "1h_bearish+15m_bos_down",
                             "risk": str(risk),

@@ -50,6 +50,8 @@ class PerformanceMetrics:
     skipped_signals_count: int
     longest_losing_streak: int
     per_symbol: dict[str, dict[str, Any]]
+    position_open_skips: int = 0
+    duplicate_setup_skips: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -251,6 +253,8 @@ def calculate_metrics(result: BacktestResult) -> PerformanceMetrics:
         liquidations_count=result.liquidations_count,
         same_bar_sl_tp_count=result.same_bar_sl_tp_count,
         skipped_signals_count=result.skipped_signals_count,
+        position_open_skips=getattr(result, "position_open_skips", 0),
+        duplicate_setup_skips=getattr(result, "duplicate_setup_skips", 0),
         longest_losing_streak=longest_losing_streak,
         per_symbol=per_symbol,
     )

@@ -135,6 +135,8 @@ class BacktestResult:
     same_bar_sl_tp_count: int
     liquidations_count: int
     skipped_signals_count: int
+    position_open_skips: int
+    duplicate_setup_skips: int
     total_funding_paid: Decimal
     total_fees_paid: Decimal
     total_slippage_paid: Decimal
@@ -144,6 +146,9 @@ class BacktestResult:
     final_equity: Decimal
     rejected_intents: list[RejectedIntent] = field(default_factory=list)
     circuit_breaker_transitions: list[dict[str, Any]] = field(default_factory=list)
+    raw_entry_signals: int = 0
+    intent_distribution: dict[int, int] = field(default_factory=dict)
+    is_shadow_mode: bool = False
 
 
 def load_funding_map(data_dir: Path, symbol: str) -> dict[int, Decimal]:
@@ -232,6 +237,13 @@ class BacktestEngine:
         self.same_bar_sl_tp_count = 0
         self.liquidations_count = 0
         self.skipped_signals_count = 0
+        self.position_open_skips = 0  # Entry intents discarded due to active position/order
+        self.duplicate_setup_skips = 0  # Entry intents discarded as already-seen setup_id
+        self.raw_entry_signals = 0  # Total raw entry intents emitted across all symbols
+        self.intent_distribution: dict[int, int] = {}  # Count of bars with N entry intents
+        # Tracks setup_ids that have been evaluated (approved or RM-rejected) this session.
+        # An empty setup_id string is never deduplicated.
+        self.seen_setup_ids: set[str] = set()
         self.total_funding_paid = Decimal("0")
         self.total_fees_paid = Decimal("0")
         self.total_slippage_paid = Decimal("0")
@@ -320,6 +332,8 @@ class BacktestEngine:
                 same_bar_sl_tp_count=0,
                 liquidations_count=0,
                 skipped_signals_count=0,
+                position_open_skips=0,
+                duplicate_setup_skips=0,
                 total_funding_paid=Decimal("0"),
                 total_fees_paid=Decimal("0"),
                 total_slippage_paid=Decimal("0"),
@@ -838,6 +852,14 @@ class BacktestEngine:
             # Only generate strategy intents if past the warm-up period
             if contexts and t_close >= self.trading_start_ms:
                 raw_intents = self.strategy.on_bar(contexts)
+                all_entries = [
+                    it for it in raw_intents if it.action in ("open_long", "open_short")
+                ]
+                self.raw_entry_signals += len(all_entries)
+                num_entries = len(all_entries)
+                self.intent_distribution[num_entries] = (
+                    self.intent_distribution.get(num_entries, 0) + 1
+                )
 
                 if self.active_position is not None:
                     for it in raw_intents:
@@ -862,6 +884,15 @@ class BacktestEngine:
                                     intent_time_ms=t_close,
                                 )
                                 break
+                    # Count entry intents for other symbols that are silently discarded
+                    # because we already have an active position (Phase 1: max 1 position).
+                    other_entry_intents = [
+                        it
+                        for it in raw_intents
+                        if it.action in ("open_long", "open_short")
+                        and it.symbol != self.active_position.symbol
+                    ]
+                    self.position_open_skips += len(other_entry_intents)
                 elif self.pending_order is None:
                     entry_intents = [
                         it for it in raw_intents if it.action in ("open_long", "open_short")
@@ -876,101 +907,121 @@ class BacktestEngine:
                             reverse=True,
                         )
 
-                        chosen = ranked_intents[0]
-                        # INVARIANT (a): Every open position/order must have an active stop
-                        if chosen.stop_loss is None or chosen.stop_loss <= Decimal("0"):
-                            raise RuntimeError(
-                                f"Invariant violation: Strategy emitted {chosen.action} on "
-                                f"{chosen.symbol} missing active stop loss ({chosen.stop_loss})"
-                            )
+                        # Deduplicate by setup_id: skip any intent whose setup_id has
+                        # already been evaluated this run (approved or RM-rejected).
+                        # An empty setup_id is never deduplicated.
+                        deduped_intents = []
+                        for it in ranked_intents:
+                            if it.setup_id and it.setup_id in self.seen_setup_ids:
+                                self.duplicate_setup_skips += 1
+                            else:
+                                deduped_intents.append(it)
 
-                        # Log skipped signals
-                        if len(ranked_intents) > 1:
-                            self.skipped_signals_count += len(ranked_intents) - 1
-
-                        ctx = contexts[chosen.symbol]
-                        cur_close = ctx.current_bar.close
-
-                        # Collect rich market context for RiskManager
-                        mark_bar = mark_5m.get(chosen.symbol, {}).get(t_open)
-                        mark_price = Decimal(str(mark_bar["close"])) if mark_bar else cur_close
-                        atr_map: dict[str, Decimal] = {}
-                        agent = self.agents.get(chosen.symbol)
-                        if agent:
-                            for tf in ("5m", "15m", "1h", "2h"):
-                                engine_tf = agent.engines.get(tf)
-                                if engine_tf and engine_tf.atr is not None:
-                                    atr_map[tf] = Decimal(str(engine_tf.atr))
-
-                        f_rates = funding_map.get(chosen.symbol, {})
-                        cur_f_rate = f_rates.get(t_open)
-                        future_fundings = [ft for ft in f_rates if ft > t_close]
-                        next_funding_ms = min(future_fundings) if future_fundings else None
-
-                        # Size position
-                        if isinstance(self.sizer, RiskManagerSizer):
-                            qty, reason = self.sizer.size_position(
-                                ctx.account,
-                                chosen,
-                                cur_close,
-                                self.filters[chosen.symbol],
-                                mark_price=mark_price,
-                                atr_by_tf=atr_map,
-                                next_funding_time_ms=next_funding_ms,
-                                current_funding_rate=cur_f_rate,
-                                timestamp_ms=t_close,
-                            )
-                            decision = self.sizer.last_decision
+                        if not deduped_intents:
+                            # All ranked intents were duplicates; nothing to evaluate
+                            pass
                         else:
-                            qty, reason = self.sizer.size_position(
-                                ctx.account, chosen, cur_close, self.filters[chosen.symbol]
-                            )
-                            decision = None
-
-                        if (
-                            qty > Decimal("0")
-                            and chosen.stop_loss is not None
-                            and chosen.take_profit is not None
-                        ):
-                            init_risk = (
-                                decision.actual_risk_usd
-                                if decision is not None
-                                else abs(cur_close - chosen.stop_loss) * qty
-                            )
-                            meta = dict(chosen.metadata)
-                            if decision is not None:
-                                meta["risk_decision"] = decision.to_dict()
-
-                            self.pending_order = PendingOrder(
-                                symbol=chosen.symbol,
-                                action=chosen.action,  # type: ignore[arg-type]
-                                order_type=chosen.order_type,
-                                qty=qty,
-                                limit_price=chosen.limit_price,
-                                stop_loss=chosen.stop_loss,
-                                take_profit=chosen.take_profit,
-                                initial_risk=init_risk,
-                                intent_time_ms=t_close,
-                                metadata=meta,
-                            )
-                        else:
-                            failed_reasons = (
-                                [r.message for r in decision.failed_reasons]
-                                if decision is not None
-                                else [reason]
-                            )
-                            dec_dict = decision.to_dict() if decision is not None else {}
-                            self.rejected_intents.append(
-                                RejectedIntent(
-                                    symbol=chosen.symbol,
-                                    action=chosen.action,
-                                    price=cur_close,
-                                    timestamp_ms=t_close,
-                                    reasons=failed_reasons,
-                                    decision=dec_dict,
+                            chosen = deduped_intents[0]
+                            # INVARIANT (a): Every open position/order must have an active stop
+                            if chosen.stop_loss is None or chosen.stop_loss <= Decimal("0"):
+                                raise RuntimeError(
+                                    f"Invariant violation: Strategy emitted {chosen.action} on "
+                                    f"{chosen.symbol} missing active stop loss ({chosen.stop_loss})"
                                 )
-                            )
-                            logger.debug("Order rejected for %s: %s", chosen.symbol, reason)
+
+                            # Log lower-ranked intents skipped this bar
+                            if len(deduped_intents) > 1:
+                                self.skipped_signals_count += len(deduped_intents) - 1
+
+                            ctx = contexts[chosen.symbol]
+                            cur_close = ctx.current_bar.close
+
+                            # Collect rich market context for RiskManager
+                            mark_bar = mark_5m.get(chosen.symbol, {}).get(t_open)
+                            mark_price = Decimal(str(mark_bar["close"])) if mark_bar else cur_close
+                            atr_map: dict[str, Decimal] = {}
+                            agent = self.agents.get(chosen.symbol)
+                            if agent:
+                                for tf in ("5m", "15m", "1h", "2h"):
+                                    engine_tf = agent.engines.get(tf)
+                                    if engine_tf and engine_tf.atr is not None:
+                                        atr_map[tf] = Decimal(str(engine_tf.atr))
+
+                            f_rates = funding_map.get(chosen.symbol, {})
+                            cur_f_rate = f_rates.get(t_open)
+                            future_fundings = [ft for ft in f_rates if ft > t_close]
+                            next_funding_ms = min(future_fundings) if future_fundings else None
+
+                            # Size position
+                            if isinstance(self.sizer, RiskManagerSizer):
+                                qty, reason = self.sizer.size_position(
+                                    ctx.account,
+                                    chosen,
+                                    cur_close,
+                                    self.filters[chosen.symbol],
+                                    mark_price=mark_price,
+                                    atr_by_tf=atr_map,
+                                    next_funding_time_ms=next_funding_ms,
+                                    current_funding_rate=cur_f_rate,
+                                    timestamp_ms=t_close,
+                                )
+                                decision = self.sizer.last_decision
+                            else:
+                                qty, reason = self.sizer.size_position(
+                                    ctx.account, chosen, cur_close, self.filters[chosen.symbol]
+                                )
+                                decision = None
+
+                            # Mark this setup_id as evaluated so it won't be re-submitted
+                            if chosen.setup_id:
+                                self.seen_setup_ids.add(chosen.setup_id)
+
+                            if (
+                                qty > Decimal("0")
+                                and chosen.stop_loss is not None
+                                and chosen.take_profit is not None
+                            ):
+                                init_risk = (
+                                    decision.actual_risk_usd
+                                    if decision is not None
+                                    else abs(cur_close - chosen.stop_loss) * qty
+                                )
+                                meta = dict(chosen.metadata)
+                                if decision is not None:
+                                    meta["risk_decision"] = decision.to_dict()
+
+                                self.pending_order = PendingOrder(
+                                    symbol=chosen.symbol,
+                                    action=chosen.action,  # type: ignore[arg-type]
+                                    order_type=chosen.order_type,
+                                    qty=qty,
+                                    limit_price=chosen.limit_price,
+                                    stop_loss=chosen.stop_loss,
+                                    take_profit=chosen.take_profit,
+                                    initial_risk=init_risk,
+                                    intent_time_ms=t_close,
+                                    metadata=meta,
+                                )
+                            else:
+                                failed_reasons = (
+                                    [r.code for r in decision.failed_reasons]
+                                    if decision is not None
+                                    else [reason]
+                                )
+                                dec_dict = decision.to_dict() if decision is not None else {}
+                                self.rejected_intents.append(
+                                    RejectedIntent(
+                                        symbol=chosen.symbol,
+                                        action=chosen.action,
+                                        price=cur_close,
+                                        timestamp_ms=t_close,
+                                        reasons=failed_reasons,
+                                        decision=dec_dict,
+                                    )
+                                )
+                                logger.debug(
+                                    "Order rejected for %s: %s", chosen.symbol, reason
+                                )
 
             # ----------------------------------------------------
             # STEP E: Record Equity Point
@@ -1004,7 +1055,9 @@ class BacktestEngine:
 
         final_eq = self.equity_curve[-1].equity if self.equity_curve else self.cash
         cb_transitions = []
+        is_shadow = False
         if isinstance(self.sizer, RiskManagerSizer):
+            is_shadow = not self.sizer.config.enable_circuit_breakers
             cb_transitions = [
                 {
                     "timestamp_ms": t.timestamp_ms,
@@ -1022,6 +1075,8 @@ class BacktestEngine:
             same_bar_sl_tp_count=self.same_bar_sl_tp_count,
             liquidations_count=self.liquidations_count,
             skipped_signals_count=self.skipped_signals_count,
+            position_open_skips=self.position_open_skips,
+            duplicate_setup_skips=self.duplicate_setup_skips,
             total_funding_paid=self.total_funding_paid,
             total_fees_paid=self.total_fees_paid,
             total_slippage_paid=self.total_slippage_paid,
@@ -1031,4 +1086,7 @@ class BacktestEngine:
             final_equity=final_eq,
             rejected_intents=self.rejected_intents,
             circuit_breaker_transitions=cb_transitions,
+            raw_entry_signals=self.raw_entry_signals,
+            intent_distribution=self.intent_distribution,
+            is_shadow_mode=is_shadow,
         )

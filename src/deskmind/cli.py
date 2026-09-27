@@ -430,6 +430,9 @@ def backtest_run_cmd(
     warmup_days: int = typer.Option(
         30, "--warmup-days", help="Warm-up days for indicator/trend agent initialization"
     ),
+    disable_circuit_breakers: bool = typer.Option(
+        False, "--disable-circuit-breakers", help="Disable circuit breakers for diagnostic comparison"
+    ),
     notes: str | None = typer.Option(None, "--notes", help="Audit notes for this run"),
 ) -> None:
     """Run an event-driven backtest with realistic execution and incremental agents."""
@@ -442,6 +445,12 @@ def backtest_run_cmd(
         symbols = resolve_symbols(settings, symbol, all_symbols)
 
     typer.echo(f"Starting backtest: strategy={strategy}, split={split}, symbols={symbols}")
+    if disable_circuit_breakers:
+        typer.secho(
+            "DIAGNOSTIC RUN — SHADOW MODE: Circuit breakers disabled (observational only).",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
     try:
         res = asyncio.run(
             run_backtest(
@@ -454,6 +463,7 @@ def backtest_run_cmd(
                 confirm_test_unlock=confirm_test_unlock,
                 random_seeds=random_seeds,
                 warmup_days=warmup_days,
+                disable_circuit_breakers=disable_circuit_breakers,
                 notes=notes,
             )
         )

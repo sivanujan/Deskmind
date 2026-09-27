@@ -47,11 +47,10 @@ class RiskManagerSizer:
         """Evaluate intent through Risk Manager and return (qty, reason)."""
         side: Literal["long", "short"] = "long" if intent.action == "open_long" else "short"
 
-        # Update circuit breaker tracker with current time & equity
-        if timestamp_ms > 0:
-            self.tracker.on_time_and_equity(timestamp_ms, account.equity)
-
         # Build account state from tracker & snapshot
+        # NOTE: on_time_and_equity is called by the engine at end-of-bar (step E).
+        # Do NOT call it here; doing so would fire it twice per bar and could move
+        # cooldown timers before the bar's equity is finalized.
         open_positions = [account.open_position.symbol] if account.open_position else []
         account_state = self.tracker.get_account_state(
             equity=account.equity,

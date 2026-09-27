@@ -25,6 +25,11 @@ class Intent:
     take_profit: Decimal | None = None
     ranking_score: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Opaque key identifying the underlying setup (e.g. symbol+tf+event_time_ms+direction).
+    # The engine evaluates each setup_id once; re-emits on subsequent bars are silently
+    # skipped without touching the Risk Manager or rejection counters.
+    # Strategies should set this; if absent/empty, every bar is treated as a new setup.
+    setup_id: str = ""
 
 
 @dataclass

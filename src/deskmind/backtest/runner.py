@@ -35,6 +35,9 @@ from deskmind.config import (
     DEFAULT_INITIAL_CASH,
     get_settings,
 )
+from deskmind.risk.breakers import CircuitBreakerTracker
+from deskmind.risk.config import RiskConfig
+from deskmind.risk.sizer import RiskManagerSizer
 from deskmind.strategies.base import BaseStrategy
 from deskmind.strategies.trend_follow_v1 import TrendFollowV1
 
@@ -228,6 +231,7 @@ async def run_backtest(
     notes: str | None = None,
     random_seeds: int = 1000,
     warmup_days: int = 30,
+    disable_circuit_breakers: bool = False,
     data_dir: Path | None = None,
     reports_dir: Path = Path("reports/backtests"),
 ) -> dict[str, Any]:
@@ -261,7 +265,16 @@ async def run_backtest(
 
     # Run ID
     timestamp_str = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    run_id = f"{strategy.name}_{split}_{timestamp_str}"
+    cb_suffix = "_no_cb" if disable_circuit_breakers else ""
+    run_id = f"{strategy.name}_{split}{cb_suffix}_{timestamp_str}"
+
+    # Configure Risk Manager sizer with circuit breakers enabled or disabled
+    risk_cfg = RiskConfig(
+        max_leverage=5,
+        enable_circuit_breakers=not disable_circuit_breakers,
+    )
+    tracker = CircuitBreakerTracker(config=risk_cfg, initial_equity=initial_cash)
+    sizer = RiskManagerSizer(config=risk_cfg, tracker=tracker)
 
     # Execute backtest engine
     engine = BacktestEngine(
@@ -272,6 +285,7 @@ async def run_backtest(
         end=end_dt,
         initial_cash=initial_cash,
         warmup_days=warmup_days,
+        sizer=sizer,
     )
     result = engine.run()
 

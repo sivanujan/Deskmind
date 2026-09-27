@@ -1440,3 +1440,261 @@ def test_warmup_period_suppresses_signals(tmp_path: Path):
     assert len(res.trades) == 1
     assert res.trades[0].entry_time_ms >= t0 + (30 * 86_400_000)
     assert res.trades[0].exit_reason == "take_profit"
+
+
+def test_setup_id_deduplication_and_position_skips(tmp_path: Path):
+    """Verify that repeated emissions of the same setup_id are deduplicated and that
+
+    intents for other symbols while a position is open are tracked as position_open_skips.
+    """
+    t0 = 1704067200000
+    klines_btc = [
+        {"open_time": t0 + i * 300_000, "close_time": t0 + (i + 1) * 300_000,
+         "open": 100.0, "high": 102.0, "low": 99.0, "close": 101.0}
+        for i in range(10)
+    ]
+    klines_eth = [
+        {"open_time": t0 + i * 300_000, "close_time": t0 + (i + 1) * 300_000,
+         "open": 50.0, "high": 51.0, "low": 49.0, "close": 50.5}
+        for i in range(10)
+    ]
+    _setup_symbol_data(tmp_path, "BTCUSDT", klines_btc)
+    _setup_symbol_data(tmp_path, "ETHUSDT", klines_eth)
+
+    # Bar 0: Strategy emits BTC setup A (setup_id="BTC:15m:100:up")
+    intent_btc_1 = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("110.0"),
+        setup_id="BTC:15m:100:up",
+    )
+    # Bar 1: Position is now open. Strategy emits ETH intent.
+    # Because position is open, this should be counted in position_open_skips.
+    intent_eth_while_open = Intent(
+        symbol="ETHUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("45.0"),
+        take_profit=Decimal("60.0"),
+        setup_id="ETH:15m:101:up",
+    )
+    # Bar 2: Strategy closes BTC position
+    intent_close = Intent(symbol="BTCUSDT", action="close")
+
+    # Bar 4: Position is now closed. Strategy re-emits BTC setup A (same setup_id)
+    intent_btc_dup = Intent(
+        symbol="BTCUSDT",
+        action="open_long",
+        order_type="market",
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("110.0"),
+        setup_id="BTC:15m:100:up",
+    )
+
+    strategy = ScriptedStrategy(
+        {
+            t0 + 300_000: [intent_btc_1],
+            t0 + 600_000: [intent_eth_while_open],
+            t0 + 900_000: [intent_close],
+            t0 + 1500_000: [intent_btc_dup],
+        }
+    )
+
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["BTCUSDT", "ETHUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 2, 0, tzinfo=UTC),
+        initial_cash=Decimal("10000.0"),
+        sizer=FixedFractionalSizer(risk_pct=Decimal("0.01")),
+    )
+    res = engine.run()
+
+    assert len(res.trades) == 1
+    assert res.trades[0].symbol == "BTCUSDT"
+    assert res.position_open_skips == 1
+    assert res.duplicate_setup_skips == 1
+
+
+def test_trend_follow_v1_emits_other_symbols_while_position_open():
+    """Confirms that when a position is open in BTCUSDT, TrendFollowV1 does NOT suppress
+    signals for other symbols (ETHUSDT), allowing the engine to count them in the accounting table.
+    """
+    from deskmind.strategies.base import AccountSnapshot, BarSnapshot, PositionSnapshot
+    from deskmind.strategies.trend_follow_v1 import TrendFollowV1
+
+    strat = TrendFollowV1()
+    t_close = 1704067500000
+
+    btc_pos = PositionSnapshot(
+        symbol="BTCUSDT",
+        side="long",
+        entry_price=Decimal("100.0"),
+        qty=Decimal("1.0"),
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("110.0"),
+        entry_time_ms=t_close - 300_000,
+        liquidation_price=Decimal("80.0"),
+    )
+
+    btc_ctx = StrategyContext(
+        symbol="BTCUSDT",
+        as_of_ms=t_close,
+        current_bar=BarSnapshot(
+            t_close - 300_000,
+            t_close,
+            Decimal("100"),
+            Decimal("101"),
+            Decimal("99"),
+            Decimal("100"),
+            Decimal("10"),
+        ),
+        agent_report={},
+        account=AccountSnapshot(
+            cash=Decimal("10000"),
+            equity=Decimal("10000"),
+            realized_pnl=Decimal("0"),
+            unrealized_pnl=Decimal("0"),
+            open_position=btc_pos,
+        ),
+    )
+
+    eth_report = {
+        "timeframes": {
+            "1h": {"trend": "bullish", "atr": 2.0, "last_swing_low": {"price": 40.0}},
+            "15m": {
+                "last_event": {
+                    "type": "BOS",
+                    "direction": "up",
+                    "confirmed_at": t_close,
+                },
+                "last_swing_low": {"price": 48.0},
+            },
+        }
+    }
+    eth_ctx = StrategyContext(
+        symbol="ETHUSDT",
+        as_of_ms=t_close,
+        current_bar=BarSnapshot(
+            t_close - 300_000,
+            t_close,
+            Decimal("50"),
+            Decimal("51"),
+            Decimal("49"),
+            Decimal("50"),
+            Decimal("10"),
+        ),
+        agent_report=eth_report,
+        account=AccountSnapshot(
+            cash=Decimal("10000"),
+            equity=Decimal("10000"),
+            realized_pnl=Decimal("0"),
+            unrealized_pnl=Decimal("0"),
+            open_position=btc_pos,
+        ),
+    )
+
+    intents = strat.on_bar({"BTCUSDT": btc_ctx, "ETHUSDT": eth_ctx})
+    # BTCUSDT is skipped because position is open for BTCUSDT
+    # ETHUSDT is NOT suppressed: an entry intent is emitted!
+    assert len(intents) == 1
+    assert intents[0].symbol == "ETHUSDT"
+    assert intents[0].action == "open_long"
+
+
+def test_shadow_mode_label_in_diagnostic_run(tmp_path: Path):
+    """Confirms that diagnostic runs with breakers disabled produce:
+    1. result.is_shadow_mode == True
+    2. SHADOW MODE note in report.md
+    3. SHADOW MODE table row in report.md
+    4. SHADOW MODE banner in index.html
+    """
+    from deskmind.backtest.baselines import BuyAndHoldResult, RandomBaselineResult
+    from deskmind.backtest.metrics import calculate_metrics
+    from deskmind.backtest.reporting import generate_reports
+    from deskmind.risk.breakers import CircuitBreakerTracker
+    from deskmind.risk.config import RiskConfig
+    from deskmind.risk.sizer import RiskManagerSizer
+
+    t0 = 1704067200000
+    klines_btc = [
+        {
+            "open_time": t0 + i * 300_000,
+            "close_time": t0 + (i + 1) * 300_000,
+            "open": 100.0,
+            "high": 102.0,
+            "low": 99.0,
+            "close": 101.0,
+        }
+        for i in range(5)
+    ]
+    _setup_symbol_data(tmp_path, "BTCUSDT", klines_btc)
+
+    risk_cfg = RiskConfig(enable_circuit_breakers=False)
+    tracker = CircuitBreakerTracker(config=risk_cfg, initial_equity=Decimal("10000.0"))
+    sizer = RiskManagerSizer(config=risk_cfg, tracker=tracker)
+
+    strategy = ScriptedStrategy({})
+    engine = BacktestEngine(
+        strategy=strategy,
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        start=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+        initial_cash=Decimal("10000.0"),
+        sizer=sizer,
+    )
+    res = engine.run()
+    assert res.is_shadow_mode is True
+
+    metrics = calculate_metrics(res)
+    bnh = {
+        "BTCUSDT": BuyAndHoldResult(
+            symbol="BTCUSDT",
+            start_price=100.0,
+            end_price=101.0,
+            price_return_pct=1.0,
+            net_return_pct=1.0,
+            fees_paid_usd=0.0,
+            funding_paid_usd=0.0,
+        )
+    }
+    rb = RandomBaselineResult(
+        num_seeds=10,
+        our_net_return_usd=0.0,
+        percentile=50.0,
+        beat_count=5,
+        median_random_return_usd=0.0,
+        mean_random_return_usd=0.0,
+        min_random_return_usd=0.0,
+        max_random_return_usd=0.0,
+        verdict="beats_random",
+    )
+
+    rep_dir = generate_reports(
+        run_id="test_run_no_cb",
+        strategy_name="trend_follow_v1",
+        strategy_version="1.0.0",
+        split="TRAIN",
+        symbols=["BTCUSDT"],
+        metrics=metrics,
+        result=res,
+        bnh=bnh,
+        random_base=rb,
+        output_dir=tmp_path / "reports",
+    )
+
+    md_content = (rep_dir / "report.md").read_text(encoding="utf-8")
+    assert (
+        "DIAGNOSTIC RUN — SHADOW MODE: Circuit breakers disabled (observational only)."
+        in md_content
+    )
+    assert "SHADOW MODE (Disabled / Observational Only)" in md_content
+
+    html_content = (rep_dir / "index.html").read_text(encoding="utf-8")
+    assert "DIAGNOSTIC RUN &mdash; SHADOW MODE" in html_content
+
+
