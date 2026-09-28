@@ -405,19 +405,27 @@ async def dashboard_account() -> dict[str, Any]:
 # ---------------------------------------------------------------- my Binance history
 
 
+def _dec_str(v: Any) -> str | None:
+    """NUMERIC(38,18) -> plain decimal string without padding zeros or exponent (0E-18 -> 0)."""
+    if v is None:
+        return None
+    out = format(Decimal(v).normalize(), "f")
+    return "0" if out in ("-0", "") else out
+
+
 def _trade_json(t: Any) -> dict[str, Any]:
     return {
         "source": t.source,
         "market": t.market,
         "symbol": t.symbol,
         "side": t.side,
-        "price": str(t.price),
-        "qty": str(t.qty),
-        "quote_qty": str(t.quote_qty) if t.quote_qty is not None else None,
-        "fee": str(t.fee) if t.fee is not None else None,
+        "price": _dec_str(t.price),
+        "qty": _dec_str(t.qty),
+        "quote_qty": _dec_str(t.quote_qty),
+        "fee": _dec_str(t.fee),
         "fee_asset": t.fee_asset,
-        "realized_pnl": str(t.realized_pnl) if t.realized_pnl is not None else None,
-        "time": int(t.time.timestamp()),
+        "realized_pnl": _dec_str(t.realized_pnl),
+        "time_ms": int(t.time.timestamp() * 1000),
         "order_id": t.order_id,
         "trade_id": t.trade_id,
     }

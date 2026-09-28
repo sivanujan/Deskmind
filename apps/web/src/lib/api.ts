@@ -340,7 +340,8 @@ export interface ExternalTrade {
   fee: string | null;
   fee_asset: string | null;
   realized_pnl: string | null;
-  time: number;
+  /** UNIX milliseconds UTC */
+  time_ms: number;
   order_id: string | null;
   trade_id: string;
 }

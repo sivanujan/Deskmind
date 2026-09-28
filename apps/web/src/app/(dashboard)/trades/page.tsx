@@ -220,7 +220,7 @@ function BinanceHistory() {
             <tbody className="divide-y divide-border font-mono">
               {list.data.trades.map((t) => (
                 <tr key={`${t.source}-${t.market}-${t.symbol}-${t.trade_id}`}>
-                  <td className="py-1">{fmtTime(t.time)}</td>
+                  <td className="py-1">{fmtTime(t.time_ms)}</td>
                   <td>
                     <Badge tone={t.market === "futures" ? "accent" : "muted"}>{t.market}</Badge>
                   </td>

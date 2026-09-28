@@ -335,3 +335,35 @@ def test_upsert_dedupes_on_source_market_trade_id():
         asyncio.run(go())
     except (OSError, ConnectionError) as exc:  # pragma: no cover - DB not running
         pytest.skip(f"Deskmind Postgres not reachable: {exc}")
+
+
+def test_trade_json_uses_ms_and_plain_decimals():
+    """The table showed 1970 dates (seconds read as ms) and 0E-18 / padded NUMERIC values."""
+    from types import SimpleNamespace
+
+    from deskmind.api.dashboard import _trade_json
+
+    t = SimpleNamespace(
+        source="api",
+        market="spot",
+        symbol="BTCUSDT",
+        side="BUY",
+        price=Decimal("19658.220000000000000000"),
+        qty=Decimal("0.000510000000000000"),
+        quote_qty=Decimal("10.025692200000000000"),
+        fee=Decimal("0E-18"),
+        fee_asset="BNB",
+        realized_pnl=None,
+        time=datetime(2022, 9, 4, 5, 45, tzinfo=UTC),
+        order_id="1",
+        trade_id="2",
+    )
+    j = _trade_json(t)
+    assert j["time_ms"] == int(datetime(2022, 9, 4, 5, 45, tzinfo=UTC).timestamp() * 1000)
+    assert (j["price"], j["qty"], j["quote_qty"], j["fee"]) == (
+        "19658.22",
+        "0.00051",
+        "10.0256922",
+        "0",
+    )
+    assert j["realized_pnl"] is None

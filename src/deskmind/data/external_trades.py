@@ -364,13 +364,13 @@ def trade_stats(trades: list[ExternalTrade]) -> dict[str, Any]:
     return {
         "trades": len(trades),
         "per_symbol": dict(per_symbol.most_common()),
-        "fees_by_asset": {k: str(v) for k, v in sorted(fees.items())},
+        "fees_by_asset": {k: format(v.normalize(), "f") for k, v in sorted(fees.items())},
         "pnl_fills": {
             "winning": wins,
             "losing": losses,
             "zero_pnl": flat,
             "win_rate": (wins / closing) if closing else None,
-            "realized_pnl_total": str(pnl_total),
+            "realized_pnl_total": format(pnl_total.normalize(), "f"),
             "note": "counted per fill with non-zero realized PnL (futures only)",
         },
     }
