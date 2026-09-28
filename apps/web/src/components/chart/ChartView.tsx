@@ -100,7 +100,7 @@ export default function ChartView({
       .symbols()
       .then((r) => {
         setSymbols(r.symbols);
-        setEntries(r.entries);
+        setEntries(r.entries ?? []); // older API versions send no entries
         setTimeframes(r.timeframes);
       })
       .catch((e: Error) => setError(`API unreachable: ${e.message}`));

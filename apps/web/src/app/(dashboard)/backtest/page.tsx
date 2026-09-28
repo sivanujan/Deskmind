@@ -48,6 +48,7 @@ export default function BacktestPage() {
   const [compare, setCompare] = useState<{ a: string; b: string }>({ a: "", b: "" });
   const [compared, setCompared] = useState<{ run_a: BacktestRun; run_b: BacktestRun } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [submitErr, setSubmitErr] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const m = meta.data;
@@ -57,7 +58,7 @@ export default function BacktestPage() {
   useEffect(() => () => wsRef.current?.close(), []);
 
   const submit = async () => {
-    setErr(null);
+    setSubmitErr(null);
     try {
       const r = await api.submitBacktest({
         strategy: strat,
@@ -80,7 +81,12 @@ export default function BacktestPage() {
         }
       };
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setSubmitErr(
+        /authentication required|401/i.test(msg)
+          ? "Log in first (Control Login, top right): starting a backtest is a control action."
+          : `Could not start the backtest: ${msg}`,
+      );
     }
   };
 
@@ -173,6 +179,7 @@ export default function BacktestPage() {
               >
                 Run backtest
               </button>
+              {submitErr && <div className="rounded border border-down/40 bg-down/10 p-2 text-down">{submitErr}</div>}
               {job && (
                 <div className="rounded bg-surface-2 p-2">
                   <KV k="Job" v={job.job_id.slice(0, 8)} />
