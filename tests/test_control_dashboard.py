@@ -371,3 +371,55 @@ async def test_backtest_job_reports_engine_result_not_placeholders(monkeypatch):
         assert calls[0]["warmup_days"] == 5
     finally:
         await queue_mgr.stop()
+
+
+def test_dashboard_job_buttons_need_login_and_report_state(dashboard_app, monkeypatch):
+    """Universe run / account sync buttons: login + CSRF, one run at a time, real state."""
+    import asyncio
+
+    import deskmind.api.actions as actions
+
+    gate = asyncio.Event()
+
+    async def slow_universe():
+        await gate.wait()
+        return {"entered": 2, "exited": 0, "tradeable": 1, "alerts": []}
+
+    async def failing_sync():
+        raise RuntimeError("no read-only mainnet key configured")
+
+    monkeypatch.setattr(actions, "RUNNERS", {"universe_run": slow_universe,
+                                             "account_sync": failing_sync})  # fmt: skip
+    monkeypatch.setattr(actions, "_tasks", {})
+    monkeypatch.setattr(actions, "_handles", {})
+
+    with TestClient(dashboard_app) as client:
+        # not logged in -> refused, nothing started
+        assert client.post("/api/control/universe/run").status_code in (401, 403)
+        assert client.get("/api/control/tasks").json() == {
+            "universe_run": None,
+            "account_sync": None,
+        }
+        csrf = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "admin_pass_123"}
+        ).json()["csrf_token"]
+        h = {"X-CSRF-Token": csrf}
+
+        r = client.post("/api/control/universe/run", headers=h)
+        assert r.status_code == 200 and r.json()["state"] == "running"
+        assert client.post("/api/control/universe/run", headers=h).status_code == 409
+        client.portal.call(gate.set)  # let the job finish
+        for _ in range(50):
+            t = client.get("/api/control/tasks").json()["universe_run"]
+            if t["state"] != "running":
+                break
+            client.portal.call(asyncio.sleep, 0.02)
+        assert t["state"] == "done" and t["result"]["entered"] == 2 and t["user"] == "admin"
+
+        assert client.post("/api/control/account/sync", headers=h).status_code == 200
+        for _ in range(50):
+            s = client.get("/api/control/tasks").json()["account_sync"]
+            if s["state"] != "running":
+                break
+            client.portal.call(asyncio.sleep, 0.02)
+        assert s["state"] == "failed" and "read-only" in s["error"]

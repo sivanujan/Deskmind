@@ -1,5 +1,6 @@
 "use client";
 
+import TaskButton from "@/components/TaskButton";
 import { api, type UniverseRunSummary } from "@/lib/api";
 import { Badge, Card, Empty, ErrorBox, KV, Loading, PageHeader, RefreshButton, fmtTime, useApi, val } from "@/components/ui";
 
@@ -65,11 +66,18 @@ export default function UniversePage() {
         title="Universe"
         subtitle="Liquidity-only symbol universe and each symbol's lifecycle. Trading needs state 'tradeable' AND the symbol in TRADE_SYMBOLS."
       >
+        <TaskButton
+          kind="universe_run"
+          label="Run universe job now"
+          start={api.runUniverseJob}
+          confirmText="Run the daily universe job now? It ranks symbols and may download, verify and warm up new ones (can take a while)."
+          onDone={() => void reload()}
+        />
         <RefreshButton onClick={() => void reload()} />
       </PageHeader>
       <ErrorBox error={error} />
       <Loading loading={loading} />
-      {data?.reason && <Empty>{data.reason}. Start the &quot;universe&quot; service on Control, or run `uv run deskmind universe run`.</Empty>}
+      {data?.reason && <Empty>{data.reason}. Click &quot;Run universe job now&quot; (log in first), start the &quot;universe&quot; service on Control, or run `uv run deskmind universe run`.</Empty>}
 
       {data && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

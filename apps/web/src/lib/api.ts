@@ -470,6 +470,18 @@ export interface UniverseResponse {
   reason: string | null;
 }
 
+export type TaskKind = "universe_run" | "account_sync";
+
+export interface TaskState {
+  kind: TaskKind;
+  state: "running" | "done" | "failed";
+  started_at: number;
+  finished_at: number | null;
+  user: string;
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
 export const api = {
   // Public data & charts
   symbols: () => get<SymbolsResponse>("/api/symbols"),
@@ -559,6 +571,11 @@ export const api = {
   risk: () => get<RiskResponse>("/api/dashboard/risk"),
   account: () => get<AccountResponse>("/api/dashboard/account"),
   universe: () => get<UniverseResponse>("/api/universe"),
+
+  // One-off jobs started from the dashboard (login + CSRF; audit-logged)
+  runUniverseJob: () => post<TaskState>("/api/control/universe/run"),
+  syncAccount: () => post<TaskState>("/api/control/account/sync"),
+  tasks: () => get<Record<TaskKind, TaskState | null>>("/api/control/tasks"),
 
   // Audit
   auditLogs: (params?: { limit?: number; action?: string }) => get<AuditLogEntry[]>("/api/audit/logs", params),

@@ -1,5 +1,6 @@
 "use client";
 
+import TaskButton from "@/components/TaskButton";
 import { api } from "@/lib/api";
 import { Badge, Card, Empty, ErrorBox, KV, Loading, PageHeader, RefreshButton, fmtTime, useApi, val } from "@/components/ui";
 
@@ -49,6 +50,12 @@ export default function AccountPage() {
       >
         <Badge tone="accent">read-only</Badge>
         <Badge tone="muted">not used for sizing</Badge>
+        <TaskButton
+          kind="account_sync"
+          label="Sync now (read-only)"
+          start={api.syncAccount}
+          onDone={() => void reload()}
+        />
         <RefreshButton onClick={() => void reload()} />
       </PageHeader>
       <ErrorBox error={error} />
@@ -58,7 +65,7 @@ export default function AccountPage() {
         <Card title="No snapshot">
           <Empty>{data.reason}</Empty>
           <p className="text-xs text-muted">
-            Key configured: {val(data.key_configured)}. A snapshot is created by <code>uv run deskmind account sync</code>.
+            Key configured: {val(data.key_configured)}. Click &quot;Sync now (read-only)&quot; (log in first) or run <code>uv run deskmind account sync</code>.
           </p>
         </Card>
       )}

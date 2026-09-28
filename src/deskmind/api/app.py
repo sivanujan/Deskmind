@@ -258,10 +258,12 @@ def create_app(
         await websocket.accept()
         await stream_chart(websocket, app.state.redis, sym, tf)
 
+    from deskmind.api.actions import router as actions_router
     from deskmind.api.control import router as control_router
     from deskmind.api.dashboard import router as dashboard_router
 
     app.include_router(control_router)
     app.include_router(dashboard_router)
+    app.include_router(actions_router)
 
     return app
