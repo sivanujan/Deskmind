@@ -93,6 +93,15 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
 - Lifecycle: watch_only (listed < 180 days: data + chart, no trading) / downloading -> verifying
   -> warming_up -> tradeable; blocked (download/verify/warm-up failed or disk guard, alert, retried
   next run); exited (no new entries, data kept, never deleted).
+- Point-in-time history: `universe_membership` (day, symbol, rank, tradeable) +
+  `universe_delistings` (migration 0008). Day D is decided from candles closed before D. Built by
+  `deskmind universe backfill-history --start ...` from data.binance.vision (includes DELISTED
+  symbols) and extended by the daily job. Backtests: `MembershipHistory.get_universe(D)` gates
+  entries (a missing day = nobody); an open position on a delisted symbol is settled at the last
+  traded price (exit_reason `delisted`). `backtest run --universe auto|require|off`; the run
+  registry records `universe_filter`.
+- Chart selector (`/api/symbols` entries) = DATA_SYMBOLS + current members + watch_only, with
+  state and `has_data`; the trend agent follows the same live symbol set as the live service.
 - Daily job: `deskmind universe scheduler` (supervisor service "universe", 00:01 UTC, not started
   automatically) or `deskmind universe run` once; `deskmind universe status`. Summaries go to
   `universe_runs` and the dashboard Universe page (Telegram later). Downloads: at most
@@ -100,9 +109,14 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
   blocks the rest, disk guard stops downloads above UNIVERSE_DISK_MAX_USED_PCT.
 
 ## Live market data rules (Step 3)
-- `deskmind live run` (src/deskmind/data/live/) keeps Redis current from ONE combined WebSocket
+- `deskmind live run` (src/deskmind/data/live/) keeps Redis current from combined WebSockets
   (`wss://fstream.binance.com/market/stream?streams=...`; kline + markPrice streams live on the
-  `/market` route, unrouted URLs no longer deliver them). Stream names are case-sensitive after
+  `/market` route, unrouted URLs no longer deliver them). Symbols = DATA_SYMBOLS + universe
+  tradeable/watch_only, re-read every 60 s (`live/universe_sync.py`): at most
+  LIVE_MAX_STREAMS_PER_CONNECTION streams per connection (Binance max 1024), a symbol's streams
+  always share one connection, assignment is stable and only connections whose symbol list
+  changed are restarted (their normal connect path warms buffers + backfills gaps from REST).
+  Connection 0 reports on the main health hash, others on `...:health:service:{n}`. Stream names are case-sensitive after
   the symbol (`btcusdt@markPrice@1s`). Public data only, no API key.
 - Agents read candles ONLY via `deskmind.data.live.buffers.get_candles(redis, symbol, tf, n)`
   (closed candles, Decimal values) and decide ONLY on `deskmind:bar_close` events. The open
@@ -206,7 +220,7 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
 Data (each takes `--symbol X` or `--all`): `uv run deskmind data download --all --start 2023-01-01`,
 `data update --all`, `data verify --all` (writes `data/reports/verify_{date}.md`), `data info --all`.
 Live: `uv run deskmind live run | status | tail | verify --hours N | disconnect --seconds N`.
-Universe: `uv run deskmind universe run | status | scheduler`.
+Universe: `uv run deskmind universe run | status | scheduler | backfill-history --start D`.
 Agents: `uv run deskmind agents run trend | backfill trend --all --start YYYY-MM-DD | check trend --all`.
 API + web: `uv run deskmind api` (:8010) and `npm --prefix apps/web run dev` (:3010);
 web checks: `npm --prefix apps/web run lint` and `npm --prefix apps/web run typecheck`.

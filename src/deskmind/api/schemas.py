@@ -7,9 +7,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class SymbolEntry(BaseModel):
+    symbol: str
+    state: str | None  # universe lifecycle state; None = configured only (DATA_SYMBOLS)
+    configured: bool  # in DATA_SYMBOLS
+    has_data: bool  # history on disk (Parquet)
+
+
 class SymbolsResponse(BaseModel):
     symbols: list[str]
     timeframes: list[str]
+    entries: list[SymbolEntry] = []
 
 
 class CandleOut(BaseModel):

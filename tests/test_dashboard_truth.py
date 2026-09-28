@@ -137,8 +137,13 @@ def test_static_check_catches_the_old_fakes(tmp_path: Path) -> None:
 @pytest.fixture
 def app(tmp_path: Path):
     settings = Settings(_env_file=None, postgres_password="x", data_dir=tmp_path)
+    from deskmind.universe.store import MemoryUniverseStore
+
     return create_app(
-        settings, redis=fakeredis.FakeAsyncRedis(decode_responses=True), health_checks=False
+        settings,
+        redis=fakeredis.FakeAsyncRedis(decode_responses=True),
+        health_checks=False,
+        universe_store=MemoryUniverseStore(),
     )
 
 

@@ -12,6 +12,8 @@ import asyncio
 import contextlib
 import json
 import signal
+import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -95,8 +97,14 @@ class LiveTrendRunner:
         recent: RecentCandleSource | None,
         settings: Settings,
         cfg: TrendConfig = DEFAULT_CONFIG,
+        symbol_source: Callable[[], Awaitable[list[str]]] | None = None,
+        refresh_s: float = 60.0,
     ) -> None:
         self.redis = redis
+        # Symbols to analyse: DATA_SYMBOLS + universe tradeable/watch_only (re-read every
+        # refresh_s; new symbols are warmed up, dropped ones are released).
+        self.symbol_source = symbol_source
+        self.refresh_s = refresh_s
         self.store = store
         self.recent = recent
         self.settings = settings
@@ -105,37 +113,59 @@ class LiveTrendRunner:
         self.agents: dict[str, SymbolTrendAgent] = {}
         self.reports = 0
 
+    async def _symbols(self) -> list[str]:
+        if self.symbol_source is None:
+            return list(self.settings.data_symbols)
+        return await self.symbol_source()
+
+    async def sync_symbols(self, desired: list[str], now_ms: int) -> dict[str, list[str]]:
+        added = [s for s in desired if s not in self.agents]
+        removed = [s for s in self.agents if s not in desired]
+        for symbol in removed:
+            del self.agents[symbol]
+        for symbol in added:
+            try:
+                await self.warm_symbol(symbol, now_ms)
+            except Exception as exc:  # one symbol's history problem never stops the others
+                log.error("trend_warm_failed", symbol=symbol, error=str(exc))
+                await record_error(self.redis, f"{symbol}: warm-up failed: {exc}")
+        if added or removed:
+            log.info("trend_symbols_changed", added=added, removed=removed)
+        return {"added": added, "removed": removed}
+
     async def warm_up(self, now_ms: int) -> None:
-        for symbol in self.settings.data_symbols:
-            bars = {
-                tf: await load_bars(
-                    self.settings.data_dir,
-                    self.recent,
-                    symbol,
-                    tf,
-                    end_ms=now_ms,
-                    last_n=self.cfg.warmup_bars,
-                )
-                for tf in self.timeframes
-            }
-            agent = SymbolTrendAgent(symbol, self.timeframes, self.cfg)
-            # Items from the newer half of the warm-up are (re)written; older ones already exist.
-            base = min(TIMEFRAME_MS[tf] for tf in self.timeframes)
-            store_from = now_ms - (self.cfg.warmup_bars // 2) * base
-            result = await asyncio.to_thread(run_batch, agent, bars, store_from=store_from)
-            await self.store.upsert_items(
-                symbol, [(tf, it) for (tf, _), it in result.items.items()], self.cfg.version
+        await self.sync_symbols(await self._symbols(), now_ms)
+
+    async def warm_symbol(self, symbol: str, now_ms: int) -> None:
+        bars = {
+            tf: await load_bars(
+                self.settings.data_dir,
+                self.recent,
+                symbol,
+                tf,
+                end_ms=now_ms,
+                last_n=self.cfg.warmup_bars,
             )
-            if result.reports:
-                await self.store.upsert_reports(symbol, result.reports[-1:])
-            self.agents[symbol] = agent
-            log.info(
-                "trend_warm",
-                symbol=symbol,
-                candles={tf: len(b) for tf, b in bars.items()},
-                items=len(result.items),
-                last=result.reports[-1]["as_of"] if result.reports else None,
-            )
+            for tf in self.timeframes
+        }
+        agent = SymbolTrendAgent(symbol, self.timeframes, self.cfg)
+        # Items from the newer half of the warm-up are (re)written; older ones already exist.
+        base = min(TIMEFRAME_MS[tf] for tf in self.timeframes)
+        store_from = now_ms - (self.cfg.warmup_bars // 2) * base
+        result = await asyncio.to_thread(run_batch, agent, bars, store_from=store_from)
+        await self.store.upsert_items(
+            symbol, [(tf, it) for (tf, _), it in result.items.items()], self.cfg.version
+        )
+        if result.reports:
+            await self.store.upsert_reports(symbol, result.reports[-1:])
+        self.agents[symbol] = agent
+        log.info(
+            "trend_warm",
+            symbol=symbol,
+            candles={tf: len(b) for tf, b in bars.items()},
+            items=len(result.items),
+            last=result.reports[-1]["as_of"] if result.reports else None,
+        )
 
     async def _new_bars(self, agent: SymbolTrendAgent, tf: str, close_time: int) -> list[Bar]:
         engine = agent.engines[tf]
@@ -201,8 +231,17 @@ class LiveTrendRunner:
         pubsub = self.redis.pubsub()
         await pubsub.subscribe(B.BAR_CLOSE_CHANNEL)
         log.info("trend_agent_listening", channel=B.BAR_CLOSE_CHANNEL)
+        last_refresh = time.monotonic()
         try:
             while not stop.is_set():
+                if self.symbol_source is not None and time.monotonic() - last_refresh >= (
+                    self.refresh_s
+                ):
+                    last_refresh = time.monotonic()
+                    try:
+                        await self.sync_symbols(await self.symbol_source(), B.now_ms())
+                    except Exception as exc:
+                        log.warning("trend_symbol_source_failed", error=str(exc))
                 msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if msg and msg.get("type") == "message":
                     try:
@@ -237,8 +276,20 @@ async def run_live(settings: Settings, duration_s: float | None = None) -> None:
         loop.call_later(duration_s, stop.set)
     redis = create_redis(settings)
     engine = create_engine(settings)
+    from deskmind.universe.store import PostgresUniverseStore
+    from deskmind.universe.symbols import active_symbols
+
+    ustore = PostgresUniverseStore()
+
+    async def symbol_source() -> list[str]:
+        return await active_symbols(list(settings.data_symbols), ustore)
+
     runner = LiveTrendRunner(
-        redis, PostgresTrendStore(engine), PostgresRecentCandles(engine), settings
+        redis,
+        PostgresTrendStore(engine),
+        PostgresRecentCandles(engine),
+        settings,
+        symbol_source=symbol_source,
     )
     try:
         await runner.run(stop)

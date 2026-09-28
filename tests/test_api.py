@@ -20,6 +20,7 @@ from deskmind.data.datasets import Dataset
 from deskmind.data.live import buffers as B
 from deskmind.data.live.buffers import Kline
 from deskmind.data.storage import Store, candles_table, write_parquet
+from deskmind.universe.store import MemoryUniverseStore
 from tests.live_fixtures import ms, row
 
 H1 = 3_600_000
@@ -60,13 +61,16 @@ def env(tmp_path: Path):
     )
     redis = fakeredis.FakeAsyncRedis(decode_responses=True)
     trend = MemoryTrendStore()
+    universe = MemoryUniverseStore()
     app = create_app(
         settings,
         redis=redis,
         candles=CandleService(tmp_path, recent),
         trend_store=trend,
         health_checks=False,
+        universe_store=universe,
     )
+    app.state.universe_seed = universe
     app.state.trend_seed = trend
     return app, redis
 
@@ -76,7 +80,43 @@ def test_symbols(env) -> None:
     with TestClient(app) as c:
         r = c.get("/api/symbols")
     assert r.status_code == 200
-    assert r.json() == {"symbols": ["BTCUSDT", "ETHUSDT"], "timeframes": ["5m", "15m", "1h", "2h"]}
+    body = r.json()
+    assert body["symbols"] == ["BTCUSDT", "ETHUSDT"]
+    assert body["timeframes"] == ["5m", "15m", "1h", "2h"]
+    assert body["entries"] == [
+        {"symbol": "BTCUSDT", "state": None, "configured": True, "has_data": True},
+        {"symbol": "ETHUSDT", "state": None, "configured": True, "has_data": False},
+    ]
+
+
+def test_symbols_include_universe_members_with_state(env) -> None:
+    import asyncio
+
+    from deskmind.universe.models import SymbolRecord
+
+    app, _ = env
+    store = app.state.universe_seed
+    recs = [
+        SymbolRecord("SOLUSDT", "tradeable", rank=3),
+        SymbolRecord("NEWUSDT", "watch_only", rank=9),
+        SymbolRecord("DOGEUSDT", "downloading", rank=5),
+        SymbolRecord("OLDUSDT", "exited", rank=None, member=False),
+    ]
+    for rec in recs:
+        asyncio.run(store.save(rec))
+    with TestClient(app) as c:
+        body = c.get("/api/symbols").json()
+        candles = c.get("/api/candles", params={"symbol": "NEWUSDT", "tf": "1h"})
+        gone = c.get("/api/candles", params={"symbol": "OLDUSDT", "tf": "1h"})
+    by = {e["symbol"]: e for e in body["entries"]}
+    assert body["symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "NEWUSDT"]
+    assert by["NEWUSDT"] == {
+        "symbol": "NEWUSDT", "state": "watch_only", "configured": False, "has_data": False
+    }  # fmt: skip
+    assert by["DOGEUSDT"]["state"] == "downloading"
+    assert "OLDUSDT" not in by  # exited: no longer offered in the selector
+    assert candles.status_code == 200 and candles.json()["count"] == 0  # known, no data yet
+    assert gone.status_code == 404
 
 
 def test_candles_merge_parquet_and_postgres(env) -> None:

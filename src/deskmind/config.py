@@ -129,6 +129,8 @@ class Settings(BaseSettings):
         default_factory=lambda: ["5m", "15m", "1h", "2h"]
     )
     data_dir: Path = Path("data")
+    # Streams per live WebSocket connection (Binance allows 1024); more symbols -> more connections.
+    live_max_streams_per_connection: int = Field(default=200, ge=5, le=1024)
     # Browser origins allowed to call the read-only API (CORS + WebSocket origin check).
     web_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3010", "http://127.0.0.1:3010"]

@@ -6,6 +6,7 @@ Postgres, Redis or Parquet. Bound to 127.0.0.1 only (see `deskmind api`).
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -25,12 +26,15 @@ from deskmind.api.schemas import (
     HealthCheck,
     HealthResponse,
     LiveStatusResponse,
+    SymbolEntry,
     SymbolsResponse,
     TrendReportResponse,
 )
 from deskmind.config import Settings, get_settings
 from deskmind.data.datasets import TIMEFRAME_MS
 from deskmind.data.live import buffers as B
+from deskmind.universe.store import PostgresUniverseStore, UniverseStore
+from deskmind.universe.symbols import chart_entries
 
 API_VERSION = "0.1.0"
 
@@ -42,6 +46,7 @@ def create_app(
     candles: CandleService | None = None,
     trend_store: TrendStore | None = None,
     health_checks: bool = True,
+    universe_store: UniverseStore | None = None,
 ) -> FastAPI:
     """App factory. Tests inject fake Redis/candle sources; production builds real ones."""
     settings = settings or get_settings()
@@ -93,18 +98,37 @@ def create_app(
 
     symbols = list(settings.data_symbols)
     timeframes = list(settings.live_timeframes)
+    ustore: UniverseStore = universe_store or PostgresUniverseStore()
+    entries_cache: dict[str, Any] = {"at": 0.0, "entries": None}
 
-    def check(symbol: str, tf: str) -> str:
+    async def symbol_entries() -> list[dict[str, Any]]:
+        """Configured symbols + universe members / watch_only (cached 30 s)."""
+        now = time.monotonic()
+        if entries_cache["entries"] is None or now - entries_cache["at"] > 30:
+            try:
+                recs = await ustore.load()
+            except Exception:  # universe table unavailable: configured symbols only
+                recs = {}
+            entries_cache.update(at=now, entries=chart_entries(symbols, recs, settings.data_dir))
+        return entries_cache["entries"]
+
+    async def check(symbol: str, tf: str) -> str:
         sym = symbol.upper()
-        if sym not in symbols:
-            raise HTTPException(404, f"unknown symbol {symbol}; configured: {symbols}")
+        known = [e["symbol"] for e in await symbol_entries()]
+        if sym not in known:
+            raise HTTPException(404, f"unknown symbol {symbol}; known: {known}")
         if tf not in timeframes:
             raise HTTPException(404, f"unknown timeframe {tf}; available: {timeframes}")
         return sym
 
     @app.get("/api/symbols", response_model=SymbolsResponse)
     async def get_symbols() -> SymbolsResponse:
-        return SymbolsResponse(symbols=symbols, timeframes=timeframes)
+        entries = await symbol_entries()
+        return SymbolsResponse(
+            symbols=[e["symbol"] for e in entries],
+            timeframes=timeframes,
+            entries=[SymbolEntry(**e) for e in entries],
+        )
 
     @app.get("/api/candles", response_model=CandlesResponse)
     async def get_candles(
@@ -114,7 +138,7 @@ def create_app(
         end: Annotated[int | None, Query(description="UNIX seconds, exclusive")] = None,
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 500,
     ) -> CandlesResponse:
-        sym = check(symbol, tf)
+        sym = await check(symbol, tf)
         rows = await app.state.candles.candles(
             sym,
             tf,
@@ -159,7 +183,7 @@ def create_app(
             Query(description="Backtest run ID to overlay trades for"),
         ] = None,
     ) -> OverlayResponse:
-        sym = check(symbol, tf)
+        sym = await check(symbol, tf)
         iv = TIMEFRAME_MS[tf]
         t = as_of * 1000 if as_of is not None else B.now_ms()
         view_end = (t // iv) * iv - iv
@@ -211,7 +235,7 @@ def create_app(
         ] = None,
     ) -> TrendReportResponse:
         sym = symbol.upper()
-        if sym not in symbols:
+        if sym not in [e["symbol"] for e in await symbol_entries()]:
             raise HTTPException(404, f"unknown symbol {symbol}")
         report = await app.state.trend_store.latest_report(
             sym, as_of * 1000 if as_of is not None else None
@@ -227,7 +251,7 @@ def create_app(
             await websocket.close(code=1008)
             return
         try:
-            sym = check(symbol, tf)
+            sym = await check(symbol, tf)
         except HTTPException:
             await websocket.close(code=1008)
             return

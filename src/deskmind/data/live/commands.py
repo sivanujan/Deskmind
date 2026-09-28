@@ -57,25 +57,48 @@ async def run_service(settings: Settings, duration_s: float | None = None) -> No
     if duration_s:
         loop.call_later(duration_s, stop.set)
 
+    from deskmind.data.live.universe_sync import UniverseLiveManager
+    from deskmind.universe.store import PostgresUniverseStore
+    from deskmind.universe.symbols import active_symbols
+
     redis = create_redis(settings)
     engine = create_engine(settings)
     rest = RateLimitedClient(settings.binance_market_data_url, max_concurrency=4)
-    service = LiveService(
-        redis,
-        PostgresCandleSink(engine),
-        rest,
-        symbols=list(settings.data_symbols),
-        timeframes=list(settings.live_timeframes),
-        ws_url=settings.binance_ws_market_url,
+    sink = PostgresCandleSink(engine)
+    ustore = PostgresUniverseStore()
+    timeframes = list(settings.live_timeframes)
+
+    def make_service(symbols: list[str], conn_id: int) -> LiveService:
+        return LiveService(
+            redis,
+            sink,
+            rest,
+            symbols=symbols,
+            timeframes=timeframes,
+            ws_url=settings.binance_ws_market_url,
+            health_key=B.HEALTH_SERVICE if conn_id == 0 else f"{B.HEALTH_SERVICE}:{conn_id}",
+        )
+
+    async def symbol_source() -> list[str]:
+        # DATA_SYMBOLS + universe symbols that are tradeable or watch_only
+        return await active_symbols(list(settings.data_symbols), ustore)
+
+    manager = UniverseLiveManager(
+        make_service,
+        symbol_source,
+        timeframes,
+        max_streams=settings.live_max_streams_per_connection,
+        redis=redis,
     )
     log.info(
         "live_service_starting",
-        symbols=settings.data_symbols,
+        configured=settings.data_symbols,
         timeframes=settings.live_timeframes,
+        max_streams_per_connection=settings.live_max_streams_per_connection,
         duration_s=duration_s,
     )
     try:
-        await service.run(stop)
+        await manager.run(stop)
     finally:
         await rest.aclose()
         await engine.dispose()

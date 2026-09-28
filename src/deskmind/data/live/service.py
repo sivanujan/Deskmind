@@ -60,8 +60,11 @@ class LiveService:
         timeout_ms: int = 10_000,
         oi_interval_s: float = 300,
         clock: Callable[[], int] = B.now_ms,
+        health_key: str = B.HEALTH_SERVICE,
     ) -> None:
         self.redis = redis
+        # Connection 0 reports on the main health hash; extra connections on their own hash.
+        self.health_key = health_key
         self.symbols = symbols
         self.timeframes = timeframes
         self.rest = rest
@@ -131,7 +134,7 @@ class LiveService:
         else:
             log.info("clock_ok", drift_ms=drift, rtt_ms=rtt)
         await self.redis.hset(
-            B.HEALTH_SERVICE, mapping={"clock_drift_ms": drift, "clock_checked_at": B.now_ms()}
+            self.health_key, mapping={"clock_drift_ms": drift, "clock_checked_at": B.now_ms()}
         )
 
     def _stale_streams(self) -> list[str]:
@@ -161,7 +164,7 @@ class LiveService:
         if streams:
             pipe.hset(B.HEALTH_STREAMS, mapping=streams)
         pipe.hset(
-            B.HEALTH_SERVICE,
+            self.health_key,
             mapping={
                 "state": self.state,
                 "ws_state": self.ws.state,
@@ -200,7 +203,7 @@ class LiveService:
 
     async def start(self) -> None:
         await self.redis.set("deskmind:schema_version", B.SCHEMA_VERSION)
-        await self.redis.hset(B.HEALTH_SERVICE, mapping={"state": "starting"})
+        await self.redis.hset(self.health_key, mapping={"state": "starting"})
         await self.check_clock()
         await self.aggregator.load_state()
         warmed = sum(
@@ -231,7 +234,7 @@ class LiveService:
             await asyncio.gather(*tasks, waiter, return_exceptions=True)
             self.state = "stopped"
             await self.redis.hset(
-                B.HEALTH_SERVICE,
+                self.health_key,
                 mapping={"state": "stopped", "ws_state": "disconnected", "heartbeat": B.now_ms()},
             )
             log.info("live_service_stopped", events=self.aggregator.emitted)

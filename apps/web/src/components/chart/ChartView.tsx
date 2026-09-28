@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import HealthBadge from "@/components/HealthBadge";
-import { api, type LiveMessage, type LiveStatus, type TrendReport } from "@/lib/api";
+import { api, type LiveMessage, type LiveStatus, type SymbolEntry, type TrendReport } from "@/lib/api";
 import { DEV_SAMPLE_AGENT, devSampleOverlays } from "@/lib/devOverlays";
 import type { Overlay } from "@/lib/overlays";
 import { TIMEFRAME_SECONDS, formatAge, formatColombo, formatUtc } from "@/lib/time";
@@ -66,6 +66,7 @@ export default function ChartView({
   const router = useRouter();
   const chart = useRef<PriceChartHandle>(null);
   const [symbols, setSymbols] = useState<string[]>([initialSymbol]);
+  const [entries, setEntries] = useState<SymbolEntry[]>([]);
   const [timeframes, setTimeframes] = useState<string[]>(FALLBACK_TFS);
   const [symbol, setSymbol] = useState(initialSymbol);
   const [tf, setTf] = useState(initialTf);
@@ -91,6 +92,7 @@ export default function ChartView({
   const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId);
 
   const iv = TIMEFRAME_SECONDS[tf] ?? 900;
+  const selectedEntry = entries.find((e) => e.symbol === symbol);
   const key = `${symbol}|${tf}|${replayT ?? "live"}|${selectedRunId ?? "none"}`;
 
   useEffect(() => {
@@ -98,6 +100,7 @@ export default function ChartView({
       .symbols()
       .then((r) => {
         setSymbols(r.symbols);
+        setEntries(r.entries);
         setTimeframes(r.timeframes);
       })
       .catch((e: Error) => setError(`API unreachable: ${e.message}`));
@@ -308,12 +311,33 @@ export default function ChartView({
           onChange={(e) => selectSymbol(e.target.value)}
           className="rounded border border-border bg-surface-2 px-2 py-1 text-sm font-semibold"
         >
-          {symbols.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
+          {symbols.map((s) => {
+            const e = entries.find((x) => x.symbol === s);
+            const tags = [e?.state, e && !e.has_data ? "no data" : null].filter(Boolean);
+            return (
+              <option key={s} value={s}>
+                {s}
+                {tags.length ? ` · ${tags.join(" · ")}` : ""}
+              </option>
+            );
+          })}
         </select>
+        {selectedEntry?.state && (
+          <span
+            title="Universe lifecycle state"
+            className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase ${
+              selectedEntry.state === "tradeable"
+                ? "bg-up/20 text-up"
+                : selectedEntry.state === "blocked"
+                  ? "bg-down/20 text-down"
+                  : selectedEntry.state === "watch_only"
+                    ? "bg-accent/20 text-accent"
+                    : "bg-muted/20 text-muted"
+            }`}
+          >
+            {selectedEntry.state.replace("_", " ")}
+          </span>
+        )}
         <div className="flex overflow-hidden rounded border border-border" role="group" aria-label="Timeframe">
           {timeframes.map((t) => (
             <button
@@ -419,6 +443,13 @@ export default function ChartView({
               : effectiveWs !== "live"
                 ? "Chart stream disconnected — reconnecting…"
                 : `${symbol} ${tf} data is stale (last update ${formatAge(tfStatus?.stream_age_s)} ago).`}
+        </div>
+      )}
+      {selectedEntry && !selectedEntry.has_data && (
+        <div className="border-b border-warn/40 bg-warn/10 px-4 py-1.5 text-xs text-warn">
+          {symbol}: no data downloaded yet
+          {selectedEntry.state ? ` (universe state: ${selectedEntry.state.replace("_", " ")})` : ""}. The daily universe job
+          downloads and verifies its history.
         </div>
       )}
       {error && <div className="border-b border-down/40 bg-down/10 px-4 py-1.5 text-xs text-down">{error}</div>}
