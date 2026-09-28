@@ -48,8 +48,11 @@ AGENTS: tuple[AgentInfo, ...] = (
 PLANNED: tuple[PlannedAgent, ...] = (
     PlannedAgent(
         name="head",
-        roadmap_step=8,
-        summary="LLM head agent that turns analyst reports into proposals. Not built yet.",
+        roadmap_step=11,
+        summary=(
+            "LLM head agent (OpenRouter) + Telegram advisories: explains and proposes from the "
+            "analyst reports, never sizes. Not built yet."
+        ),
     ),
 )
 

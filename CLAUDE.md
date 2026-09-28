@@ -130,7 +130,7 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
 ## Dashboard truth rule
 - The dashboard shows ONLY data from a backend endpoint that reads the real source of truth. No
   mock data, placeholder numbers or UI-side defaults (`?? "normal"`, `?? 50000`). Missing data is an
-  explicit empty state ("No data yet", "Not built yet — Step 8") or `null` + `reason` from the API.
+  explicit empty state ("No data yet", "Not built yet — Step 11") or `null` + `reason` from the API.
 - Truth endpoints (`src/deskmind/api/dashboard.py`): `/api/dashboard/agents` (agents/registry.py +
   Redis health + agent_reports), `/api/dashboard/strategies` (strategy module docstrings,
   `default_params`, backtest registry), `/api/dashboard/risk` (RiskConfig, hard caps, the comments
@@ -167,7 +167,7 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
   - zone:   `start_time, end_time, top, bottom, color (#rrggbbaa for fill), label`
 - The chart toggles overlays per `source_agent`. Breaking change -> new schema_version on both sides.
 
-## Analyst agents (Step 4+)
+## Analyst agents (Step 4, 8, 9)
 - Agents are deterministic Python in `src/deskmind/agents/` (no LLM). The rule spec is the source
   of truth: `docs/agents/<agent>.md` (trend: `docs/agents/trend.md`). Code and spec change together.
 - NO LOOK-AHEAD: engines are incremental (`on_candle` with closed candles only, in time order).
@@ -193,7 +193,8 @@ API + web: `uv run deskmind api` (:8010) and `npm --prefix apps/web run dev` (:3
 web checks: `npm --prefix apps/web run lint` and `npm --prefix apps/web run typecheck`.
 Network tests: `uv run pytest -m network`.
 
-## Phase 1 roadmap (BTCUSDT, one strategy, testnet)
+## Roadmap
+### Phase 1 (done)
 1. **Foundation**: repo, Docker (Postgres/Timescale/pgvector :5435, Redis :6380), config, logging,
    DB schema, health CLI, tests. *(done)*
 2. **Historical data**: klines, mark-price klines and funding for all `DATA_SYMBOLS` (BTC, ETH,
@@ -201,14 +202,31 @@ Network tests: `uv run pytest -m network`.
    multi-symbol data-quality report. *(done)*
 3. **Live data**: combined WebSocket (klines 5m/15m/1h/2h + mark price) -> Redis buffers + Postgres,
    OI polling, one bar_close event per closed timestamp, reconnect/backfill, health. *(done)*
-4. **Analyst agents**: trend & structure agent (swings, HH/HL/LH/LL, BOS/CHoCH, sweeps, trend
-   lines), no look-ahead, live + backfill, chart overlays and Replay mode. *(done)*
-5. **Strategy and backtest**: one strategy in `strategy_library`, an event-driven backtester with no
-   look-ahead, fees/slippage/funding, and an out-of-sample validation gate.
-6. **Risk Manager**: deterministic sizing, leverage caps, max loss per trade/day, and veto, with
-   exhaustive unit tests.
-7. **Head agent and approval**: LLM (via OpenRouter) synthesises reports into a proposal; the
-   Risk Manager checks it; the human approves or rejects via the CLI.
-8. **Testnet execution and learning loop**: order placement with exchange-side SL/TP and
-   client_order_id, reconciliation, trade journal, post-trade lessons (pgvector) that require human
-   approval.
+4. **Trend agent**: trend & structure agent (swings, HH/HL/LH/LL, BOS/CHoCH, sweeps, trend lines),
+   no look-ahead, live + backfill, chart overlays and Replay mode. *(done)*
+5. **Backtest engine**: event-driven backtester with no look-ahead, fees/slippage/funding, split
+   registry (train / validation / locked test), strategy `trend_follow_v1`. *(done)*
+6. **Risk Manager**: deterministic sizing, leverage caps, stop bounds, circuit breakers, veto, with
+   exhaustive unit tests. *(done)*
+7. **Execution (paper/testnet)**: order placement with exchange-side SL/TP and client_order_id,
+   reconciliation, trade journal, human approval gate. *(done)*
+- Plus: control **Dashboard** (login, truth endpoints, no fake data) and **Binance history import**
+  (read-only key + CSV into `external_trades`). *(done)*
+
+### Next
+8. **ICT/SMC Liquidity agent**: liquidity pools (BSL/SSL), order blocks, fair value gaps (FVG),
+   premium/discount, OTE.
+9. **ICT Time agent** (sessions, killzones, PDH/PDL, PWH/PWL) + **Price Action agent** (S/R,
+   patterns).
+10. **Confluence engine** (deterministic multi-timeframe alignment + scoring) + strategy research
+    on TRAIN, confirmation on VALIDATION, every run recorded in the backtest registry.
+11. **Head agent** (LLM via OpenRouter) + Telegram advisories: explains and proposes, never sizes
+    (the Risk Manager sizes and can veto; a human approves).
+12. **Server deployment + long runs**: demo-key verification, stress test, fault injection.
+
+Later: learning loop (Mistake Analyzer, lessons), Research agent, Derivatives, Order flow and News
+agents.
+
+**Why this order:** the Head agent combines several analyst reports, so it comes after several
+analyst agents (and the confluence engine) exist. The learning loop needs real trades and a
+strategy with a proven edge, so it comes last.
