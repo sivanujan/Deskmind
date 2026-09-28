@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -11,6 +11,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -266,3 +267,30 @@ class UniverseRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class UniverseMembership(Base):
+    """Point-in-time universe: symbol was a member on `day` (decided from candles before `day`)."""
+
+    __tablename__ = "universe_membership"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    median_quote_volume: Mapped[Decimal] = mapped_column(Numeric(38, 4), nullable=False)
+    tradeable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class UniverseDelisting(Base):
+    __tablename__ = "universe_delistings"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    delisted_at_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

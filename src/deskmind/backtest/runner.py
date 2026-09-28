@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from deskmind.agents.trend.config import AGENT_VERSION
 from deskmind.backtest.baselines import compute_buy_and_hold, run_random_baseline
@@ -40,6 +40,7 @@ from deskmind.risk.config import RiskConfig
 from deskmind.risk.sizer import RiskManagerSizer
 from deskmind.strategies.base import BaseStrategy
 from deskmind.strategies.trend_follow_v1 import TrendFollowV1
+from deskmind.universe.history import MembershipHistory
 
 logger = logging.getLogger("deskmind.backtest.runner")
 
@@ -234,6 +235,8 @@ async def run_backtest(
     disable_circuit_breakers: bool = False,
     data_dir: Path | None = None,
     reports_dir: Path = Path("reports/backtests"),
+    universe: MembershipHistory | None = None,
+    universe_mode: Literal["auto", "require", "off"] = "auto",
 ) -> dict[str, Any]:
     settings = get_settings()
     d_dir = data_dir or settings.data_dir
@@ -276,6 +279,33 @@ async def run_backtest(
     tracker = CircuitBreakerTracker(config=risk_cfg, initial_equity=initial_cash)
     sizer = RiskManagerSizer(config=risk_cfg, tracker=tracker)
 
+    # Point-in-time universe (universe_membership). "auto": used when it covers the trading
+    # period; "require": refuse to run without it; "off": no universe filter.
+    trading_from = (start_dt + timedelta(days=warmup_days)).date()
+    universe_note = "off"
+    if universe is None and universe_mode != "off":
+        try:
+            from deskmind.universe.store import PostgresUniverseStore
+
+            universe = await PostgresUniverseStore().load_history(trading_from, end_dt.date())
+        except Exception as exc:
+            universe = None
+            universe_note = f"unavailable: {exc}"
+    if universe is not None and universe_mode != "off":
+        missing = universe.missing_days(trading_from, end_dt.date())
+        if missing:
+            universe_note = f"incomplete: {len(missing)} days without membership"
+            universe = None
+        else:
+            universe_note = "point_in_time"
+    else:
+        universe = None
+    if universe_mode == "require" and universe is None:
+        raise PermissionError(
+            f"universe history required but {universe_note}; build it with "
+            "`deskmind universe backfill-history`"
+        )
+
     # Execute backtest engine
     engine = BacktestEngine(
         strategy=strategy,
@@ -286,6 +316,7 @@ async def run_backtest(
         initial_cash=initial_cash,
         warmup_days=warmup_days,
         sizer=sizer,
+        universe=universe,
     )
     result = engine.run()
 
@@ -334,6 +365,9 @@ async def run_backtest(
         "random_baseline": random_base.to_dict(),
         "notes": notes,
         "status": "completed",
+        "universe_filter": universe_note,
+        "universe_skips": result.universe_skips,
+        "delisted_exits": result.delisted_exits,
     }
 
     # Save to local audit registry

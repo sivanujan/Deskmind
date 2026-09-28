@@ -295,3 +295,25 @@ async def test_gate_needs_trade_symbols_and_state():
 def test_scheduler_targets_0001_utc():
     assert seconds_until_next_run(datetime(2026, 9, 27, 23, 0, tzinfo=UTC)) == 3660
     assert seconds_until_next_run(datetime(2026, 9, 28, 0, 1, tzinfo=UTC)) == 86400
+
+
+@pytest.mark.asyncio
+async def test_daily_job_records_point_in_time_membership_and_delisting():
+    from deskmind.universe.history import ms_day
+
+    store = MemoryUniverseStore()
+    ops = FakeOps([stat("AAA", 900), stat("BBB", 800), stat("NEW", 700, onboard=NOW - DAY_MS)])
+    await run(store, ops)
+    hist = await store.load_history(ms_day(NOW), ms_day(NOW))
+    assert hist.get_universe(ms_day(NOW)) == {"AAA", "BBB"}  # NEW is watch_only that day
+    assert hist.get_universe(ms_day(NOW), include_watch_only=True) == {"AAA", "BBB", "NEW"}
+
+    ops.stats = [stat("AAA", 900), stat("NEW", 700, onboard=NOW - DAY_MS)]  # BBB not TRADING
+    tomorrow = NOW + DAY_MS
+    summary = await run(store, ops, now=tomorrow)
+    assert summary["delisted"] == ["BBB"]
+    assert store.delistings == {"BBB": tomorrow}
+    today_hist = await store.load_history(ms_day(tomorrow), ms_day(tomorrow))
+    assert "BBB" not in today_hist.get_universe(ms_day(tomorrow), include_watch_only=True)
+    # yesterday's history still has it (point-in-time)
+    assert "BBB" in (await store.load_history(ms_day(NOW), ms_day(NOW))).get_universe(ms_day(NOW))

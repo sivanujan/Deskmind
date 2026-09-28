@@ -448,6 +448,12 @@ def backtest_run_cmd(
         help="Disable circuit breakers for diagnostic comparison",
     ),
     notes: str | None = typer.Option(None, "--notes", help="Audit notes for this run"),
+    universe: str = typer.Option(
+        "auto",
+        "--universe",
+        help="Point-in-time universe filter: auto (use if history covers the period), "
+        "require (refuse without it), off",
+    ),
 ) -> None:
     """Run an event-driven backtest with realistic execution and incremental agents."""
     from deskmind.backtest.runner import run_backtest
@@ -479,6 +485,7 @@ def backtest_run_cmd(
                 warmup_days=warmup_days,
                 disable_circuit_breakers=disable_circuit_breakers,
                 notes=notes,
+                universe_mode=universe,  # type: ignore[arg-type]
             )
         )
     except PermissionError as e:
@@ -1317,6 +1324,42 @@ def universe_scheduler_cmd() -> None:
             with contextlib.suppress(NotImplementedError, ValueError):
                 asyncio.get_running_loop().add_signal_handler(sig, stop.set)
         await run_scheduler(_universe_job, stop)
+
+    asyncio.run(go())
+
+
+@universe_app.command("backfill-history")
+def universe_backfill_history_cmd(
+    start: str = typer.Option(..., help="First UTC day, e.g. 2023-01-01"),
+    end: str = typer.Option("", help="Last UTC day (default: yesterday)"),
+) -> None:
+    """Rebuild point-in-time membership (incl. delisted symbols) from data.binance.vision."""
+    from datetime import timedelta
+
+    from deskmind.data.bulk_download import VISION_BASE_URL
+    from deskmind.data.http_client import RateLimitedClient
+    from deskmind.universe.history import build_history
+    from deskmind.universe.ranking import UniverseConfig
+    from deskmind.universe.store import PostgresUniverseStore
+
+    settings = get_settings()
+    cfg = UniverseConfig.from_settings(settings)
+    first = date.fromisoformat(start)
+    last = date.fromisoformat(end) if end else datetime.now(UTC).date() - timedelta(days=1)
+
+    async def go() -> None:
+        vision = RateLimitedClient(VISION_BASE_URL, weight_limit=None, max_concurrency=4)
+        fapi = RateLimitedClient(settings.binance_market_data_url, max_concurrency=2)
+        async with vision, fapi:
+            rows, delisted = await build_history(vision, fapi, first, last, cfg)
+        store = PostgresUniverseStore()
+        await store.save_membership(rows, source="backfill")
+        await store.save_delistings(delisted, source="backfill")
+        days = len({r.day for r in rows})
+        typer.echo(
+            f"membership rows: {len(rows)} over {days} days; "
+            f"symbols ever members: {len({r.symbol for r in rows})}; delisted: {len(delisted)}"
+        )
 
     asyncio.run(go())
 

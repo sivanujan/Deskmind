@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
@@ -49,6 +49,7 @@ from deskmind.strategies.base import (
     PositionSnapshot,
     StrategyContext,
 )
+from deskmind.universe.history import MembershipHistory
 
 logger = logging.getLogger("deskmind.backtest")
 
@@ -67,7 +68,7 @@ class Trade:
     pnl_pct: Decimal
     r_multiple: Decimal
     exit_reason: Literal[
-        "take_profit", "stop_loss", "liquidation", "sl_tp_same_bar", "manual_close"
+        "take_profit", "stop_loss", "liquidation", "sl_tp_same_bar", "manual_close", "delisted"
     ]
     fees_paid: Decimal
     funding_paid: Decimal
@@ -150,6 +151,9 @@ class BacktestResult:
     raw_entry_signals: int = 0
     intent_distribution: dict[int, int] = field(default_factory=dict)
     is_shadow_mode: bool = False
+    universe_skips: int = 0  # entry intents on symbols outside that day's universe
+    delisted_exits: int = 0
+    universe_filter: str = "none"  # "point_in_time" when a MembershipHistory was used
 
 
 def load_funding_map(data_dir: Path, symbol: str) -> dict[int, Decimal]:
@@ -198,8 +202,13 @@ class BacktestEngine:
         leverage: int = 5,
         warmup_days: int = 0,
         liquidation_safety_buffer_pct: Decimal = Decimal("0.005"),
+        universe: MembershipHistory | None = None,
     ) -> None:
         self.strategy = strategy
+        # Point-in-time universe: entries only on symbols that were tradeable members that day.
+        self.universe = universe
+        self.universe_skips = 0
+        self.delisted_exits = 0
         self.symbols = list(symbols)
         self.data_dir = data_dir
         self.start = start
@@ -252,6 +261,46 @@ class BacktestEngine:
     def _calc_slippage_pct(self, price: Decimal, atr: float | None) -> Decimal:
         """Slippage = fixed_bps + atr_factor * (atr / price)."""
         return calc_slippage_pct(price, atr, self.slippage_bps, self.slippage_atr_factor)
+
+    def _settle_delisted(self, price: Decimal, t_ms: int) -> None:
+        """Close the open position at the delisting settlement price (taker fee, no slippage)."""
+        pos = self.active_position
+        assert pos is not None
+        fee = price * pos.qty * self.taker_fee_rate
+        self.total_fees_paid += fee
+        gross = (price - pos.entry_price) * pos.qty
+        if pos.side == "short":
+            gross = -gross
+        self.cash += gross - fee
+        net = gross - (pos.fees_paid + fee) - pos.funding_paid
+        notional = pos.entry_price * pos.qty
+        self.trades.append(
+            Trade(
+                id=f"trade_{len(self.trades) + 1}",
+                symbol=pos.symbol,
+                side=pos.side,
+                entry_time_ms=pos.entry_time_ms,
+                entry_price=pos.entry_price,
+                exit_time_ms=t_ms,
+                exit_price=price,
+                qty=pos.qty,
+                pnl=net,
+                pnl_pct=(net / notional * Decimal("100")) if notional > 0 else Decimal("0"),
+                r_multiple=net / pos.initial_risk if pos.initial_risk > 0 else Decimal("0"),
+                exit_reason="delisted",
+                fees_paid=pos.fees_paid + fee,
+                funding_paid=pos.funding_paid,
+                slippage_paid=pos.slippage_paid,
+                holding_time_minutes=max(1, (t_ms - pos.entry_time_ms) // 60_000),
+                spanned_gap=pos.spanned_gap,
+                initial_risk=pos.initial_risk,
+                risk_decision=pos.risk_decision,
+            )
+        )
+        if isinstance(self.sizer, RiskManagerSizer):
+            self.sizer.tracker.record_trade_exit(net, t_ms)
+        self.delisted_exits += 1
+        self.active_position = None
 
     def run(self) -> BacktestResult:
         logger.info("Loading market data for %s from %s to %s", self.symbols, self.start, self.end)
@@ -319,6 +368,19 @@ class BacktestEngine:
                             low=hdict["low"][i],
                             close=hdict["close"][i],
                         )
+
+        # Delisting: an open position is settled at the last traded price before delisting.
+        settle: dict[str, tuple[int, Decimal]] = {}
+        if self.universe is not None:
+            for sym, delisted_ms in self.universe.delisted_at_ms.items():
+                bars = klines_5m.get(sym) or {}
+                before = [t for t in bars if t < delisted_ms]
+                if before:
+                    last = max(before)
+                    settle[sym] = (
+                        min(delisted_ms, last + 300_000),
+                        Decimal(str(bars[last]["close"])),
+                    )
 
         # 2. Build sorted unified 5m timeline of open_times
         all_timestamps = sorted(set(t for sym in self.symbols for t in klines_5m.get(sym, {})))
@@ -522,6 +584,17 @@ class BacktestEngine:
                         elif p_order.order_type == "limit":
                             # Retain limit order on book until filled or canceled
                             self.pending_order = p_order
+
+            # ----------------------------------------------------
+            # STEP A2: Delisting settles an open position. (A pending entry on a delisted
+            # symbol never fills: STEP A drops it when its symbol has no bar.)
+            # ----------------------------------------------------
+            if (
+                self.active_position is not None
+                and self.active_position.symbol in settle
+                and t_open >= settle[self.active_position.symbol][0]
+            ):
+                self._settle_delisted(settle[self.active_position.symbol][1], t_open)
 
             # ----------------------------------------------------
             # STEP B: Manage Active Position on this bar
@@ -870,6 +943,13 @@ class BacktestEngine:
                     entry_intents = [
                         it for it in raw_intents if it.action in ("open_long", "open_short")
                     ]
+                    if self.universe is not None and entry_intents:
+                        members = self.universe.get_universe(
+                            datetime.fromtimestamp(t_close / 1000, UTC).date()
+                        )
+                        allowed = [it for it in entry_intents if it.symbol in members]
+                        self.universe_skips += len(entry_intents) - len(allowed)
+                        entry_intents = allowed
 
                     if entry_intents:
                         # Deterministic ranking: higher ranking_score first,
@@ -1060,4 +1140,7 @@ class BacktestEngine:
             raw_entry_signals=self.raw_entry_signals,
             intent_distribution=self.intent_distribution,
             is_shadow_mode=is_shadow,
+            universe_skips=self.universe_skips,
+            delisted_exits=self.delisted_exits,
+            universe_filter="point_in_time" if self.universe is not None else "none",
         )

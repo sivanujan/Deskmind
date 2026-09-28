@@ -25,6 +25,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
 from deskmind.logging import get_logger
+from deskmind.universe.history import MembershipRow, ms_day
 from deskmind.universe.models import STATES, SymbolRecord, SymbolStat
 from deskmind.universe.ranking import DAY_MS, UniverseConfig, rank_universe
 from deskmind.universe.store import UniverseStore
@@ -217,6 +218,29 @@ class DailyJob:
         by_sym = {s.symbol: s for s in stats}
         self.summary["entered"] = list(result.entered)
         self.summary["exited"] = list(result.exited)
+
+        # Point-in-time history: today's membership, decided from candles closed before today.
+        today = ms_day(now)
+        await self.store.save_membership(
+            [
+                MembershipRow(
+                    today,
+                    sym,
+                    result.ranks[sym],
+                    by_sym[sym].median_quote_volume,
+                    (now - by_sym[sym].onboard_ms) / DAY_MS >= self.cfg.min_listing_age_days
+                    if by_sym[sym].onboard_ms
+                    else True,
+                )
+                for sym in result.members
+            ],
+            source="live",
+        )
+        # A previous member that is no longer listed as TRADING has been delisted.
+        delisted = {s: now for s in result.exited if s not in by_sym}
+        if delisted:
+            await self.store.save_delistings(delisted, source="live")
+            self.summary["delisted"] = sorted(delisted)
 
         for sym in result.exited:  # data is kept; the symbol only stops taking new entries
             rec = records[sym]
