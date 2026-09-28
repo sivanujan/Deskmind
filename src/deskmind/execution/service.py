@@ -44,6 +44,8 @@ from deskmind.strategies.base import (
 )
 from deskmind.strategies.plumbing_stress_v1 import PlumbingStressV1
 from deskmind.strategies.trend_follow_v1 import TrendFollowV1
+from deskmind.universe.daily import can_open_new_entry
+from deskmind.universe.store import PostgresUniverseStore, UniverseStore
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +61,11 @@ class ExecutionService:
         strategy_name: str = "trend_follow_v1",
         risk_config: RiskConfig | None = None,
         status_file: Path = STATUS_FILE,
+        universe_store: UniverseStore | None = None,
     ) -> None:
         self.settings = settings
+        # New entries need TRADE_SYMBOLS + universe state `tradeable` (verified data, warm agents).
+        self.universe_store: UniverseStore = universe_store or PostgresUniverseStore()
         self.trading_mode = settings.trading_mode.lower()
         self.approval_mode = settings.approval_mode.lower()
         self.status_file = status_file
@@ -135,6 +140,7 @@ class ExecutionService:
         self.stats = {
             "start_time": time.time(),
             "intents_count": 0,
+            "universe_blocked": 0,
             "approvals_count": 0,
             "orders_sent": 0,
             "orders_filled": 0,
@@ -304,6 +310,16 @@ class ExecutionService:
 
     async def _process_intent(self, intent: Intent, balance: Any) -> None:
         self.stats["intents_count"] += 1
+        try:
+            allowed, why = await can_open_new_entry(
+                intent.symbol, self.universe_store, list(self.settings.trade_symbols)
+            )
+        except Exception as exc:  # universe state unreadable -> no new entries
+            allowed, why = False, f"universe state unavailable: {exc}"
+        if not allowed:
+            self.stats["universe_blocked"] += 1
+            logger.warning("New entry skipped for %s: %s", intent.symbol, why)
+            return
         side = "long" if intent.action == "open_long" else "short"
         curr_price = self.recent_prices.get(intent.symbol, intent.stop_loss or Decimal("100"))
 

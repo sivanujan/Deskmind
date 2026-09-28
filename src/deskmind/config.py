@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 ALLOWED_TRADING_MODES: tuple[str, ...] = ("paper", "testnet")
@@ -34,6 +34,8 @@ ALLOWED_BINANCE_FUTURES_HOSTS: tuple[str, ...] = (
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash"
 # The only place symbols are listed; everything else takes `symbol` as a parameter.
 DEFAULT_DATA_SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
+# Symbols the trade service may open NEW positions on (also needs universe state `tradeable`).
+DEFAULT_TRADE_SYMBOLS = ("BTCUSDT",)
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,20}USDT$")
 
 TradingMode = Literal["paper", "testnet"]
@@ -135,6 +137,21 @@ class Settings(BaseSettings):
     data_symbols: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_DATA_SYMBOLS)
     )
+    # Allowlist for NEW entries (Phase 1: BTCUSDT). .env: TRADE_SYMBOLS=BTCUSDT
+    trade_symbols: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_TRADE_SYMBOLS)
+    )
+
+    # Liquidity universe + daily job (deskmind.universe). Liquidity only: volatility / trend /
+    # volume spikes belong to the Market Scanner, which works inside the universe.
+    universe_top_n: int = Field(default=30, ge=1, le=200)
+    universe_exit_rank: int = Field(default=40, ge=1, le=300)
+    universe_lookback_days: int = Field(default=30, ge=7, le=90)
+    universe_min_listing_age_days: int = Field(default=180, ge=0)
+    universe_history_days: int = Field(default=365, ge=30)
+    universe_warmup_days: int = Field(default=30, ge=1)
+    universe_download_concurrency: int = Field(default=2, ge=1, le=4)
+    universe_disk_max_used_pct: float = Field(default=90.0, gt=0, le=100)
 
     # LLM access for the Head agent, via OpenRouter (OpenAI-compatible API).
     openrouter_api_key: SecretStr = SecretStr("")
@@ -221,9 +238,10 @@ class Settings(BaseSettings):
             raise ValueError(f"BINANCE_MARKET_DATA_URL={v!r} must be an https Binance host")
         return v.strip().rstrip("/")
 
-    @field_validator("data_symbols", mode="before")
+    @field_validator("data_symbols", "trade_symbols", mode="before")
     @classmethod
-    def _parse_symbols(cls, v: object) -> list[str]:
+    def _parse_symbols(cls, v: object, info: ValidationInfo) -> list[str]:
+        setting = (info.field_name or "symbols").upper()
         items = v.split(",") if isinstance(v, str) else list(v)  # type: ignore[call-overload]
         symbols: list[str] = []
         for raw in items:
@@ -231,11 +249,11 @@ class Settings(BaseSettings):
             if not sym:
                 continue
             if not SYMBOL_RE.match(sym):
-                raise ValueError(f"DATA_SYMBOLS entry {raw!r} is not a USDT-M symbol like BTCUSDT")
+                raise ValueError(f"{setting} entry {raw!r} is not a USDT-M symbol like BTCUSDT")
             if sym not in symbols:
                 symbols.append(sym)
         if not symbols:
-            raise ValueError("DATA_SYMBOLS must list at least one symbol")
+            raise ValueError(f"{setting} must list at least one symbol")
         return symbols
 
     @field_validator("binance_ws_market_url")

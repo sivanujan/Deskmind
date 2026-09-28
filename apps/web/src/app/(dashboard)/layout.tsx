@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/risk", label: "Risk" },
   { href: "/agents", label: "Agents" },
   { href: "/strategies", label: "Strategies" },
+  { href: "/universe", label: "Universe" },
   { href: "/account", label: "Account" },
   { href: "/audit", label: "Audit Log" },
 ];

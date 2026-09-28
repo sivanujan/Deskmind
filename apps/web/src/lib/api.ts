@@ -416,6 +416,50 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface UniverseSymbol {
+  symbol: string;
+  state: "watch_only" | "downloading" | "verifying" | "warming_up" | "tradeable" | "blocked" | "exited";
+  rank: number | null;
+  median_quote_volume: number | null;
+  onboard_ms: number | null;
+  member: boolean;
+  data_verified: boolean;
+  warmed_up: boolean;
+  reason: string | null;
+  entered_at_ms: number | null;
+  exited_at_ms: number | null;
+  state_changed_at_ms: number | null;
+  history: Array<{ at_ms: number; from: string; to: string; reason: string | null }>;
+}
+
+export interface UniverseRunSummary {
+  started_at: string;
+  finished_at: string | null;
+  run_date: string;
+  entered: string[];
+  exited: string[];
+  new_watch_only: string[];
+  downloads_done: string[];
+  downloads_failed: Array<{ symbol: string; error: string }>;
+  verify_failed: Array<{ symbol: string; detail: string }>;
+  updated?: string[];
+  update_failed?: Array<{ symbol: string; error: string }>;
+  promoted?: string[];
+  alerts: string[];
+  members?: number;
+  tradeable?: string[];
+  by_state?: Record<string, number>;
+  disk?: { used_pct: number; free_bytes: number; total_bytes: number; data_dir_bytes: number };
+}
+
+export interface UniverseResponse {
+  config: Record<string, number>;
+  trade_symbols: string[];
+  symbols: UniverseSymbol[];
+  runs: UniverseRunSummary[];
+  reason: string | null;
+}
+
 export const api = {
   // Public data & charts
   symbols: () => get<SymbolsResponse>("/api/symbols"),
@@ -445,7 +489,7 @@ export const api = {
 
   // System & service control
   systemStatus: () => get<SystemStatus>("/api/system/status"),
-  serviceControl: (service: "live" | "trend" | "trade", action: "start" | "stop" | "restart") =>
+  serviceControl: (service: "live" | "trend" | "trade" | "universe", action: "start" | "stop" | "restart") =>
     post<{ service: string; action: string; success: boolean }>("/api/control/service", { service, action }),
   stopAllServices: (confirm: string) =>
     post<{ success: boolean; results: Record<string, boolean> }>("/api/control/service/stop-all", { confirm }),
@@ -504,6 +548,7 @@ export const api = {
   strategies: () => get<StrategyEntry[]>("/api/dashboard/strategies"),
   risk: () => get<RiskResponse>("/api/dashboard/risk"),
   account: () => get<AccountResponse>("/api/dashboard/account"),
+  universe: () => get<UniverseResponse>("/api/universe"),
 
   // Audit
   auditLogs: (params?: { limit?: number; action?: string }) => get<AuditLogEntry[]>("/api/audit/logs", params),

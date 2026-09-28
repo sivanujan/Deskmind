@@ -39,6 +39,10 @@ account_app = typer.Typer(
     help="Mainnet read-only account and metadata synchronization", no_args_is_help=True
 )
 app.add_typer(account_app, name="account")
+universe_app = typer.Typer(
+    help="Liquidity universe: daily recompute, symbol lifecycle, summary", no_args_is_help=True
+)
+app.add_typer(universe_app, name="universe")
 
 SymbolOpt = typer.Option(None, "--symbol", "-s", help="One symbol from DATA_SYMBOLS")
 AllOpt = typer.Option(False, "--all", help="Every symbol in DATA_SYMBOLS")
@@ -1264,6 +1268,78 @@ def account_import_csv_cmd(
     typer.echo(
         f"{file.name}: {detected}, {len(rows)} rows, {inserted} new, {skipped} already present"
     )
+
+
+def _universe_job():  # type: ignore[no-untyped-def]
+    from deskmind.universe.daily import DailyJob
+    from deskmind.universe.ops import LiveDataOps
+    from deskmind.universe.ranking import UniverseConfig
+    from deskmind.universe.store import PostgresUniverseStore
+
+    settings = get_settings()
+    cfg = UniverseConfig.from_settings(settings)
+    return DailyJob(PostgresUniverseStore(), LiveDataOps(settings, cfg), cfg)
+
+
+def _print_summary(summary: dict) -> None:
+    for key in ("entered", "exited", "new_watch_only", "downloads_done", "promoted"):
+        typer.echo(f"{key:<16} {', '.join(summary.get(key, [])) or '-'}")
+    for key in ("downloads_failed", "verify_failed", "update_failed"):
+        for item in summary.get(key, []):
+            typer.echo(f"{key:<16} {item['symbol']}: {item.get('error') or item.get('detail')}")
+    disk = summary.get("disk") or {}
+    if disk:
+        typer.echo(
+            f"disk             {disk['used_pct']}% used, parquet "
+            f"{disk['data_dir_bytes'] / 1e9:.2f} GB, free {disk['free_bytes'] / 1e9:.1f} GB"
+        )
+    typer.echo(f"by state         {summary.get('by_state', {})}")
+    for a in summary.get("alerts", []):
+        typer.echo(f"ALERT            {a}")
+
+
+@universe_app.command("run")
+def universe_run_cmd() -> None:
+    """Run the daily universe job once now (ranking, downloads, verify, warm-up, summary)."""
+    _print_summary(asyncio.run(_universe_job().run()))
+
+
+@universe_app.command("scheduler")
+def universe_scheduler_cmd() -> None:
+    """Run the daily job every day at 00:01 UTC (started by the supervisor as 'universe')."""
+    import signal
+
+    from deskmind.universe.daily import run_scheduler
+
+    async def go() -> None:
+        stop = asyncio.Event()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError, ValueError):
+                asyncio.get_running_loop().add_signal_handler(sig, stop.set)
+        await run_scheduler(_universe_job, stop)
+
+    asyncio.run(go())
+
+
+@universe_app.command("status")
+def universe_status_cmd() -> None:
+    """Show every symbol's lifecycle state and the last daily summary."""
+    from deskmind.universe.store import PostgresUniverseStore
+
+    async def go() -> None:
+        store = PostgresUniverseStore()
+        recs = await store.load()
+        runs = await store.runs(1)
+        if not recs:
+            typer.echo("No universe state yet: run `uv run deskmind universe run`.")
+        for r in sorted(recs.values(), key=lambda r: (r.rank or 10**6, r.symbol)):
+            typer.echo(f"{r.rank or '-':>4} {r.symbol:<14} {r.state:<12} {r.reason or ''}")
+        if runs:
+            typer.echo("")
+            typer.echo(f"last run {runs[0]['started_at']}")
+            _print_summary(runs[0])
+
+    asyncio.run(go())
 
 
 @app.command("supervisor")

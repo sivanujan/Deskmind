@@ -231,3 +231,38 @@ class ExternalTrade(Base):
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class UniverseSymbol(Base):
+    """Lifecycle state of one symbol in the liquidity universe (see deskmind.universe)."""
+
+    __tablename__ = "universe_symbols"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer)
+    # Median daily quote volume (USDT) used for ranking.
+    median_quote_volume: Mapped[Decimal | None] = mapped_column(Numeric(38, 4))
+    onboard_ms: Mapped[int | None] = mapped_column(BigInteger)
+    member: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    data_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    warmed_up: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    entered_at_ms: Mapped[int | None] = mapped_column(BigInteger)
+    exited_at_ms: Mapped[int | None] = mapped_column(BigInteger)
+    state_changed_at_ms: Mapped[int | None] = mapped_column(BigInteger)
+    history: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class UniverseRun(Base):
+    """One daily universe job run and its summary (entered, exited, downloads, disk, alerts)."""
+
+    __tablename__ = "universe_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

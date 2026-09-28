@@ -52,8 +52,9 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
 - Before calling work done: `make lint` and `make test` must pass.
 
 ## Historical data rules (Step 2)
-- Symbols come only from config: `DATA_SYMBOLS` in `.env` (default list lives in `config.py`,
-  `DEFAULT_DATA_SYMBOLS`). Never hardcode a symbol anywhere else; every function takes `symbol`.
+- Symbols come only from config (`DATA_SYMBOLS`, `TRADE_SYMBOLS` in `.env`; defaults in
+  `config.py`) and the liquidity universe table. Never hardcode a symbol anywhere else; every
+  function takes `symbol`.
   Adding a symbol = add it to `DATA_SYMBOLS` + run `deskmind data download --symbol X`.
   A test (`test_no_symbol_hardcoded_in_source`) enforces this.
 - Source of truth for backtests: `data/parquet/{symbol}/...` (klines 5m/15m/1h/2h, mark-price
@@ -80,6 +81,23 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
 - Funding interval changes announced by the exchange (bulk `funding_interval_hours`) are valid.
 - A gap present on several symbols at the same time is exchange-wide (the report says so).
 - `deskmind data verify` must show no FAIL before data is used for a backtest.
+
+## Liquidity universe + daily job
+- `src/deskmind/universe/`: membership is LIQUIDITY ONLY (median daily quote volume of the last
+  30 closed days; enter at rank <= UNIVERSE_TOP_N=30, stay while rank <= UNIVERSE_EXIT_RANK=40).
+  Never add volatility, trend clarity or volume spikes to universe ranking: those belong to the
+  later hourly Market Scanner, which picks opportunities INSIDE the universe.
+- Symbol sources: `DATA_SYMBOLS` (configured) + universe members (table `universe_symbols`). New
+  entries additionally need `TRADE_SYMBOLS` (Phase 1: BTCUSDT) AND universe state `tradeable`
+  (`universe.daily.can_open_new_entry`, checked by the trade service; exits are never gated).
+- Lifecycle: watch_only (listed < 180 days: data + chart, no trading) / downloading -> verifying
+  -> warming_up -> tradeable; blocked (download/verify/warm-up failed or disk guard, alert, retried
+  next run); exited (no new entries, data kept, never deleted).
+- Daily job: `deskmind universe scheduler` (supervisor service "universe", 00:01 UTC, not started
+  automatically) or `deskmind universe run` once; `deskmind universe status`. Summaries go to
+  `universe_runs` and the dashboard Universe page (Telegram later). Downloads: at most
+  UNIVERSE_DOWNLOAD_CONCURRENCY at once through the weight-limited client, one failure never
+  blocks the rest, disk guard stops downloads above UNIVERSE_DISK_MAX_USED_PCT.
 
 ## Live market data rules (Step 3)
 - `deskmind live run` (src/deskmind/data/live/) keeps Redis current from ONE combined WebSocket
@@ -188,6 +206,7 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
 Data (each takes `--symbol X` or `--all`): `uv run deskmind data download --all --start 2023-01-01`,
 `data update --all`, `data verify --all` (writes `data/reports/verify_{date}.md`), `data info --all`.
 Live: `uv run deskmind live run | status | tail | verify --hours N | disconnect --seconds N`.
+Universe: `uv run deskmind universe run | status | scheduler`.
 Agents: `uv run deskmind agents run trend | backfill trend --all --start YYYY-MM-DD | check trend --all`.
 API + web: `uv run deskmind api` (:8010) and `npm --prefix apps/web run dev` (:3010);
 web checks: `npm --prefix apps/web run lint` and `npm --prefix apps/web run typecheck`.

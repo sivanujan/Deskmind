@@ -533,3 +533,30 @@ async def backtest_meta() -> dict[str, Any]:
             "symbols": list(get_settings().data_symbols),
         },
     }
+
+
+# ---------------------------------------------------------------- liquidity universe
+
+
+@router.get("/api/universe")
+async def universe_state(runs: int = 14) -> dict[str, Any]:
+    """Symbol lifecycle states and the latest daily summaries (universe_symbols/universe_runs)."""
+    from deskmind.universe.ranking import UniverseConfig
+    from deskmind.universe.store import PostgresUniverseStore
+
+    settings = get_settings()
+    cfg = UniverseConfig.from_settings(settings)
+    store = PostgresUniverseStore()
+    try:
+        recs = await store.load()
+        history = await store.runs(min(max(runs, 1), 90))
+    except Exception as exc:
+        raise HTTPException(503, f"universe tables unavailable: {exc}") from exc
+    symbols = sorted(recs.values(), key=lambda r: (r.rank or 10**6, r.symbol))
+    return {
+        "config": dataclasses.asdict(cfg),
+        "trade_symbols": list(settings.trade_symbols),
+        "symbols": [r.to_dict() for r in symbols],
+        "runs": history,
+        "reason": None if recs or history else "the daily universe job has not run yet",
+    }

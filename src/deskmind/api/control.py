@@ -56,7 +56,7 @@ router = APIRouter()
 
 
 class ServiceControlRequest(BaseModel):
-    service: Literal["live", "trend", "trade"]
+    service: Literal["live", "trend", "trade", "universe"]
     action: Literal["start", "stop", "restart"]
 
 
