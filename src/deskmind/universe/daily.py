@@ -15,7 +15,7 @@
 Safety: at most `download_concurrency` symbols are downloaded at once (each download also goes
 through the weight-limited Binance client); every symbol runs in its own error boundary so one
 failure never blocks the rest; a disk guard stops NEW full downloads above
-`disk_max_used_pct` (incremental updates of symbols already on disk continue).
+less than `disk_min_free_gb` free (incremental updates of symbols already on disk continue).
 """
 
 from __future__ import annotations
@@ -93,11 +93,12 @@ class DailyJob:
         if self._disk_guard_tripped:
             return False
         usage = self.ops.disk_usage()
-        if usage["used_pct"] > self.cfg.disk_max_used_pct:
+        free_gb = usage["free_bytes"] / 1e9
+        if free_gb < self.cfg.disk_min_free_gb:
             self._disk_guard_tripped = True
             self._alert(
-                f"disk guard: {usage['used_pct']:.1f}% used > {self.cfg.disk_max_used_pct}% "
-                "limit; downloads stopped for this run"
+                f"disk guard: only {free_gb:.1f} GB free (< {self.cfg.disk_min_free_gb} GB "
+                "minimum); new downloads stopped for this run"
             )
             return False
         return True
@@ -288,7 +289,7 @@ class DailyJob:
                 "exit_rank": self.cfg.exit_rank,
                 "lookback_days": self.cfg.lookback_days,
                 "min_listing_age_days": self.cfg.min_listing_age_days,
-                "disk_max_used_pct": self.cfg.disk_max_used_pct,
+                "disk_min_free_gb": self.cfg.disk_min_free_gb,
             },
         )
         await self.store.save_run(started, datetime.now(UTC), self.summary)

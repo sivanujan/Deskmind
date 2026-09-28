@@ -106,7 +106,7 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
   automatically) or `deskmind universe run` once; `deskmind universe status`. Summaries go to
   `universe_runs` and the dashboard Universe page (Telegram later). Downloads: at most
   UNIVERSE_DOWNLOAD_CONCURRENCY at once through the weight-limited client, one failure never
-  blocks the rest, disk guard stops downloads above UNIVERSE_DISK_MAX_USED_PCT.
+  blocks the rest, disk guard stops NEW downloads when free space < UNIVERSE_DISK_MIN_FREE_GB (updates continue).
 
 ## Live market data rules (Step 3)
 - `deskmind live run` (src/deskmind/data/live/) keeps Redis current from combined WebSockets

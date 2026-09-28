@@ -153,7 +153,8 @@ class Settings(BaseSettings):
     universe_history_days: int = Field(default=365, ge=30)
     universe_warmup_days: int = Field(default=30, ge=1)
     universe_download_concurrency: int = Field(default=2, ge=1, le=4)
-    universe_disk_max_used_pct: float = Field(default=90.0, gt=0, le=100)
+    # Disk guard: new full downloads stop when the data drive has less free space than this.
+    universe_disk_min_free_gb: float = Field(default=5.0, ge=0.5)
 
     # LLM access for the Head agent, via OpenRouter (OpenAI-compatible API).
     openrouter_api_key: SecretStr = SecretStr("")

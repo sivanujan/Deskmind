@@ -31,7 +31,7 @@ class UniverseConfig:
     history_days: int = 365  # history downloaded for an entering symbol (plus warm-up)
     warmup_days: int = 30
     download_concurrency: int = 2
-    disk_max_used_pct: float = 90.0
+    disk_min_free_gb: float = 5.0  # new downloads stop below this much free space
 
     @classmethod
     def from_settings(cls, settings: Any) -> UniverseConfig:
@@ -43,7 +43,7 @@ class UniverseConfig:
             history_days=settings.universe_history_days,
             warmup_days=settings.universe_warmup_days,
             download_concurrency=settings.universe_download_concurrency,
-            disk_max_used_pct=settings.universe_disk_max_used_pct,
+            disk_min_free_gb=settings.universe_disk_min_free_gb,
         )
 
     def __post_init__(self) -> None:

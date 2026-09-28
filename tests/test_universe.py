@@ -23,12 +23,12 @@ def stat(sym: str, vol: float, onboard: int = OLD) -> SymbolStat:
 
 
 class FakeOps:
-    def __init__(self, stats, have_data=(), fail_download=(), fail_verify=(), used_pct=50.0):
+    def __init__(self, stats, have_data=(), fail_download=(), fail_verify=(), free_gb=100.0):
         self.stats = list(stats)
         self.have = set(have_data)
         self.fail_download = set(fail_download)
         self.fail_verify = set(fail_verify)
-        self.used_pct = used_pct
+        self.free_gb = free_gb
         self.calls: list[tuple] = []
         self.deleted: list[str] = []  # the job must never delete data
         self.in_flight = 0
@@ -67,7 +67,7 @@ class FakeOps:
         self.calls.append(("warm_up", symbol, start_ms, end_ms))
 
     def disk_usage(self):
-        return {"used_pct": self.used_pct, "free_bytes": 10**11, "total_bytes": 10**12,
+        return {"used_pct": 50.0, "free_bytes": int(self.free_gb * 1e9), "total_bytes": 10**12,
                 "data_dir_bytes": 5 * 10**9}  # fmt: skip
 
     def names(self, name):
@@ -241,13 +241,13 @@ async def test_failed_download_never_blocks_the_rest():
 @pytest.mark.asyncio
 async def test_disk_guard_stops_downloads_and_alerts():
     store = MemoryUniverseStore()
-    ops = FakeOps([stat("AAA", 900), stat("BBB", 800)], used_pct=95.0)
+    ops = FakeOps([stat("AAA", 900), stat("BBB", 800)], free_gb=3.0)  # < 5 GB minimum
     summary = await run(store, ops)
     assert ops.names("download") == []
     assert all(store.records[s].state == "blocked" for s in ("AAA", "BBB"))
     assert "disk guard" in store.records["AAA"].reason
     assert sum("disk guard" in a for a in summary["alerts"]) == 1
-    ops.used_pct = 40.0  # space freed: the next run downloads them
+    ops.free_gb = 40.0  # space freed: the next run downloads them
     await run(store, ops, now=NOW + DAY_MS)
     assert sorted(ops.names("download")) == ["AAA", "BBB"]
 
@@ -323,7 +323,7 @@ async def test_daily_job_records_point_in_time_membership_and_delisting():
 async def test_disk_guard_never_blocks_symbols_already_on_disk():
     """Full disk: new symbols wait, but ones with history just update and stay tradeable."""
     store = MemoryUniverseStore()
-    ops = FakeOps([stat("AAA", 900), stat("NEW", 800)], have_data={"AAA"}, used_pct=95.0)
+    ops = FakeOps([stat("AAA", 900), stat("NEW", 800)], have_data={"AAA"}, free_gb=3.0)
     summary = await run(store, ops)
     assert store.records["AAA"].state == "tradeable"
     assert ops.names("update") == ["AAA"] and ops.names("download") == []
@@ -334,3 +334,14 @@ async def test_disk_guard_never_blocks_symbols_already_on_disk():
     await run(store, ops, now=NOW + DAY_MS)  # next day, disk still full: AAA keeps updating
     assert ops.names("update") == ["AAA"]
     assert store.records["AAA"].state == "tradeable"
+
+
+@pytest.mark.asyncio
+async def test_disk_guard_uses_free_space_not_percentage():
+    """A big drive 95% full with 12.7 GB free still has room: downloads go ahead."""
+    store = MemoryUniverseStore()
+    ops = FakeOps([stat("AAA", 900)], free_gb=12.7)
+    summary = await run(store, ops)
+    assert ops.names("download") == ["AAA"]
+    assert store.records["AAA"].state == "tradeable"
+    assert summary["alerts"] == []
