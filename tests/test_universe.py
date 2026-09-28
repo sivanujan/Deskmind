@@ -317,3 +317,20 @@ async def test_daily_job_records_point_in_time_membership_and_delisting():
     assert "BBB" not in today_hist.get_universe(ms_day(tomorrow), include_watch_only=True)
     # yesterday's history still has it (point-in-time)
     assert "BBB" in (await store.load_history(ms_day(NOW), ms_day(NOW))).get_universe(ms_day(NOW))
+
+
+@pytest.mark.asyncio
+async def test_disk_guard_never_blocks_symbols_already_on_disk():
+    """Full disk: new symbols wait, but ones with history just update and stay tradeable."""
+    store = MemoryUniverseStore()
+    ops = FakeOps([stat("AAA", 900), stat("NEW", 800)], have_data={"AAA"}, used_pct=95.0)
+    summary = await run(store, ops)
+    assert store.records["AAA"].state == "tradeable"
+    assert ops.names("update") == ["AAA"] and ops.names("download") == []
+    assert store.records["NEW"].state == "blocked"
+    assert "disk guard" in store.records["NEW"].reason
+    assert sum("disk guard" in a for a in summary["alerts"]) == 1
+    ops.calls.clear()
+    await run(store, ops, now=NOW + DAY_MS)  # next day, disk still full: AAA keeps updating
+    assert ops.names("update") == ["AAA"]
+    assert store.records["AAA"].state == "tradeable"

@@ -14,7 +14,8 @@
 
 Safety: at most `download_concurrency` symbols are downloaded at once (each download also goes
 through the weight-limited Binance client); every symbol runs in its own error boundary so one
-failure never blocks the rest; a disk guard stops all downloads above `disk_max_used_pct`.
+failure never blocks the rest; a disk guard stops NEW full downloads above
+`disk_max_used_pct` (incremental updates of symbols already on disk continue).
 """
 
 from __future__ import annotations
@@ -107,7 +108,9 @@ class DailyJob:
         """Entered (or unfinished) symbol: data -> verify -> warm up -> tradeable/watch_only."""
         sym = rec.symbol
         async with self._sem:
-            if not self._disk_ok():
+            # The disk guard stops only NEW full downloads; a symbol whose history is already on
+            # disk just gets its small incremental update.
+            if not self.ops.has_data(sym) and not self._disk_ok():
                 await self._set(rec, "blocked", "disk guard: download postponed")
                 return
             try:
@@ -165,9 +168,6 @@ class DailyJob:
         """Existing member: incremental update only (plus watch_only promotion when due)."""
         sym = rec.symbol
         async with self._sem:
-            if not self._disk_ok():
-                self.summary["update_failed"].append({"symbol": sym, "error": "disk guard"})
-                return
             try:
                 await self.ops.update(sym)
                 self.summary["updated"].append(sym)
