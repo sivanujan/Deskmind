@@ -54,6 +54,7 @@ def chart_entries(
             {
                 "symbol": sym,
                 "state": r.state if r else None,
+                "reason": r.reason if r else None,
                 "configured": True,
                 "has_data": has_parquet(data_dir, sym),
             }
@@ -66,6 +67,7 @@ def chart_entries(
             {
                 "symbol": r.symbol,
                 "state": r.state,
+                "reason": r.reason,
                 "configured": False,
                 "has_data": has_parquet(data_dir, r.symbol),
             }

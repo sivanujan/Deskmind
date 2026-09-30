@@ -6,7 +6,7 @@ import { OVERLAY_SCHEMA_VERSION, type Overlay } from "./overlays";
 export const DEV_SAMPLE_AGENT = "dev-sample";
 
 export function devSampleOverlays(candles: Candle[]): Overlay[] {
-  if (process.env.NODE_ENV !== "development" || candles.length < 40) return [];
+  if (process.env.NEXT_PUBLIC_ENABLE_DEV_OVERLAYS !== "true" || candles.length < 40) return [];
   const recent = candles.slice(-120);
   const hi = recent.reduce((a, c) => (c.high > a.high ? c : a));
   const lo = recent.reduce((a, c) => (c.low < a.low ? c : a));

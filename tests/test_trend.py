@@ -282,3 +282,32 @@ def test_expired_line_is_not_recreated_with_same_id() -> None:
     assert first["id"] in eng.line_ids
     r = truncation_check(bars, n_cuts=len(bars) - 20, cfg=cfg)
     assert r.passed == r.cuts, r.failures
+
+
+def test_consecutive_wicks_produce_single_sweep() -> None:
+    """Consecutive candles wicking beyond the same swing without closing only produce 1 sweep."""
+    # Establish a swing low at 100.
+    bars = path([108, 100, 110], steps=3, spread=0.2)
+    eng, items = run(bars)
+    swing_lows = kinds(items, "swing_low")
+    assert len(swing_lows) >= 1
+    target_low = swing_lows[0]["price"]
+
+    # Now add 3 consecutive candles whose low < target_low but close > target_low.
+    t_last = bars[-1].close_time
+    extra = [
+        Bar(t_last + 0 * H, t_last + 1 * H, 102.0, 103.0, target_low - 0.5, 101.5),
+        Bar(t_last + 1 * H, t_last + 2 * H, 101.5, 102.5, target_low - 0.8, 101.2),
+        Bar(t_last + 2 * H, t_last + 3 * H, 101.2, 102.8, target_low - 0.3, 101.8),
+    ]
+    all_sweeps = []
+    for b in extra:
+        changes = eng.on_candle(b)
+        for it in changes:
+            if it["kind"] == "sweep":
+                all_sweeps.append(it)
+
+    # Exactly one sweep emitted, not 3
+    assert len(all_sweeps) == 1
+    assert all_sweeps[0]["level"] == target_low
+    assert all_sweeps[0]["pivot_time"] == extra[0].open_time

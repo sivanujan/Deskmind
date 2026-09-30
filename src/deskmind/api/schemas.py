@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class SymbolEntry(BaseModel):
     symbol: str
     state: str | None  # universe lifecycle state; None = configured only (DATA_SYMBOLS)
+    reason: str | None = None  # why blocked / why not tradeable
     configured: bool  # in DATA_SYMBOLS
     has_data: bool  # history on disk (Parquet)
 

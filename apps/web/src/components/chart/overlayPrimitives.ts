@@ -68,6 +68,8 @@ export class LinePrimitive extends OverlayPrimitive {
     if (!a || !b) return;
     target.useMediaCoordinateSpace(({ context: ctx }) => {
       ctx.save();
+      const faded = !!(this.o as { isHistorical?: boolean }).isHistorical;
+      ctx.globalAlpha = faded ? 0.25 : 1.0;
       ctx.strokeStyle = this.o.color;
       ctx.lineWidth = 1.5;
       ctx.setLineDash(this.o.style === "dashed" ? [6, 4] : this.o.style === "dotted" ? [2, 3] : []);
@@ -104,14 +106,16 @@ export class ZonePrimitive extends OverlayPrimitive {
       const y = Math.min(a.y, b.y);
       const w = Math.abs(b.x - a.x);
       const h = Math.abs(b.y - a.y);
+      const faded = !!(this.o as { isHistorical?: boolean }).isHistorical;
       ctx.save();
+      ctx.globalAlpha = faded ? 0.15 : 1.0;
       ctx.fillStyle = this.o.color;
       ctx.fillRect(x, y, w, h);
       ctx.strokeStyle = this.o.color.length === 9 ? this.o.color.slice(0, 7) : this.o.color;
-      ctx.globalAlpha = 0.6;
+      ctx.globalAlpha = faded ? 0.2 : 0.6;
       ctx.strokeRect(x, y, w, h);
       if (this.o.label) {
-        ctx.globalAlpha = 0.9;
+        ctx.globalAlpha = faded ? 0.3 : 0.9;
         ctx.fillStyle = ctx.strokeStyle;
         ctx.font = "11px sans-serif";
         ctx.fillText(this.o.label, x + 4, y + 13);

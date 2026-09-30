@@ -104,7 +104,7 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
                     position="above" if up else "below",
                     shape="square",
                     color=SWEEP_COLOR,
-                    text="sweep",
+                    text="SWEEP",
                     meta=_meta(
                         it,
                         level=it["level"],

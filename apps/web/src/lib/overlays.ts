@@ -19,6 +19,8 @@ interface OverlayBase {
   schema_version: typeof OVERLAY_SCHEMA_VERSION;
   /** UNIX seconds when it became knowable; replay shows only confirmed_at <= T. */
   confirmed_at?: number | null;
+  /** UI display flag: true when drawn faded in history mode. */
+  isHistorical?: boolean;
   /** Details shown on hover (rule, pivot_time, confirmed_at, level, ...). */
   meta?: Record<string, string | number | boolean | null>;
 }

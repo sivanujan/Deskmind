@@ -29,6 +29,8 @@ export interface SymbolEntry {
   symbol: string;
   /** Universe lifecycle state; null = configured only (DATA_SYMBOLS). */
   state: string | null;
+  /** Failure or status detail when blocked or not tradeable. */
+  reason?: string | null;
   configured: boolean;
   /** History downloaded (Parquet on disk). */
   has_data: boolean;

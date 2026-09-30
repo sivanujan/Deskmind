@@ -89,8 +89,8 @@ def test_symbols(env) -> None:
     assert body["symbols"] == ["BTCUSDT", "ETHUSDT"]
     assert body["timeframes"] == ["5m", "15m", "1h", "2h"]
     assert body["entries"] == [
-        {"symbol": "BTCUSDT", "state": None, "configured": True, "has_data": True},
-        {"symbol": "ETHUSDT", "state": None, "configured": True, "has_data": False},
+        {"symbol": "BTCUSDT", "state": None, "reason": None, "configured": True, "has_data": True},
+        {"symbol": "ETHUSDT", "state": None, "reason": None, "configured": True, "has_data": False},
     ]
 
 
@@ -116,7 +116,7 @@ def test_symbols_include_universe_members_with_state(env) -> None:
     by = {e["symbol"]: e for e in body["entries"]}
     assert body["symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "NEWUSDT"]
     assert by["NEWUSDT"] == {
-        "symbol": "NEWUSDT", "state": "watch_only", "configured": False, "has_data": False
+        "symbol": "NEWUSDT", "state": "watch_only", "reason": None, "configured": False, "has_data": False
     }  # fmt: skip
     assert by["DOGEUSDT"]["state"] == "downloading"
     assert "OLDUSDT" not in by  # exited: no longer offered in the selector

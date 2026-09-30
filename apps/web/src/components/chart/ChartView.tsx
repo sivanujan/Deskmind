@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HealthBadge from "@/components/HealthBadge";
 import { api, type LiveMessage, type LiveStatus, type SymbolEntry, type TrendReport } from "@/lib/api";
 import { DEV_SAMPLE_AGENT, devSampleOverlays } from "@/lib/devOverlays";
-import type { Overlay } from "@/lib/overlays";
+import type { MarkerOverlay, Overlay } from "@/lib/overlays";
 import { TIMEFRAME_SECONDS, formatAge, formatColombo, formatUtc } from "@/lib/time";
 
 import OverlayDetails from "./OverlayDetails";
@@ -37,10 +37,12 @@ const GROUPS: Record<string, string> = {
   // ICT / SMC concepts
   bsl: "liquidity",
   ssl: "liquidity",
-  pool_sweep: "liquidity",
+  pool_sweep: "sweeps",
   fvg: "FVG",
   fvg_bullish: "FVG",
   fvg_bearish: "FVG",
+  ifvg_bullish: "FVG",
+  ifvg_bearish: "FVG",
   ob_bullish: "OB",
   ob_bearish: "OB",
   breaker_bullish: "breakers",
@@ -50,8 +52,11 @@ const GROUPS: Record<string, string> = {
   liquidity_void: "voids",
   smt_bullish: "SMT",
   smt_bearish: "SMT",
-  pd_range: "PD range",
-  pd_ote: "PD range",
+  pd_range: "PD / OTE",
+  pd_range_premium: "PD / OTE",
+  pd_range_discount: "PD / OTE",
+  pd_range_eq: "PD / OTE",
+  pd_range_ote: "PD / OTE",
 };
 const groupOf = (o: Overlay) => GROUPS[o.kind] ?? "other";
 
@@ -70,6 +75,155 @@ function toInput(t: number): string {
 }
 function fromInput(v: string): number {
   return Math.floor(Date.parse(`${v}:00Z`) / 1000);
+}
+
+/** Merge Trend agent sweeps and ICT agent pool sweeps at the same candle time into one marker. */
+function mergeSweeps(overlays: Overlay[]): Overlay[] {
+  const nonSweeps: Overlay[] = [];
+  const sweepsByTime = new Map<number, MarkerOverlay>();
+
+  for (const o of overlays) {
+    if (o.type === "marker" && (o.kind === "sweep" || o.kind === "pool_sweep")) {
+      const existing = sweepsByTime.get(o.time);
+      if (!existing) {
+        sweepsByTime.set(o.time, { ...o, text: "SWEEP" });
+      } else {
+        const sources = Array.from(
+          new Set(
+            [existing.source_agent, o.source_agent]
+              .filter(Boolean)
+              .flatMap((s) => s.split(/,\s*/))
+          )
+        ).join(", ");
+        sweepsByTime.set(o.time, {
+          ...existing,
+          source_agent: sources,
+          text: "SWEEP",
+          meta: {
+            ...existing.meta,
+            ...o.meta,
+            sources,
+          },
+        });
+      }
+    } else {
+      nonSweeps.push(o);
+    }
+  }
+
+  return [...nonSweeps, ...Array.from(sweepsByTime.values())];
+}
+
+interface FilterOptions {
+  showHistory: boolean;
+  maxSwings?: number;
+  maxPerType?: number;
+}
+
+/** Focus mode: show only active items by default. Historical/finished items are hidden or faded. */
+function filterFocusOverlays(
+  overlays: Overlay[],
+  opts: FilterOptions = { showHistory: false, maxSwings: 15, maxPerType: 15 }
+): Overlay[] {
+  const { showHistory, maxSwings = 15, maxPerType = 15 } = opts;
+
+  // 1. Identify active swings (last N)
+  const swings = overlays
+    .filter((o) => o.kind === "swing_high" || o.kind === "swing_low")
+    .sort((a, b) => {
+      const ta = (a.type === "marker" ? a.time : 0);
+      const tb = (b.type === "marker" ? b.time : 0);
+      return tb - ta;
+    });
+  const activeSwingIds = new Set(swings.slice(0, maxSwings).map((s) => s.id));
+
+  // 2. Identify latest BOS & CHoCH
+  let latestBosTime = -1;
+  let latestChochTime = -1;
+  for (const o of overlays) {
+    if (o.kind === "bos" || o.kind === "bos_level") {
+      const t = o.type === "marker" ? o.time : o.start_time;
+      if (t > latestBosTime) latestBosTime = t;
+    } else if (o.kind === "choch" || o.kind === "choch_level") {
+      const t = o.type === "marker" ? o.time : o.start_time;
+      if (t > latestChochTime) latestChochTime = t;
+    }
+  }
+
+  const typeCounts = new Map<string, number>();
+
+  const isOverlayActive = (o: Overlay): boolean => {
+    const kind = o.kind;
+    const meta = (o.meta || {}) as Record<string, unknown>;
+    const status = typeof meta.status === "string" ? meta.status : undefined;
+
+    // Swings: last N are active
+    if (kind === "swing_high" || kind === "swing_low") {
+      return activeSwingIds.has(o.id);
+    }
+    // BOS / CHoCH: latest are active
+    if (kind === "bos" || kind === "bos_level") {
+      const t = o.type === "marker" ? o.time : o.start_time;
+      return t === latestBosTime;
+    }
+    if (kind === "choch" || kind === "choch_level") {
+      const t = o.type === "marker" ? o.time : o.start_time;
+      return t === latestChochTime;
+    }
+    // OB: fresh / tested are active; invalidated / breaker are historical
+    if (kind.startsWith("ob_")) {
+      return status === "fresh" || status === "tested";
+    }
+    // FVG: unfilled / partially_filled are active; filled / invalidated are historical
+    if (kind.startsWith("fvg_") || kind.startsWith("ifvg_")) {
+      return status === "unfilled" || status === "partially_filled";
+    }
+    // Pools: active are active; swept / taken are historical
+    if (kind === "bsl" || kind === "ssl") {
+      return status === "active" && !meta.swept_at;
+    }
+    // Breakers: active / tested are active; invalidated are historical
+    if (kind.startsWith("breaker_")) {
+      return status === "active" || status === "tested";
+    }
+    // Mitigation blocks: active are active; invalidated are historical
+    if (kind.startsWith("mitigation_block_")) {
+      return status === "active";
+    }
+    // Liquidity voids: unfilled are active; filled are historical
+    if (kind === "liquidity_void") {
+      return status === "unfilled";
+    }
+    // PD Range & OTE: always active for current timeframe
+    if (kind.startsWith("pd_range")) {
+      return true;
+    }
+    // Sweeps: historical/finished event markers
+    if (kind === "sweep" || kind === "pool_sweep") {
+      return false;
+    }
+    // Trades or others
+    return true;
+  };
+
+  const result: Overlay[] = [];
+  for (const o of overlays) {
+    const active = isOverlayActive(o);
+    if (!showHistory) {
+      if (!active) continue;
+      const count = typeCounts.get(o.kind) ?? 0;
+      if (count >= maxPerType && !o.kind.startsWith("pd_range")) continue;
+      typeCounts.set(o.kind, count + 1);
+      result.push(o);
+    } else {
+      const count = typeCounts.get(o.kind) ?? 0;
+      if (count >= maxPerType * 4 && !o.kind.startsWith("pd_range")) continue;
+      typeCounts.set(o.kind, count + 1);
+      result.push(active ? o : { ...o, isHistorical: true });
+    }
+  }
+
+  return result;
 }
 
 export default function ChartView({
@@ -248,6 +402,7 @@ export default function ChartView({
     };
   }, []);
 
+  const [showHistory, setShowHistory] = useState(false);
   const tfStatus = status?.symbols.find((s) => s.symbol === symbol)?.timeframes.find((t) => t.timeframe === tf);
   const symStatus = status?.symbols.find((s) => s.symbol === symbol);
   const effectiveWs: WsState = replayT !== null ? "paused" : wsState;
@@ -257,15 +412,19 @@ export default function ChartView({
     () => [...apiOverlays, ...(replayT === null ? devOverlays : [])],
     [apiOverlays, devOverlays, replayT],
   );
-  const agents = useMemo(() => [...new Set(allOverlays.map((o) => o.source_agent))].sort(), [allOverlays]);
+  const mergedOverlays = useMemo(() => mergeSweeps(allOverlays), [allOverlays]);
+  const agents = useMemo(() => [...new Set(mergedOverlays.map((o) => o.source_agent))].sort(), [mergedOverlays]);
   const groups = useMemo(
-    () => [...new Set(allOverlays.filter((o) => !hiddenAgents.has(o.source_agent)).map(groupOf))].sort(),
-    [allOverlays, hiddenAgents],
+    () => [...new Set(mergedOverlays.filter((o) => !hiddenAgents.has(o.source_agent)).map(groupOf))].sort(),
+    [mergedOverlays, hiddenAgents],
   );
-  const visibleOverlays = useMemo(
-    () => allOverlays.filter((o) => !hiddenAgents.has(o.source_agent) && !hiddenGroups.has(groupOf(o))),
-    [allOverlays, hiddenAgents, hiddenGroups],
-  );
+  const visibleOverlays = useMemo(() => {
+    const filtered = mergedOverlays.filter(
+      (o) => !hiddenAgents.has(o.source_agent) && !hiddenGroups.has(groupOf(o)),
+    );
+    return filterFocusOverlays(filtered, { showHistory });
+  }, [mergedOverlays, hiddenAgents, hiddenGroups, showHistory]);
+
   const toggle = (setter: typeof setHiddenAgents, v: string) =>
     setter((prev) => {
       const next = new Set(prev);
@@ -322,9 +481,9 @@ export default function ChartView({
   }, [hover, visibleOverlays]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const o of apiOverlays) m.set(groupOf(o), (m.get(groupOf(o)) ?? 0) + 1);
+    for (const o of mergedOverlays) m.set(groupOf(o), (m.get(groupOf(o)) ?? 0) + 1);
     return m;
-  }, [apiOverlays]);
+  }, [mergedOverlays]);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -338,7 +497,8 @@ export default function ChartView({
         >
           {symbols.map((s) => {
             const e = entries.find((x) => x.symbol === s);
-            const tags = [e?.state, e && !e.has_data ? "no data" : null].filter(Boolean);
+            const stateLabel = e?.state ? e.state.replace("_", " ") : "not evaluated";
+            const tags = [stateLabel, e && !e.has_data ? "no data" : null].filter(Boolean);
             return (
               <option key={s} value={s}>
                 {s}
@@ -347,17 +507,29 @@ export default function ChartView({
             );
           })}
         </select>
-        {selectedEntry?.state && (
+        {!selectedEntry || !selectedEntry.state || selectedEntry.state === "not_evaluated" ? (
           <span
-            title="Universe lifecycle state"
+            title="Universe lifecycle not evaluated yet"
+            className="rounded border border-border bg-surface-2 px-2 py-0.5 text-[11px] font-semibold uppercase text-muted"
+          >
+            NOT EVALUATED
+          </span>
+        ) : selectedEntry.state === "blocked" ? (
+          <span
+            title={selectedEntry.reason ? `Blocked: ${selectedEntry.reason}` : "Blocked"}
+            className="rounded bg-down/20 px-2 py-0.5 text-[11px] font-semibold uppercase text-down"
+          >
+            BLOCKED
+          </span>
+        ) : (
+          <span
+            title={selectedEntry.reason || "Universe lifecycle state"}
             className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase ${
               selectedEntry.state === "tradeable"
                 ? "bg-up/20 text-up"
-                : selectedEntry.state === "blocked"
-                  ? "bg-down/20 text-down"
-                  : selectedEntry.state === "watch_only"
-                    ? "bg-accent/20 text-accent"
-                    : "bg-muted/20 text-muted"
+                : selectedEntry.state === "watch_only"
+                  ? "bg-accent/20 text-accent"
+                  : "bg-muted/20 text-muted"
             }`}
           >
             {selectedEntry.state.replace("_", " ")}
@@ -433,6 +605,21 @@ export default function ChartView({
 
         {/* Overlay toggles */}
         <div className="ml-auto flex flex-wrap items-center gap-3 text-xs">
+          <button
+            onClick={() => setShowHistory((h) => !h)}
+            className={`rounded border px-2 py-0.5 text-xs font-semibold transition-colors ${
+              showHistory
+                ? "border-accent bg-accent/20 text-accent"
+                : "border-border bg-surface-2 text-muted hover:text-foreground"
+            }`}
+            title={
+              showHistory
+                ? "Showing all historical & finished items (faded). Click to switch to Focus Mode."
+                : "Focus mode (active items only). Click to show history."
+            }
+          >
+            {showHistory ? "History: ON" : "Focus Mode"}
+          </button>
           <span className="text-muted">Overlays:</span>
           {agents.length === 0 && <span className="text-muted">none</span>}
           {agents.map((a) => (

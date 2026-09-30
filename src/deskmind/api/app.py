@@ -235,6 +235,28 @@ def create_app(
                 min(end * 1000, view_end) if end is not None else view_end,
                 as_of * 1000 if as_of is not None else None,
             )
+            has_pd = any(it.get("kind") == "pd_range" for it in ict_items)
+            if not has_pd:
+                latest_rep = await app.state.ict_smc_store.latest_report(
+                    sym, as_of * 1000 if as_of is not None else None
+                )
+                if latest_rep:
+                    tf_rep = latest_rep.get("payload", {}).get("timeframes", {}).get(tf, {})
+                    pd_data = tf_rep.get("pd_range")
+                    if (
+                        pd_data
+                        and pd_data.get("low") is not None
+                        and pd_data.get("high") is not None
+                    ):
+                        ict_items.append(
+                            {
+                                "id": f"pd_range_{tf}:{pd_data.get('from_bos_at', view_end)}",
+                                "kind": "pd_range",
+                                "created_time": pd_data.get("from_bos_at", view_end),
+                                "confirmed_at": pd_data.get("confirmed_at", view_end),
+                                **pd_data,
+                            }
+                        )
             overlays.extend(to_ict_overlays(ict_items, ICT_SMC_VERSION, view_end))
 
         if run_id:

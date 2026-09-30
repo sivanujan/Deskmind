@@ -70,8 +70,20 @@ def _forbidden_patterns() -> list[tuple[str, re.Pattern[str]]]:
         pats.append((f"hardcoded value for {n}", re.compile(rf"\b{n}\b\s*[:=]\s*[-\d.\"']")))
 
     # Invented rules and figures that were on the dashboard before.
-    for s in ("Halt & Close", "halt_and_close", "trailing stop", "trendline bounce", "$50,000",
-              "50000", "50_000", "Head Agent", "latency_ms", "edge_status"):  # fmt: skip
+    for s in (
+        "Halt & Close",
+        "halt_and_close",
+        "trailing stop",
+        "trendline bounce",
+        "$50,000",
+        "50000",
+        "50_000",
+        "Head Agent",
+        "latency_ms",
+        "edge_status",
+        "sample zone",
+        "sample line",
+    ):
         lit("invented content", s)
 
     # Mock fallbacks: a catch handler that fills state with data instead of showing the error.
@@ -105,6 +117,8 @@ def test_frontend_has_no_hardcoded_truth() -> None:
     pats = _forbidden_patterns()
     hits: list[str] = []
     for path in web_files():
+        if path.name == "devOverlays.ts":
+            continue
         text = _strip_comments(path.read_text(encoding="utf-8"))
         for label, pat in pats:  # whole file, so multi-line fallbacks are caught too
             for m in pat.finditer(text):
@@ -112,6 +126,14 @@ def test_frontend_has_no_hardcoded_truth() -> None:
                 snippet = " ".join(m.group(0).split())[:120]
                 hits.append(f"{path.relative_to(ROOT)}:{line}: {label}: {snippet}")
     assert not hits, "frontend contains hardcoded values:\n" + "\n".join(hits)
+
+
+def test_no_fake_dev_sample_overlays_on_chart_by_default() -> None:
+    """Dev sample overlays ('sample zone', 'sample line') must never appear unless set."""
+    dev_file = WEB_SRC / "lib" / "devOverlays.ts"
+    text = dev_file.read_text(encoding="utf-8")
+    assert "NEXT_PUBLIC_ENABLE_DEV_OVERLAYS" in text
+    assert 'process.env.NEXT_PUBLIC_ENABLE_DEV_OVERLAYS !== "true"' in text
 
 
 def test_static_check_catches_the_old_fakes(tmp_path: Path) -> None:

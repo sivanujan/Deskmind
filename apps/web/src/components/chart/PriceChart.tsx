@@ -188,20 +188,40 @@ const PriceChart = forwardRef<PriceChartHandle, Props>(function PriceChart(
     if (!series) return;
     for (const p of primitivesRef.current) series.detachPrimitive(p);
     primitivesRef.current = [];
-    const markers: SeriesMarker<Time>[] = [];
+    const markerGroups = new Map<string, SeriesMarker<Time>[]>();
     for (const o of overlays) {
       if (o.type === "marker") {
-        markers.push({
+        const isHist = !!(o as { isHistorical?: boolean }).isHistorical;
+        const color = isHist && o.color.length === 7 ? `${o.color}44` : o.color;
+        const pos = o.position === "above" ? "aboveBar" : "belowBar";
+        const key = `${o.time}_${pos}`;
+        const marker: SeriesMarker<Time> = {
           time: o.time as UTCTimestamp,
-          position: o.position === "above" ? "aboveBar" : "belowBar",
+          position: pos,
           shape: o.shape,
-          color: o.color,
+          color,
           text: o.text,
-        });
+        };
+        const list = markerGroups.get(key) || [];
+        list.push(marker);
+        markerGroups.set(key, list);
       } else {
         const p = o.type === "line" ? new LinePrimitive(o) : new ZonePrimitive(o);
         series.attachPrimitive(p);
         primitivesRef.current.push(p);
+      }
+    }
+    const markers: SeriesMarker<Time>[] = [];
+    for (const group of markerGroups.values()) {
+      if (group.length === 1) {
+        markers.push(group[0]);
+      } else {
+        // Label collision avoidance: merge distinct texts for markers at the same candle and position
+        const combinedText = Array.from(new Set(group.map((m) => m.text).filter(Boolean))).join(" · ");
+        markers.push({
+          ...group[0],
+          text: combinedText,
+        });
       }
     }
     markers.sort((a, b) => (a.time as number) - (b.time as number));

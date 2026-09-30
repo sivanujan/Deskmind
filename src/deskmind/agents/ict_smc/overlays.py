@@ -37,7 +37,9 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
         if kind in ("bsl", "ssl"):
             start_ms = it["created_time"]
             ended = it.get("taken_at") or it.get("expired_at")
-            end_ms = min(ended or view_end_ms, view_end_ms)
+            if ended is None and it.get("state") == "taken":
+                ended = it.get("confirmed_at")
+            end_ms = min(ended, view_end_ms) if ended else view_end_ms
             if end_ms <= start_ms:
                 end_ms = start_ms + 60_000
 
@@ -48,7 +50,7 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
             elif it.get("state") == "swept":
                 color += "80"
 
-            label = f"{'BSL' if is_bsl else 'SSL'} ({it.get('pool_type', '').upper()})"
+            label = "BSL" if is_bsl else "SSL"
             out.append(
                 LineOverlay(
                     **common,
@@ -86,7 +88,7 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
                         position="above" if is_bsl else "below",
                         shape="square",
                         color="#b388ff",
-                        text="swept",
+                        text="SWEEP",
                         meta=_meta(it, level=it["level"], swept_at=iso(it["swept_at"])),
                     )
                 )
@@ -95,7 +97,9 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
         elif kind.startswith("fvg"):
             start_ms = it["created_time"]
             ended = it.get("inverted_at") or it.get("filled_at") or it.get("expired_at")
-            end_ms = min(ended or view_end_ms, view_end_ms)
+            if ended is None and it.get("state") in ("filled", "inversion"):
+                ended = it.get("confirmed_at")
+            end_ms = min(ended, view_end_ms) if ended else view_end_ms
             if end_ms <= start_ms:
                 end_ms = start_ms + 60_000
 
@@ -103,13 +107,13 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
             state = it.get("state", "fresh")
             if state == "inversion":
                 color = "#f9731644"  # orange for inversion
-                label = f"IFVG ({it['direction']})"
+                label = "IFVG"
             elif is_bullish:
                 color = "#22c55e33" if state != "filled" else "#22c55e14"
-                label = f"Bullish FVG ({state})"
+                label = "FVG"
             else:
                 color = "#ef444433" if state != "filled" else "#ef444414"
-                label = f"Bearish FVG ({state})"
+                label = "FVG"
 
             out.append(
                 ZoneOverlay(
@@ -139,7 +143,9 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
         elif kind.startswith("ob"):
             start_ms = it["created_time"]
             ended = it.get("invalidated_at") or it.get("expired_at")
-            end_ms = min(ended or view_end_ms, view_end_ms)
+            if ended is None and it.get("state") == "invalidated":
+                ended = it.get("confirmed_at")
+            end_ms = min(ended, view_end_ms) if ended else view_end_ms
             if end_ms <= start_ms:
                 end_ms = start_ms + 60_000
 
@@ -147,10 +153,8 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
             state = it.get("state", "fresh")
             if is_bullish:
                 color = "#3b82f633" if state not in ("mitigated", "invalidated") else "#3b82f618"
-                label = f"Bullish OB ({state})"
             else:
                 color = "#f9731633" if state not in ("mitigated", "invalidated") else "#f9731618"
-                label = f"Bearish OB ({state})"
 
             out.append(
                 ZoneOverlay(
@@ -163,7 +167,7 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
                     bottom=it["bottom"],
                     confirmed_at=_s(it["confirmed_at"]),
                     color=color,
-                    label=label,
+                    label="OB",
                     meta=_meta(
                         it,
                         direction=it["direction"],
@@ -179,14 +183,16 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
 
         # ---------------------------------------------------- Breaker / Mitigation Blocks
         elif kind.startswith("breaker") or kind.startswith("mitigation"):
-            start_ms = it["created_time"]
+            # Breakers exist from when the ancestor OB was invalidated (confirmed_at).
+            start_ms = it.get("confirmed_at") or it["created_time"]
             ended = it.get("invalidated_at") or it.get("expired_at")
-            end_ms = min(ended or view_end_ms, view_end_ms)
+            if ended is None and it.get("state") == "invalidated":
+                ended = it.get("confirmed_at")
+            end_ms = min(ended, view_end_ms) if ended else view_end_ms
             if end_ms <= start_ms:
                 end_ms = start_ms + 60_000
 
             is_mitigation = it.get("is_mitigation", False)
-            title = "Mitigation Block" if is_mitigation else "Breaker Block"
             state = it.get("state", "active")
             color = "#a855f733" if state == "active" else "#a855f718"
             out.append(
@@ -200,7 +206,7 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
                     bottom=it["bottom"],
                     confirmed_at=_s(it["confirmed_at"]),
                     color=color,
-                    label=f"{title} ({it['direction']})",
+                    label="MIT" if is_mitigation else "BRK",
                     meta=_meta(
                         it,
                         direction=it["direction"],
@@ -217,7 +223,9 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
         elif kind == "liquidity_void":
             start_ms = it["created_time"]
             ended = it.get("filled_at") or it.get("expired_at")
-            end_ms = min(ended or view_end_ms, view_end_ms)
+            if ended is None and it.get("state") == "filled":
+                ended = it.get("confirmed_at")
+            end_ms = min(ended, view_end_ms) if ended else view_end_ms
             if end_ms <= start_ms:
                 end_ms = start_ms + 60_000
 
@@ -232,10 +240,86 @@ def to_overlays(items: list[dict[str, Any]], agent_version: str, view_end_ms: in
                     bottom=it["bottom"],
                     confirmed_at=_s(it["confirmed_at"]),
                     color="#eab30822",
-                    label=f"Void ({it.get('state')})",
+                    label="VOID",
                     meta=_meta(
                         it, direction=it.get("direction"), top=it["top"], bottom=it["bottom"]
                     ),
+                )
+            )
+
+        # ---------------------------------------------------- Dealing PD Range & OTE
+        elif kind == "pd_range":
+            start_s = it.get("from_bos_at", it["created_time"]) // 1000
+            end_s = view_end_ms // 1000
+            low = it["low"]
+            high = it["high"]
+            eq = it["equilibrium"]
+            ote_l = it.get("ote_low", low + 0.62 * (high - low))
+            ote_h = it.get("ote_high", low + 0.79 * (high - low))
+
+            # Premium zone tint
+            out.append(
+                ZoneOverlay(
+                    **common,
+                    id=f"{it['id']}:premium",
+                    kind="pd_range_premium",
+                    start_time=start_s,
+                    end_time=end_s,
+                    top=high,
+                    bottom=eq,
+                    confirmed_at=_s(it["confirmed_at"]),
+                    color="#ef444415",
+                    label="PREMIUM",
+                    meta=_meta(it, zone="premium", low=low, high=high, eq=eq),
+                )
+            )
+            # Discount zone tint
+            out.append(
+                ZoneOverlay(
+                    **common,
+                    id=f"{it['id']}:discount",
+                    kind="pd_range_discount",
+                    start_time=start_s,
+                    end_time=end_s,
+                    top=eq,
+                    bottom=low,
+                    confirmed_at=_s(it["confirmed_at"]),
+                    color="#22c55e15",
+                    label="DISCOUNT",
+                    meta=_meta(it, zone="discount", low=low, high=high, eq=eq),
+                )
+            )
+            # Equilibrium line
+            out.append(
+                LineOverlay(
+                    **common,
+                    id=f"{it['id']}:eq",
+                    kind="pd_range_eq",
+                    start_time=start_s,
+                    start_price=eq,
+                    end_time=end_s,
+                    end_price=eq,
+                    confirmed_at=_s(it["confirmed_at"]),
+                    style="dashed",
+                    color="#94a3b8",
+                    label="EQ",
+                    meta=_meta(it, equilibrium=eq),
+                )
+            )
+            # OTE Band
+            out.append(
+                ZoneOverlay(
+                    **common,
+                    id=f"{it['id']}:ote",
+                    kind="pd_range_ote",
+                    start_time=start_s,
+                    end_time=end_s,
+                    top=max(ote_l, ote_h),
+                    bottom=min(ote_l, ote_h),
+                    confirmed_at=_s(it["confirmed_at"]),
+                    color="#a855f725",
+                    label="OTE",
+                    meta=_meta(it, ote_low=ote_l, ote_high=ote_h),
                 )
             )
 

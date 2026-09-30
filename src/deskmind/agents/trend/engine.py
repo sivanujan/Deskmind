@@ -36,6 +36,7 @@ class TrendEngine:
         self.last_break_idx: int | None = None
         self.lines: list[TrendLine] = []  # active (unbroken, unexpired)
         self.line_ids: set[str] = set()  # every line ever created: ids are never reused
+        self.swept_swings: set[int] = set()  # swing pivot_times that have already emitted a sweep
         self.as_of: int | None = None
 
     # ------------------------------------------------------------ helpers
@@ -92,16 +93,18 @@ class TrendEngine:
                 continue
             closed = bar.close > level.price if direction == "up" else bar.close < level.price
             if not closed:
-                sweep = Sweep(
-                    direction=direction,
-                    level=level.price,
-                    extreme=bar.high if direction == "up" else bar.low,
-                    close=bar.close,
-                    time=bar.open_time,
-                    confirmed_at=bar.close_time,
-                    swing_pivot_time=level.pivot_time,
-                )
-                changes.append(sweep.item())
+                if level.pivot_time not in self.swept_swings:
+                    sweep = Sweep(
+                        direction=direction,
+                        level=level.price,
+                        extreme=bar.high if direction == "up" else bar.low,
+                        close=bar.close,
+                        time=bar.open_time,
+                        confirmed_at=bar.close_time,
+                        swing_pivot_time=level.pivot_time,
+                    )
+                    self.swept_swings.add(level.pivot_time)
+                    changes.append(sweep.item())
                 continue
             with_trend = self.trend == "ranging" or self.trend == (
                 "bullish" if direction == "up" else "bearish"
