@@ -412,3 +412,55 @@ def test_overlays_and_report_from_ict_smc(env) -> None:
         assert rep["agent"] == "ict_smc"
         assert rep["symbol"] == "BTCUSDT"
         assert "1h" in rep["timeframes"]
+
+
+def test_trend_report_rebuilt_from_transitions_when_no_report_stored(env) -> None:
+    """Backfills store no reports: the endpoint rebuilds the report from items + transitions,
+    and it equals what the engine reported at that time (as_of/atr derived from the candles)."""
+    import asyncio
+    import json
+
+    from deskmind.agents.trend.config import DEFAULT_CONFIG
+    from deskmind.agents.trend.history import TrendTransitionRecorder
+
+    app, _ = env
+    with TestClient(app) as c:
+        rows = c.get("/api/candles", params={"symbol": "BTCUSDT", "tf": "1h", "limit": 500}).json()
+        bars = [
+            Bar(k["time"] * 1000, k["time"] * 1000 + H1, k["open"], k["high"], k["low"], k["close"])
+            for k in rows["candles"]
+        ]
+        assert len(bars) >= 40
+        store_from = bars[20].close_time
+        rec = TrendTransitionRecorder()
+        res = run_batch(
+            SymbolTrendAgent("BTCUSDT", ["1h"], DEFAULT_CONFIG),
+            {"1h": bars},
+            store_from=store_from,
+            reports=False,
+            recorder=rec,
+        )
+        assert res.reports == []
+        asyncio.run(
+            app.state.trend_seed.replace_transitions(
+                "BTCUSDT", DEFAULT_CONFIG.version, store_from, rec.take()
+            )
+        )
+        checked = 0
+        for probe in (bars[25], bars[33], bars[-1]):
+            expected = run_batch(
+                SymbolTrendAgent("BTCUSDT", ["1h"], DEFAULT_CONFIG),
+                {"1h": [b for b in bars if b.close_time <= probe.close_time]},
+            ).reports[-1]
+            got = c.get(
+                "/api/agents/trend/report",
+                params={"symbol": "BTCUSDT", "as_of": probe.close_time // 1000},
+            )
+            assert got.status_code == 200
+            body = got.json()
+            assert body["as_of_ms"] == probe.close_time
+            assert json.loads(json.dumps(body["timeframes"]["1h"])) == json.loads(
+                json.dumps(expected["timeframes"]["1h"])
+            )
+            checked += 1
+        assert checked == 3

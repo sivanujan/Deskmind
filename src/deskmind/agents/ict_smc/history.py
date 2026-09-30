@@ -17,19 +17,17 @@ live runs, with a retention window.
 
 from __future__ import annotations
 
-import copy
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from deskmind.agents.transitions import STATE_BASELINE, TransitionRecorder, replay_items
+
 if TYPE_CHECKING:
-    from deskmind.agents.ict_smc.agent import SymbolIctSmcAgent
     from deskmind.agents.ict_smc.config import IctSmcConfig
     from deskmind.agents.ict_smc.engine import IctSmcEngine
 
 STATE_PD = "state:pd_range"
 STATE_SWEEP = "state:last_sweep"
 STATE_SMT = "state:smt"
-STATE_BASELINE = "state:baseline"  # marker: replay restarts here (a new baseline follows)
 PD_BASE_KEYS = ("low", "high", "from_bos_at", "equilibrium", "ote_low", "ote_high", "confirmed_at")
 
 # Fields each summary() exposes, taken from the item payload (models.py summary methods).
@@ -73,98 +71,21 @@ def _smt_payload(eng: IctSmcEngine) -> dict[str, Any] | None:
     return eng.last_smt.summary() if eng.last_smt else None
 
 
-@dataclass
-class TransitionRecorder:
-    """Turns engine output into transition rows. One per symbol; keeps the last payload per item."""
+class IctTransitionRecorder(TransitionRecorder):
+    """ICT/SMC hooks for the shared recorder (deskmind.agents.transitions)."""
 
-    rows: list[dict[str, Any]] = field(default_factory=list)
-    _last: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
-    _ord: dict[int, int] = field(default_factory=dict)
-    started: bool = False
+    def objects(self, engine: IctSmcEngine) -> list[Any]:
+        return [*engine.displacements, *engine.pools, *engine.fvgs, *engine.order_blocks,
+                *engine.breakers, *engine.voids]  # fmt: skip
 
-    def _emit(self, at: int, tf: str, item_id: str, kind: str, payload: dict[str, Any]) -> None:
-        o = self._ord.get(at, 0)
-        self._ord[at] = o + 1
-        self.rows.append(
-            {"tf": tf, "item_id": item_id, "kind": kind, "at": at, "ord": o, "payload": payload}
-        )
-
-    def record(self, at: int, tf: str, item: dict[str, Any]) -> None:
-        key = (tf, item["id"])
-        prev = self._last.get(key)
-        if prev is None:
-            self._emit(at, tf, item["id"], item["kind"], copy.deepcopy(item))
-        else:
-            diff = {k: v for k, v in item.items() if prev.get(k) != v}
-            if not diff:
-                return
-            self._emit(at, tf, item["id"], item["kind"], copy.deepcopy(diff))
-        self._last[key] = copy.deepcopy(item)
-
-    def record_state(self, at: int, tf: str, eng: IctSmcEngine) -> None:
-        for item_id, value in (
-            (STATE_PD, _pd_payload(eng)),
-            (STATE_SWEEP, eng.last_sweep),
-            (STATE_SMT, _smt_payload(eng)),
-        ):
-            key = (tf, item_id)
-            prev = self._last.get(key, {"value": None})
-            # the PD range's moving fields are derived from the close: only a new range counts
-            same = (
-                prev["value"] is not None
-                and value is not None
-                and all(prev["value"][k] == value[k] for k in PD_BASE_KEYS)
-                if item_id == STATE_PD
-                else prev["value"] == value
-            )
-            if same or (prev["value"] is None and value is None):
-                continue
-            self._emit(at, tf, item_id, item_id, {"value": copy.deepcopy(value)})
-            self._last[key] = {"value": copy.deepcopy(value)}
-
-    def baseline(self, at: int, agent: SymbolIctSmcAgent) -> None:
-        """Full payload of every object the engines hold, in list order (first stored boundary)."""
-        self.started = True
-        self._last.clear()
-        for tf, eng in agent.engines.items():
-            self._emit(at, tf, STATE_BASELINE, STATE_BASELINE, {"value": None})
-            for obj in [*eng.displacements, *eng.pools, *eng.fvgs, *eng.order_blocks,
-                        *eng.breakers, *eng.voids]:  # fmt: skip
-                self.record(at, tf, obj.item())
-            self.record_state(at, tf, eng)
-
-    def boundary(self, at: int, agent: SymbolIctSmcAgent, changes: list[tuple[str, dict]]) -> None:
-        for tf, item in changes:
-            self.record(at, tf, item)
-        for tf, eng in agent.engines.items():
-            self.record_state(at, tf, eng)
-
-
-def replay_items(
-    rows: list[dict[str, Any]], at_most: int
-) -> tuple[dict[str, dict[str, Any]], dict[str, int], dict[str, Any]]:
-    """Apply rows (one symbol+tf, sorted by (at, ord)) up to `at_most`.
-
-    Returns (items by id, creation rank by id, state values by state id)."""
-    items: dict[str, dict[str, Any]] = {}
-    rank: dict[str, int] = {}
-    states: dict[str, Any] = {}
-    for n, r in enumerate(rows):
-        if r["at"] > at_most:
-            break
-        if r["item_id"] == STATE_BASELINE:  # everything before it is superseded
-            items, rank, states = {}, {}, {}
-            continue
-        if r["item_id"].startswith("state:"):
-            states[r["item_id"]] = r["payload"]["value"]
-            continue
-        cur = items.get(r["item_id"])
-        if cur is None:
-            items[r["item_id"]] = copy.deepcopy(r["payload"])
-            rank[r["item_id"]] = n
-        else:
-            cur.update(copy.deepcopy(r["payload"]))
-    return items, rank, states
+    def record_states(self, at: int, tf: str, engine: IctSmcEngine) -> None:
+        # the PD range's moving fields are derived from the close: only a new range counts
+        self.record_value(
+            at, tf, STATE_PD, _pd_payload(engine),
+            same=lambda a, b: all(a[k] == b[k] for k in PD_BASE_KEYS),
+        )  # fmt: skip
+        self.record_value(at, tf, STATE_SWEEP, engine.last_sweep)
+        self.record_value(at, tf, STATE_SMT, _smt_payload(engine))
 
 
 def _pd_at(pd: dict[str, Any] | None, last_close: float | None) -> dict[str, Any] | None:
@@ -270,3 +191,7 @@ def reconstruct_report(
         },
         "reconstructed": True,
     }
+
+
+__all__ = ["STATE_BASELINE", "IctTransitionRecorder", "reconstruct_report", "reconstruct_state",
+           "replay_items"]  # fmt: skip

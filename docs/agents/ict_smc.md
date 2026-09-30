@@ -270,7 +270,7 @@ Overlays strictly conform to schema version 1 (`OverlayResponse`):
   last baseline <= T.
 - `history.reconstruct_state(rows, T, cfg, last_close)` rebuilds `IctSmcEngine.state()` at T
   exactly (tested against the live engine at random T). The API rebuilds reports from it.
-- Full reports: live runs only, kept `ICT_SMC_REPORT_RETENTION_DAYS` (default 7). Backfills store
+- Full reports: live runs only, kept `ICT_SMC_REPORT_RETENTION_DAYS` (default 3). Backfills store
   items + transitions only (`--debug-report-days N` for a short debug window).
 
 ## 12. Version History

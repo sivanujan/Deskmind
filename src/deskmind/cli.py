@@ -256,7 +256,7 @@ def agents_backfill(
     end: str = typer.Option("", help="UTC end (default: now)"),
     debug_report_days: float = typer.Option(
         0.0,
-        help="ict_smc only: also store full reports for the last N days (debug). Default: "
+        help="Also store full reports for the last N days (debug). Default: "
         "items + transitions only; state as of any T is rebuilt from them.",
     ),
 ) -> None:
@@ -291,6 +291,7 @@ def agents_backfill(
                         data_dir=settings.data_dir,
                         recent=PostgresRecentCandles(engine),
                         store=PostgresTrendStore(engine),
+                        debug_report_days=debug_report_days,
                     )
                     kinds = [
                         "swing_high",

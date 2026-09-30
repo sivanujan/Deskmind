@@ -15,7 +15,7 @@ from typing import Any
 
 from deskmind.agents.ict_smc.config import AGENT_NAME, DEFAULT_CONFIG, IctSmcConfig
 from deskmind.agents.ict_smc.engine import IctSmcEngine
-from deskmind.agents.ict_smc.history import TransitionRecorder
+from deskmind.agents.ict_smc.history import IctTransitionRecorder as TransitionRecorder
 from deskmind.agents.ict_smc.models import SMTDivergence
 from deskmind.agents.trend.config import DEFAULT_CONFIG as DEFAULT_TREND_CONFIG
 from deskmind.agents.trend.config import TrendConfig

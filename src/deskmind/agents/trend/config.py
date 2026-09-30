@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 AGENT_NAME = "trend"
-AGENT_VERSION = "1.1.1"  # 1.1.1: an expired/broken trend line is never re-created
+AGENT_VERSION = "1.2.0"  # 1.2.0: point-in-time storage (items + transitions), rules unchanged
 
 
 @dataclass(frozen=True)

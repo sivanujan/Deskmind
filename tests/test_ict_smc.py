@@ -621,7 +621,8 @@ def test_state_reconstructed_from_transitions_equals_engine_state_at_random_t() 
     import json
     import random
 
-    from deskmind.agents.ict_smc.history import TransitionRecorder, reconstruct_state
+    from deskmind.agents.ict_smc.history import IctTransitionRecorder as TransitionRecorder
+    from deskmind.agents.ict_smc.history import reconstruct_state
 
     h1 = _random_walk_bars(2400, seed=21, iv=H)
     h2 = [

@@ -1,4 +1,5 @@
-"""Persistence of trend items (agent_events) and reports (agent_reports). Postgres + in-memory."""
+"""Persistence of trend items (trend_items), transitions (agent_item_transitions) and live reports
+(agent_reports, retention window). Postgres (compressed hypertables) + in-memory."""
 
 from __future__ import annotations
 
@@ -6,14 +7,15 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+from deskmind.agents.transitions import MemoryTransitions, PgTransitions
 from deskmind.agents.trend.agent import REPORT_TIMEFRAME
 from deskmind.agents.trend.config import AGENT_NAME, AGENT_VERSION
 from deskmind.agents.trend.models import as_of as item_as_of
-from deskmind.db.models import AgentEvent, AgentReport
+from deskmind.db.models import AgentReport, TrendItem
 
 BATCH = 1000
 
@@ -43,12 +45,23 @@ class TrendStore(Protocol):
         self, symbol: str, tf: str, start_ms: int | None, end_ms: int | None, as_of_ms: int | None
     ) -> list[dict[str, Any]]: ...
     async def latest_report(self, symbol: str, as_of_ms: int | None) -> dict[str, Any] | None: ...
+    async def replace_transitions(self, symbol, version, from_ms, rows) -> int: ...
+    async def append_transitions(self, symbol, version, rows) -> int: ...
+    async def transitions(self, symbol, version, tf, upto_ms) -> list[dict[str, Any]]: ...
+    async def prune_reports(self, symbol: str, before_ms: int) -> int: ...
 
 
-class MemoryTrendStore:
+class MemoryTrendStore(MemoryTransitions):
     def __init__(self) -> None:
+        super().__init__()
         self.events: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.reports: dict[tuple[str, int], dict[str, Any]] = {}
+
+    async def prune_reports(self, symbol: str, before_ms: int) -> int:
+        old = [k for k in self.reports if k[0] == symbol and k[1] < before_ms]
+        for k in old:
+            del self.reports[k]
+        return len(old)
 
     async def upsert_items(self, symbol, items, version) -> int:
         n = 0
@@ -82,32 +95,48 @@ class MemoryTrendStore:
 class PostgresTrendStore:
     def __init__(self, engine: AsyncEngine) -> None:
         self._sessions = async_sessionmaker(engine, expire_on_commit=False)
+        self._trans = PgTransitions(self._sessions, AGENT_NAME)
+
+    async def replace_transitions(self, symbol, version, from_ms, rows) -> int:
+        return await self._trans.replace(symbol, version, from_ms, rows)
+
+    async def append_transitions(self, symbol, version, rows) -> int:
+        return await self._trans.append(symbol, version, rows)
+
+    async def transitions(self, symbol, version, tf, upto_ms) -> list[dict[str, Any]]:
+        return await self._trans.load(symbol, version, tf, upto_ms)
+
+    async def prune_reports(self, symbol: str, before_ms: int) -> int:
+        return await self._trans.prune_reports(symbol, AGENT_VERSION, before_ms)
 
     async def upsert_items(self, symbol, items, version) -> int:
         rows = [
             {
-                "agent": AGENT_NAME,
                 "symbol": symbol,
                 "timeframe": tf,
+                "agent_version": version,
                 "item_id": item["id"],
                 "kind": item["kind"],
                 "pivot_time": _dt(item["pivot_time"]),
                 "confirmed_at": _dt(item["confirmed_at"]),
-                "agent_version": version,
                 "payload": item,
             }
             for tf, item in items
         ]
         async with self._sessions() as session:
             for i in range(0, len(rows), BATCH):
-                stmt = insert(AgentEvent).values(rows[i : i + BATCH])
+                stmt = insert(TrendItem).values(rows[i : i + BATCH])
                 stmt = stmt.on_conflict_do_update(
-                    index_elements=["agent", "symbol", "timeframe", "item_id"],
+                    index_elements=[
+                        "symbol",
+                        "timeframe",
+                        "agent_version",
+                        "item_id",
+                        "confirmed_at",
+                    ],
                     set_={
                         "kind": stmt.excluded.kind,
                         "pivot_time": stmt.excluded.pivot_time,
-                        "confirmed_at": stmt.excluded.confirmed_at,
-                        "agent_version": stmt.excluded.agent_version,
                         "payload": stmt.excluded.payload,
                         "updated_at": datetime.now(UTC),
                     },
@@ -141,22 +170,18 @@ class PostgresTrendStore:
         return len(rows)
 
     async def items(self, symbol, tf, start_ms, end_ms, as_of_ms):
-        q = select(AgentEvent.payload).where(
-            AgentEvent.agent == AGENT_NAME,
-            AgentEvent.agent_version == AGENT_VERSION,  # never mix output of older rule sets
-            AgentEvent.symbol == symbol,
-            AgentEvent.timeframe == tf,
+        q = select(TrendItem.payload).where(
+            TrendItem.agent_version == AGENT_VERSION,  # never mix output of older rule sets
+            TrendItem.symbol == symbol,
+            TrendItem.timeframe == tf,
         )
         if as_of_ms is not None:
-            q = q.where(AgentEvent.confirmed_at <= _dt(as_of_ms))
+            q = q.where(TrendItem.confirmed_at <= _dt(as_of_ms))
         if end_ms is not None:
-            q = q.where(AgentEvent.pivot_time <= _dt(end_ms))
+            q = q.where(TrendItem.pivot_time <= _dt(end_ms))
         if start_ms is not None:
             q = q.where(
-                or_(
-                    AgentEvent.pivot_time >= _dt(start_ms),
-                    and_(AgentEvent.kind.like("trendline%")),
-                )
+                or_(TrendItem.pivot_time >= _dt(start_ms), TrendItem.kind.like("trendline%"))
             )
         async with self._sessions() as session:
             payloads = list((await session.execute(q)).scalars())

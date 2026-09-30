@@ -1,6 +1,6 @@
 # Trend & Structure agent — rule specification
 
-Agent name `trend`, version **1.1.1** (`src/deskmind/agents/trend/config.py`). Deterministic
+Agent name `trend`, version **1.2.0** (`src/deskmind/agents/trend/config.py`). Deterministic
 Python, no LLM. Every number below is a parameter of `TrendConfig`; changing any parameter
 requires a new `agent_version`.
 
@@ -133,8 +133,15 @@ published on Redis `deskmind:agent_report`):
 ```
 
 Only timeframes that closed at `as_of` are updated; the others keep their latest state with their
-own `as_of`. Items (swings, breaks, sweeps, trend lines) are stored in `agent_events` and served
+own `as_of`. Items (swings, breaks, sweeps, trend lines) are stored in `trend_items` and served
 to the chart by `GET /api/overlays` (`as_of` parameter = replay).
+
+Point-in-time storage (since 1.2.0, same design as ict_smc): items + every change in
+`agent_item_transitions` (compressed TimescaleDB hypertables), plus the synthetic `state:trend`
+({trend, reason}; it also changes on a timeout to ranging, without an item). `as_of` and `atr`
+move every candle and are re-derived from the candles at T (`history.bar_context`, the engine's
+formula). `history.reconstruct_state` == `TrendEngine.state()` at any T (tested at random T).
+Backfills store no reports; live runs keep them `TREND_REPORT_RETENTION_DAYS` (default 3).
 
 ## 8. Version history
 
@@ -147,6 +154,8 @@ to the chart by `GET /api/overlays` (`as_of` parameter = replay).
   with a later `confirmed_at`; the stored item then no longer showed that the line was known
   earlier. Found by the real-data no-look-ahead test (SOLUSDT 5m). Line anchors are now used at
   most once.
+- 1.2.0 — storage only, rules unchanged: items + state transitions are the point-in-time record
+  (section 7); backfills store no full reports; live reports have a retention window.
 
 ## 9. Warm-up and consistency
 

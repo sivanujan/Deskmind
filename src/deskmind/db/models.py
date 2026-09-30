@@ -331,3 +331,22 @@ class IctSmcItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class TrendItem(Base):
+    """Latest payload of each trend item (chart overlays). Hypertable on `confirmed_at`,
+    compressed after 30 days (migration 0011)."""
+
+    __tablename__ = "trend_items"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    timeframe: Mapped[str] = mapped_column(String(8), primary_key=True)
+    agent_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    pivot_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

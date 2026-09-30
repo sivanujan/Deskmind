@@ -15,6 +15,7 @@ from typing import Any
 
 from deskmind.agents.trend.config import AGENT_NAME, DEFAULT_CONFIG, TrendConfig
 from deskmind.agents.trend.engine import TrendEngine
+from deskmind.agents.trend.history import TrendTransitionRecorder
 from deskmind.agents.trend.models import Bar
 from deskmind.data.datasets import TIMEFRAME_MS
 
@@ -39,7 +40,7 @@ def _iso_times(obj: Any) -> Any:
 
 @dataclass
 class AgentOutput:
-    report: dict[str, Any]
+    report: dict[str, Any] | None  # None when the caller did not ask for a report
     changes: list[tuple[str, dict[str, Any]]] = field(default_factory=list)  # (timeframe, item)
 
 
@@ -52,14 +53,16 @@ class SymbolTrendAgent:
         self.cfg = cfg
         self.engines = {tf: TrendEngine(symbol, tf, cfg) for tf in self.timeframes}
 
-    def on_bar_close(self, close_time: int, bars_by_tf: dict[str, list[Bar]]) -> AgentOutput:
+    def on_bar_close(
+        self, close_time: int, bars_by_tf: dict[str, list[Bar]], with_report: bool = True
+    ) -> AgentOutput:
         changes: list[tuple[str, dict[str, Any]]] = []
         for tf in self.timeframes:
             for bar in sorted(bars_by_tf.get(tf, []), key=lambda b: b.open_time):
                 if bar.close_time > close_time:
                     continue  # never feed a candle that has not closed at this boundary
                 changes.extend((tf, item) for item in self.engines[tf].on_candle(bar))
-        return AgentOutput(self.report(close_time), changes)
+        return AgentOutput(self.report(close_time) if with_report else None, changes)
 
     def report(self, as_of: int) -> dict[str, Any]:
         return {
@@ -77,6 +80,7 @@ class BatchResult:
     reports: list[dict[str, Any]]
     items: dict[tuple[str, str], dict[str, Any]]  # (timeframe, id) -> latest item version
     boundaries: int = 0
+    recorder: TrendTransitionRecorder | None = None
 
 
 def run_batch(
@@ -85,27 +89,36 @@ def run_batch(
     *,
     report_from: int | None = None,
     store_from: int | None = None,
+    reports: bool = True,
+    recorder: TrendTransitionRecorder | None = None,
 ) -> BatchResult:
     """Replay history through `agent.on_bar_close`, one bar-close boundary at a time.
 
-    Reports are kept for boundaries >= report_from; items whose confirmed_at >= store_from.
-    """
+    Reports are built only if `reports` and kept for boundaries >= report_from; items whose
+    confirmed_at >= store_from. With a recorder, transitions are recorded from the first
+    boundary >= store_from (starting with a baseline of everything the engines hold)."""
     base = min(TIMEFRAME_MS[tf] for tf in agent.timeframes)
     by_close: dict[int, dict[str, list[Bar]]] = {}
     for tf, bars in bars_by_tf.items():
         for b in bars:
             by_close.setdefault(b.close_time, {}).setdefault(tf, []).append(b)
-    reports: list[dict[str, Any]] = []
+    report_list: list[dict[str, Any]] = []
     items: dict[tuple[str, str], dict[str, Any]] = {}
     boundaries = 0
     for t in sorted(by_close):
         if t % base:
             continue  # only real bar-close boundaries (all candles close on the base grid)
-        out = agent.on_bar_close(t, by_close[t])
+        want = reports and (report_from is None or t >= report_from)
+        out = agent.on_bar_close(t, by_close[t], with_report=want)
         boundaries += 1
-        if report_from is None or t >= report_from:
-            reports.append(out.report)
+        if out.report is not None:
+            report_list.append(out.report)
+        if recorder is not None and (store_from is None or t >= store_from):
+            if recorder.started:
+                recorder.boundary(t, agent, out.changes)
+            else:
+                recorder.baseline(t, agent)
         for tf, item in out.changes:
             if store_from is None or item["confirmed_at"] >= store_from:
                 items[(tf, item["id"])] = item
-    return BatchResult(reports, items, boundaries)
+    return BatchResult(report_list, items, boundaries, recorder)

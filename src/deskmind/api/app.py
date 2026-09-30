@@ -155,6 +155,39 @@ def create_app(
         )
         return rows[-1].close if rows else None
 
+    async def trend_report_at(sym: str, as_of_ms: int | None) -> dict[str, Any] | None:
+        """Stored live trend report for that exact boundary, else rebuilt from transitions."""
+        from deskmind.agents.trend.config import DEFAULT_CONFIG as TREND_CFG
+        from deskmind.agents.trend.history import bar_context, reconstruct_report
+        from deskmind.agents.trend.models import Bar
+
+        store = app.state.trend_store
+        base = min(TIMEFRAME_MS[t] for t in timeframes)
+        at = ((as_of_ms if as_of_ms is not None else B.now_ms()) // base) * base
+        stored = await store.latest_report(sym, at)
+        if stored is not None and stored.get("as_of_ms") == at:
+            return stored
+        rows = {t: await store.transitions(sym, TREND_CFG.version, t, at) for t in timeframes}
+        if not any(rows.values()):
+            return stored
+        context = {}
+        for t in timeframes:
+            iv = TIMEFRAME_MS[t]
+            candles = await app.state.candles.candles(
+                sym,
+                t,
+                start_ms=None,
+                end_ms=at - iv + 1,
+                limit=TREND_CFG.atr_period + 1,
+                now_ms=B.now_ms(),
+            )
+            bars = [
+                Bar(c.time * 1000, c.time * 1000 + iv, c.open, c.high, c.low, c.close)
+                for c in candles
+            ]
+            context[t] = bar_context(bars, TREND_CFG)
+        return reconstruct_report(sym, {t: r for t, r in rows.items() if r}, at, TREND_CFG, context)
+
     async def ict_report_at(sym: str, as_of_ms: int | None) -> dict[str, Any] | None:
         """Stored live report for that exact boundary, else rebuilt from items + transitions."""
         from deskmind.agents.ict_smc.config import DEFAULT_CONFIG as ICT_CFG
@@ -331,11 +364,9 @@ def create_app(
         sym = symbol.upper()
         if sym not in [e["symbol"] for e in await symbol_entries()]:
             raise HTTPException(404, f"unknown symbol {symbol}")
-        report = await app.state.trend_store.latest_report(
-            sym, as_of * 1000 if as_of is not None else None
-        )
+        report = await trend_report_at(sym, as_of * 1000 if as_of is not None else None)
         if report is None:
-            raise HTTPException(404, "no trend report stored for this time (run the backfill)")
+            raise HTTPException(404, "no trend data for this time (run the backfill)")
         return TrendReportResponse(**report)
 
     @app.get("/api/agents/ict_smc/report")

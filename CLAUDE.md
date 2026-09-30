@@ -8,6 +8,11 @@ always a pinned version ID, never a `~...-latest` alias).
 A Risk Manager (deterministic code, has veto power) sizes every trade, and a human approves before
 anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET only, end-to-end.
 
+## Working sessions
+- Only ONE working session (one agent / one person) changes this repo at a time. Two parallel
+  sessions produced conflicting uncommitted work before; finish and commit (or stop) one session
+  before starting another.
+
 ## HARD CONSTRAINTS
 1. There is an existing PostgreSQL server on 127.0.0.1:5432 used by ANOTHER project.
    NEVER connect to it, modify it, create databases in it, install extensions on it, or change its
@@ -208,17 +213,18 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
   never add a vectorised shortcut. `deskmind agents check trend --all` must PASS after any change.
 - All parameters live in the versioned config (`agents/trend/config.py`); ANY parameter or rule
   change bumps `AGENT_VERSION` and gets a line in the spec's version history. Stored items
-  (`agent_events`) and reports (`agent_reports`) are keyed by version; the API serves only the
+  (`trend_items` / `ict_smc_items` + transitions) and live reports are keyed by version; the API serves only the
   current version, so re-run `deskmind agents backfill trend --all --start ...` after a bump.
 - Live: `deskmind agents run trend` (separate process; subscribes to `deskmind:bar_close`, reads
   Redis buffers, writes `agent_events` + `agent_reports`, publishes `deskmind:agent_report`).
 - Overlays: `GET /api/overlays?symbol&tf&start&end&as_of` (as_of = replay), report:
   `GET /api/agents/trend/report?symbol&as_of`. The chart's Replay mode uses both.
-- Agent storage (ict_smc since 1.2.0; do the same for new agents): items + every state
-  transition are the point-in-time source of truth (`agent_item_transitions`, `ict_smc_items`,
-  compressed TimescaleDB hypertables). NEVER store a full report per bar for backfills: state as
-  of T is rebuilt (`agents/ict_smc/history.reconstruct_state`, tested equal to the live engine).
-  Full reports only for live runs, kept ICT_SMC_REPORT_RETENTION_DAYS (default 7).
+- Agent storage (trend and ict_smc since 1.2.0; do the same for every new agent): items + every
+  state transition are the point-in-time source of truth (`agent_item_transitions` +
+  `trend_items` / `ict_smc_items`, compressed TimescaleDB hypertables; shared code in
+  `agents/transitions.py`). NEVER store a full report per bar for backfills: state as of T is
+  rebuilt (`agents/<agent>/history.reconstruct_state`, tested equal to the live engine at random
+  T). Full reports only for live runs, kept TREND_/ICT_SMC_REPORT_RETENTION_DAYS (default 3).
   Old-version reports/items are deleted only after the user confirms.
 
 ## Commands

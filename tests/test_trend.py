@@ -3,6 +3,7 @@
 import itertools
 import random
 import zlib
+from typing import Any
 
 import pytest
 
@@ -311,3 +312,101 @@ def test_consecutive_wicks_produce_single_sweep() -> None:
     assert len(all_sweeps) == 1
     assert all_sweeps[0]["level"] == target_low
     assert all_sweeps[0]["pivot_time"] == extra[0].open_time
+
+
+# ---------------------------------------------------------------- point-in-time storage (1.2.0)
+
+
+def _walk(n: int, seed: int, iv: int = H) -> list[Bar]:
+    rng = random.Random(seed)
+    bars, price = [], 100.0
+    for i in range(n):
+        o = price
+        price = max(5.0, price + rng.gauss(0, 1.2) + (0.9 if (i // 70) % 2 else -0.9))
+        hi = max(o, price) + abs(rng.gauss(0, 0.6))
+        lo = min(o, price) - abs(rng.gauss(0, 0.6))
+        t = T0 + i * iv
+        bars.append(Bar(t, t + iv, o, hi, lo, price))
+    return bars
+
+
+@pytest.mark.parametrize("seed", [4, 17])
+def test_state_reconstructed_from_transitions_equals_engine_state_at_random_t(seed: int) -> None:
+    """Point-in-time trend state from items + transitions == the live engine state at T."""
+    import copy
+    import json
+
+    from deskmind.agents.transitions import rows_by_tf
+    from deskmind.agents.trend.history import (
+        TrendTransitionRecorder,
+        bar_context,
+        reconstruct_state,
+    )
+
+    cfg = TrendConfig(left_bars=2, right_bars=2, atr_period=5, min_swing_atr=1.0,
+                      trendline_tolerance_atr=0.4, range_after_bars=40)  # fmt: skip
+    h1 = _walk(2400, seed)
+    h2 = [
+        Bar(a.open_time, b.close_time, a.open, max(a.high, b.high), min(a.low, b.low), b.close)
+        for a, b in zip(h1[::2], h1[1::2], strict=False)
+    ]
+    bars = {"1h": h1, "2h": h2}
+    by_close: dict[int, dict[str, list[Bar]]] = {}
+    for tf, bs in bars.items():
+        for b in bs:
+            by_close.setdefault(b.close_time, {}).setdefault(tf, []).append(b)
+    agent = SymbolTrendAgent("TEST", ["1h", "2h"], cfg)
+    rec = TrendTransitionRecorder()
+    store_from = h1[500].close_time
+    bounds = sorted(by_close)
+    rng = random.Random(seed)
+    check = set(rng.sample([t for t in bounds if t > store_from], 60))
+    check |= {next(t for t in bounds if t >= store_from), bounds[-1]}
+    seen: dict[str, list[Bar]] = {"1h": [], "2h": []}
+    live: dict[int, dict[str, Any]] = {}
+    for t in bounds:
+        out = agent.on_bar_close(t, by_close[t], with_report=False)
+        for tf, bs in by_close[t].items():
+            seen[tf].extend(bs)
+        if t >= store_from:
+            if rec.started:
+                rec.boundary(t, agent, out.changes)
+            else:
+                rec.baseline(t, agent)
+        if t in check:
+            live[t] = {
+                tf: (copy.deepcopy(e.state()), bar_context(seen[tf], cfg))
+                for tf, e in agent.engines.items()
+            }
+    rows = rows_by_tf(json.loads(json.dumps(rec.rows)))  # stored as JSONB
+    eng = agent.engines["1h"]
+    assert eng.lines or any(r["kind"].startswith("trendline") for r in rows["1h"])
+    assert any(r["kind"] in ("bos", "choch") for r in rows["1h"])
+    ranging = {s["trend"] for p in live.values() for s, _ in p.values()}
+    assert "ranging" in ranging and ranging - {"ranging"}  # timeouts + real trends covered
+    n = 0
+    for t, per_tf in live.items():
+        for tf, (state, (as_of_ctx, atr_ctx)) in per_tf.items():
+            got = reconstruct_state(rows[tf], t, cfg, as_of_ctx, atr_ctx)
+            assert json.loads(json.dumps(got)) == json.loads(json.dumps(state)), (t, tf)
+            n += 1
+    assert n == 2 * len(check)
+
+
+def test_bar_context_matches_engine_as_of_and_atr() -> None:
+    from deskmind.agents.trend.history import bar_context
+
+    bars = _walk(300, seed=2)
+    eng = TrendEngine("TEST", "1h", CFG)
+    for i, b in enumerate(bars):
+        eng.on_candle(b)
+        if i >= CFG.atr_period:
+            assert bar_context(bars[: i + 1], CFG) == (eng.as_of, eng.atr)
+
+
+def test_backfill_run_batch_without_reports_keeps_items_identical() -> None:
+    bars = {"1h": _walk(1500, seed=9)}
+    a = run_batch(SymbolTrendAgent("TEST", ["1h"], CFG), bars, store_from=T0 + 400 * H)
+    b = run_batch(SymbolTrendAgent("TEST", ["1h"], CFG), bars, store_from=T0 + 400 * H,
+                  reports=False)  # fmt: skip
+    assert a.items == b.items and b.reports == [] and len(a.reports) == 1500
