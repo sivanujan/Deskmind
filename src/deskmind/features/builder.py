@@ -95,7 +95,9 @@ def build_feature_row(
         nearest_ob_dist_atr = 999.0
 
     # 6. Strong Pool Swept Recent
-    last_sweep = smc_1h.get("last_sweep") or {}
+    # NOTE: last_sweep lives inside liquidity sub-dict, not at smc root.
+    liquidity_1h = smc_1h.get("liquidity") or {}
+    last_sweep = liquidity_1h.get("last_sweep") or {}
     sweep_time = last_sweep.get("confirmed_at") or last_sweep.get("created_time")
     if sweep_time:
         bars_ago = max(0, int((timestamp - sweep_time) / 300_000))
@@ -107,23 +109,28 @@ def build_feature_row(
         strong_pool_swept_bars_ago = -1
 
     # 7. Time Agent Features
+    # NOTE: ict_time state() returns killzone as a dict {"current": ..., "minutes_to_next": ...}
+    #       and silver_bullet as {"active": ..., "fvg_in_windows": []}. Reading the sub-keys
+    #       is mandatory; reading the root key names directly gives None/False for all rows.
     time_st = ict_time_state or {}
-    killzone = str(time_st.get("current_killzone") or "none")
-    silver_bullet_active = bool(time_st.get("current_silver_bullet") is not None)
+    kz_dict = time_st.get("killzone") or {}
+    killzone = str(kz_dict.get("current") or "none")
+    sb_dict = time_st.get("silver_bullet") or {}
+    silver_bullet_active = sb_dict.get("active") is not None
     session = str(time_st.get("current_session") or "off_hours")
 
-    key_levels_raw = time_st.get("key_levels")
+    # key_levels is a list of dicts; each dict has "level_type" (not "kind").
+    # We want the most-recently-confirmed PDH and PDL.
+    key_levels_raw = time_st.get("key_levels") or []
     pdh_obj: dict[str, Any] = {}
     pdl_obj: dict[str, Any] = {}
-    if isinstance(key_levels_raw, dict):
-        pdh_obj = key_levels_raw.get("pdh") or {}
-        pdl_obj = key_levels_raw.get("pdl") or {}
-    elif isinstance(key_levels_raw, list):
+    if isinstance(key_levels_raw, list):
         for kl in key_levels_raw:
             if isinstance(kl, dict):
-                if kl.get("kind") == "pdh":
+                lt = kl.get("level_type")  # "pdh" | "pdl" | "pwh" | …
+                if lt == "pdh" and not pdh_obj:
                     pdh_obj = kl
-                elif kl.get("kind") == "pdl":
+                elif lt == "pdl" and not pdl_obj:
                     pdl_obj = kl
 
     dist_to_pdh_atr = (
@@ -151,29 +158,34 @@ def build_feature_row(
     )
 
     # 8. Price Action Features
+    # NOTE: state() returns "active_zones" (not "zones") and "recent_patterns" (not "last_pattern").
+    #       Zone items have "top"/"bottom"/"mid" (not "high"/"low") and "touches" list
+    #       (not "touch_count"). Pattern dicts have "pattern" key for the kind name.
     pa_1h = price_action_state_1h or {}
-    zones = pa_1h.get("zones") or []
+    active_zones = pa_1h.get("active_zones") or []
     nearest_sr = None
     min_sr_dist = float("inf")
-    for z in zones:
-        if isinstance(z, dict) and z.get("state") == "active":
-            d_high = abs(current_close - z.get("high", current_close))
-            d_low = abs(current_close - z.get("low", current_close))
-            dist = min(d_high, d_low)
+    for z in active_zones:
+        if isinstance(z, dict) and z.get("state") not in ("retired", None):
+            mid = z.get("mid", current_close)
+            dist = abs(current_close - mid)
             if dist < min_sr_dist:
                 min_sr_dist = dist
                 nearest_sr = z
 
     if nearest_sr:
-        nearest_sr_strength = int(nearest_sr.get("touch_count", 0))
+        # "touches" is a list of timestamps; its length is the touch count.
+        nearest_sr_strength = int(len(nearest_sr.get("touches") or []))
         nearest_sr_dist_atr = round(min_sr_dist / atr_1h, 4)
     else:
         nearest_sr_strength = 0
         nearest_sr_dist_atr = 999.0
 
-    last_pat = pa_1h.get("last_pattern") or {}
+    # Most recent pattern is last element in recent_patterns list.
+    recent_pats = pa_1h.get("recent_patterns") or []
+    last_pat = recent_pats[-1] if recent_pats else {}
     pattern_recent_type = str(last_pat.get("pattern", "none")) if isinstance(last_pat, dict) else "none"
-    pattern_recent_at_zone = bool(last_pat.get("at_zone", False)) if isinstance(last_pat, dict) else False
+    pattern_recent_at_zone = bool(last_pat.get("at_zone")) if isinstance(last_pat, dict) else False
 
     if isinstance(last_pat, dict) and "pattern" in last_pat:
         pat_name = last_pat["pattern"]
