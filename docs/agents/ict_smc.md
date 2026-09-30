@@ -1,4 +1,4 @@
-# ICT / SMC Liquidity agent — rule specification
+# ICT / SMC Liquidity agent â rule specification
 
 Agent name `ict_smc`, version **1.2.0** (`src/deskmind/agents/ict_smc/config.py`). Deterministic
 Python, no LLM. Every parameter below is a property of `IctSmcConfig`; changing any parameter
@@ -34,8 +34,8 @@ Candles are processed strictly one at a time in ascending time order, only after
 **closed**. A candle with open time `t` on a timeframe of length `iv` closes at `t + iv`.
 
 Every item produced by the agent carries two timestamps (epoch milliseconds UTC):
-- `created_time` / `time` — where the item is **drawn** on the chart (e.g. open time of candle 2 for an FVG, open time of the OB candle, pivot time of the pool).
-- `confirmed_at` — the close time of the candle at which the item became **knowable** without future information.
+- `created_time` / `time` â where the item is **drawn** on the chart (e.g. open time of candle 2 for an FVG, open time of the OB candle, pivot time of the pool).
+- `confirmed_at` â the close time of the candle at which the item became **knowable** without future information.
 
 The state of the agent *as of time T* uses only items with `confirmed_at <= T`. Any state transition
 occurring after `T` (e.g. a pool swept at $T_2 > T$, an FVG filled at $T_2 > T$, an OB invalidated at $T_2 > T$)
@@ -274,10 +274,10 @@ Overlays strictly conform to schema version 1 (`OverlayResponse`):
   items + transitions only (`--debug-report-days N` for a short debug window).
 
 ## 12. Version History
-- 1.0.0 — Initial deterministic ICT/SMC liquidity and PD implementation.
-- 1.1.0 — Items store the ATR used at detection; pools carry `strength` (strong = EQH/EQL);
+- 1.0.0 â Initial deterministic ICT/SMC liquidity and PD implementation.
+- 1.1.0 â Items store the ATR used at detection; pools carry `strength` (strong = EQH/EQL);
   warm-up source OBs of in-window breakers are persisted.
-- 1.2.0 — (a) A swing re-sent by the trend engine on a state change updates the stored swing and
+- 1.2.0 â (a) A swing re-sent by the trend engine on a state change updates the stored swing and
   never forms a new pool; EQH/EQL pools need two DISTINCT swing candles (66% of 1.1.0 EQ pools
   paired a swing with itself). (b) Unique ids: OB `ob_<dir>:<created>:<confirmed>`, breaker /
   mitigation block reuse their source OB's suffix, pools list their swing times (single-swing

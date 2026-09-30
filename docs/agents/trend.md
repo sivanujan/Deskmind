@@ -1,4 +1,4 @@
-# Trend & Structure agent — rule specification
+# Trend & Structure agent â rule specification
 
 Agent name `trend`, version **1.2.0** (`src/deskmind/agents/trend/config.py`). Deterministic
 Python, no LLM. Every number below is a parameter of `TrendConfig`; changing any parameter
@@ -24,8 +24,8 @@ A candle with open time `t` on a timeframe of length `iv` closes at `t + iv`.
 
 Every item the agent produces carries two times:
 
-- `pivot_time` / `time` — where it is **drawn** (the candle open time of the high/low or break).
-- `confirmed_at` — the close time of the candle at which the item became **knowable**.
+- `pivot_time` / `time` â where it is **drawn** (the candle open time of the high/low or break).
+- `confirmed_at` â the close time of the candle at which the item became **knowable**.
 
 The state of the agent *as of time T* uses only items with `confirmed_at <= T`. Later changes to
 an item (a swing getting broken, a trend line gaining a touch or breaking) carry their own time
@@ -145,16 +145,16 @@ Backfills store no reports; live runs keep them `TREND_REPORT_RETENTION_DAYS` (d
 
 ## 8. Version history
 
-- 1.0.0 — initial rules.
-- 1.1.0 — trend lines expire after `trendline_max_idle_bars` without a touch. Reason: in 1.0.0 a
+- 1.0.0 â initial rules.
+- 1.1.0 â trend lines expire after `trendline_max_idle_bars` without a touch. Reason: in 1.0.0 a
   line that was never broken stayed active forever, so where a run started changed which lines
   existed (measured: up to 632 candles to converge on BNBUSDT 2h). Stored items and reports are
   keyed by version; the API only serves the current version.
-- 1.1.1 — an expired line could be re-created later from the same two anchors, re-using its id
+- 1.1.1 â an expired line could be re-created later from the same two anchors, re-using its id
   with a later `confirmed_at`; the stored item then no longer showed that the line was known
   earlier. Found by the real-data no-look-ahead test (SOLUSDT 5m). Line anchors are now used at
   most once.
-- 1.2.0 — storage only, rules unchanged: items + state transitions are the point-in-time record
+- 1.2.0 â storage only, rules unchanged: items + state transitions are the point-in-time record
   (section 7); backfills store no full reports; live reports have a retention window.
 
 ## 9. Warm-up and consistency
