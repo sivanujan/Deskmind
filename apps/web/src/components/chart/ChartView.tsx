@@ -97,7 +97,7 @@ function mergeSweeps(overlays: Overlay[]): Overlay[] {
         ).join(", ");
         sweepsByTime.set(o.time, {
           ...existing,
-          source_agent: sources,
+          source_agent: existing.source_agent,
           text: "SWEEP",
           meta: {
             ...existing.meta,
@@ -117,22 +117,21 @@ function mergeSweeps(overlays: Overlay[]): Overlay[] {
 interface FilterOptions {
   showHistory: boolean;
   maxSwings?: number;
-  maxPerType?: number;
 }
 
 /** Focus mode: show only active items by default. Historical/finished items are hidden or faded. */
 function filterFocusOverlays(
   overlays: Overlay[],
-  opts: FilterOptions = { showHistory: false, maxSwings: 15, maxPerType: 15 }
+  opts: FilterOptions = { showHistory: false, maxSwings: 20 }
 ): Overlay[] {
-  const { showHistory, maxSwings = 15, maxPerType = 15 } = opts;
+  const { showHistory, maxSwings = 20 } = opts;
 
   // 1. Identify active swings (last N)
   const swings = overlays
     .filter((o) => o.kind === "swing_high" || o.kind === "swing_low")
     .sort((a, b) => {
-      const ta = (a.type === "marker" ? a.time : 0);
-      const tb = (b.type === "marker" ? b.time : 0);
+      const ta = a.type === "marker" ? a.time : 0;
+      const tb = b.type === "marker" ? b.time : 0;
       return tb - ta;
     });
   const activeSwingIds = new Set(swings.slice(0, maxSwings).map((s) => s.id));
@@ -150,11 +149,20 @@ function filterFocusOverlays(
     }
   }
 
-  const typeCounts = new Map<string, number>();
+  // 3. Identify recent sweeps (last 25)
+  const sweeps = overlays
+    .filter((o) => o.kind === "sweep" || o.kind === "pool_sweep")
+    .sort((a, b) => {
+      const ta = a.type === "marker" ? a.time : 0;
+      const tb = b.type === "marker" ? b.time : 0;
+      return tb - ta;
+    });
+  const activeSweepIds = new Set(sweeps.slice(0, 25).map((s) => s.id));
 
   const isOverlayActive = (o: Overlay): boolean => {
     const kind = o.kind;
     const meta = (o.meta || {}) as Record<string, unknown>;
+    const state = typeof meta.state === "string" ? meta.state : undefined;
     const status = typeof meta.status === "string" ? meta.status : undefined;
 
     // Swings: last N are active
@@ -170,37 +178,68 @@ function filterFocusOverlays(
       const t = o.type === "marker" ? o.time : o.start_time;
       return t === latestChochTime;
     }
-    // OB: fresh / tested are active; invalidated / breaker are historical
+    // Sweeps: recent sweeps are active
+    if (kind === "sweep" || kind === "pool_sweep") {
+      return activeSweepIds.has(o.id);
+    }
+    // OB: fresh / tested are active; invalidated / mitigated / breaker are historical
     if (kind.startsWith("ob_")) {
-      return status === "fresh" || status === "tested";
+      const st = state ?? status;
+      if (st === "invalidated" || st === "mitigated" || st === "breaker" || meta.invalidated_at != null) {
+        return false;
+      }
+      return true;
     }
-    // FVG: unfilled / partially_filled are active; filled / invalidated are historical
+    // FVG: fresh / unfilled / partially_filled are active; filled / inversion / invalidated are historical
     if (kind.startsWith("fvg_") || kind.startsWith("ifvg_")) {
-      return status === "unfilled" || status === "partially_filled";
+      const st = state ?? status;
+      if (st === "filled" || st === "inversion" || st === "invalidated" || meta.filled_at != null || meta.inverted_at != null) {
+        return false;
+      }
+      return true;
     }
-    // Pools: active are active; swept / taken are historical
+    // Pools (BSL / SSL): active when not swept or taken
     if (kind === "bsl" || kind === "ssl") {
-      return status === "active" && !meta.swept_at;
+      const st = state ?? status;
+      if (st === "swept" || st === "taken" || meta.swept_at != null || meta.taken_at != null) {
+        return false;
+      }
+      return true;
     }
-    // Breakers: active / tested are active; invalidated are historical
+    // Breakers: active / tested are active; invalidated / mitigated are historical
     if (kind.startsWith("breaker_")) {
-      return status === "active" || status === "tested";
+      const st = state ?? status;
+      if (st === "invalidated" || st === "mitigated" || meta.invalidated_at != null) {
+        return false;
+      }
+      return true;
     }
     // Mitigation blocks: active are active; invalidated are historical
     if (kind.startsWith("mitigation_block_")) {
-      return status === "active";
+      const st = state ?? status;
+      if (st === "invalidated" || meta.invalidated_at != null) {
+        return false;
+      }
+      return true;
     }
-    // Liquidity voids: unfilled are active; filled are historical
+    // Liquidity voids: open / rebalancing / unfilled are active; filled are historical
     if (kind === "liquidity_void") {
-      return status === "unfilled";
+      const st = state ?? status;
+      if (st === "filled" || meta.filled_at != null) {
+        return false;
+      }
+      return true;
+    }
+    // Trendlines: active when not broken or expired
+    if (kind.startsWith("trendline_")) {
+      if (status === "broken" || status === "expired" || meta.broken_at != null || meta.expired_at != null) {
+        return false;
+      }
+      return true;
     }
     // PD Range & OTE: always active for current timeframe
     if (kind.startsWith("pd_range")) {
       return true;
-    }
-    // Sweeps: historical/finished event markers
-    if (kind === "sweep" || kind === "pool_sweep") {
-      return false;
     }
     // Trades or others
     return true;
@@ -210,15 +249,10 @@ function filterFocusOverlays(
   for (const o of overlays) {
     const active = isOverlayActive(o);
     if (!showHistory) {
-      if (!active) continue;
-      const count = typeCounts.get(o.kind) ?? 0;
-      if (count >= maxPerType && !o.kind.startsWith("pd_range")) continue;
-      typeCounts.set(o.kind, count + 1);
-      result.push(o);
+      if (active) {
+        result.push(o);
+      }
     } else {
-      const count = typeCounts.get(o.kind) ?? 0;
-      if (count >= maxPerType * 4 && !o.kind.startsWith("pd_range")) continue;
-      typeCounts.set(o.kind, count + 1);
       result.push(active ? o : { ...o, isHistorical: true });
     }
   }
@@ -419,8 +453,16 @@ export default function ChartView({
     [mergedOverlays, hiddenAgents],
   );
   const visibleOverlays = useMemo(() => {
+    const isAgentVisible = (o: Overlay) => {
+      const meta = o.meta as Record<string, unknown> | undefined;
+      if (meta?.sources && typeof meta.sources === "string") {
+        const agentList = meta.sources.split(/,\s*/);
+        return agentList.some((a) => !hiddenAgents.has(a));
+      }
+      return !hiddenAgents.has(o.source_agent);
+    };
     const filtered = mergedOverlays.filter(
-      (o) => !hiddenAgents.has(o.source_agent) && !hiddenGroups.has(groupOf(o)),
+      (o) => isAgentVisible(o) && !hiddenGroups.has(groupOf(o)),
     );
     return filterFocusOverlays(filtered, { showHistory });
   }, [mergedOverlays, hiddenAgents, hiddenGroups, showHistory]);
