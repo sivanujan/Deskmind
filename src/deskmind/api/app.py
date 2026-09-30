@@ -147,6 +147,46 @@ def create_app(
             raise HTTPException(404, f"unknown timeframe {tf}; available: {timeframes}")
         return sym
 
+    async def _ict_last_close(sym: str, tf: str, at_ms: int) -> float | None:
+        """Close of the last candle of `tf` that had closed by `at_ms`."""
+        iv = TIMEFRAME_MS[tf]
+        rows = await app.state.candles.candles(
+            sym, tf, start_ms=None, end_ms=at_ms - iv + 1, limit=1, now_ms=B.now_ms()
+        )
+        return rows[-1].close if rows else None
+
+    async def ict_report_at(sym: str, as_of_ms: int | None) -> dict[str, Any] | None:
+        """Stored live report for that exact boundary, else rebuilt from items + transitions."""
+        from deskmind.agents.ict_smc.config import DEFAULT_CONFIG as ICT_CFG
+        from deskmind.agents.ict_smc.history import reconstruct_report
+
+        store = app.state.ict_smc_store
+        base = min(TIMEFRAME_MS[t] for t in timeframes)
+        at = ((as_of_ms if as_of_ms is not None else B.now_ms()) // base) * base
+        stored = await store.latest_report(sym, at)
+        if stored is not None and stored.get("as_of_ms") == at:
+            return stored
+        rows = {t: await store.transitions(sym, ICT_CFG.version, t, at) for t in timeframes}
+        if not any(rows.values()):
+            return stored  # nothing to rebuild from (older stored report, if any)
+        closes = {t: await _ict_last_close(sym, t, at) for t in timeframes}
+        return reconstruct_report(sym, {t: r for t, r in rows.items() if r}, at, ICT_CFG, closes)
+
+    async def ict_pd_range_at(sym: str, tf: str, as_of_ms: int | None) -> dict[str, Any] | None:
+        from deskmind.agents.ict_smc.config import DEFAULT_CONFIG as ICT_CFG
+        from deskmind.agents.ict_smc.history import reconstruct_state
+
+        store = app.state.ict_smc_store
+        base = min(TIMEFRAME_MS[t] for t in timeframes)
+        at = ((as_of_ms if as_of_ms is not None else B.now_ms()) // base) * base
+        stored = await store.latest_report(sym, at)
+        if stored is not None and stored.get("as_of_ms") == at:
+            return stored.get("timeframes", {}).get(tf, {}).get("pd_range")
+        rows = await store.transitions(sym, ICT_CFG.version, tf, at)
+        if not rows:
+            return None
+        return reconstruct_state(rows, at, ICT_CFG, await _ict_last_close(sym, tf, at))["pd_range"]
+
     @app.get("/api/symbols", response_model=SymbolsResponse)
     async def get_symbols() -> SymbolsResponse:
         entries = await symbol_entries()
@@ -237,26 +277,19 @@ def create_app(
             )
             has_pd = any(it.get("kind") == "pd_range" for it in ict_items)
             if not has_pd:
-                latest_rep = await app.state.ict_smc_store.latest_report(
-                    sym, as_of * 1000 if as_of is not None else None
+                pd_data = await ict_pd_range_at(
+                    sym, tf, as_of * 1000 if as_of is not None else None
                 )
-                if latest_rep:
-                    tf_rep = latest_rep.get("payload", {}).get("timeframes", {}).get(tf, {})
-                    pd_data = tf_rep.get("pd_range")
-                    if (
-                        pd_data
-                        and pd_data.get("low") is not None
-                        and pd_data.get("high") is not None
-                    ):
-                        ict_items.append(
-                            {
-                                "id": f"pd_range_{tf}:{pd_data.get('from_bos_at', view_end)}",
-                                "kind": "pd_range",
-                                "created_time": pd_data.get("from_bos_at", view_end),
-                                "confirmed_at": pd_data.get("confirmed_at", view_end),
-                                **pd_data,
-                            }
-                        )
+                if pd_data and pd_data.get("low") is not None and pd_data.get("high") is not None:
+                    ict_items.append(
+                        {
+                            "id": f"pd_range_{tf}:{pd_data.get('from_bos_at', view_end)}",
+                            "kind": "pd_range",
+                            "created_time": pd_data.get("from_bos_at", view_end),
+                            "confirmed_at": pd_data.get("confirmed_at", view_end),
+                            **pd_data,
+                        }
+                    )
             overlays.extend(to_ict_overlays(ict_items, ICT_SMC_VERSION, view_end))
 
         if run_id:
@@ -317,11 +350,9 @@ def create_app(
             raise HTTPException(404, f"unknown symbol {symbol}")
         if getattr(app.state, "ict_smc_store", None) is None:
             raise HTTPException(503, "ict_smc store not available")
-        report = await app.state.ict_smc_store.latest_report(
-            sym, as_of * 1000 if as_of is not None else None
-        )
+        report = await ict_report_at(sym, as_of * 1000 if as_of is not None else None)
         if report is None:
-            raise HTTPException(404, "no ict_smc report stored for this time (run the backfill)")
+            raise HTTPException(404, "no ict_smc data for this time (run the backfill)")
         return report
 
     @app.websocket("/ws/live")

@@ -294,3 +294,40 @@ class UniverseDelisting(Base):
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class AgentItemTransition(Base):
+    """One item/state change of an analyst agent, in emission order (point-in-time history).
+
+    TimescaleDB hypertable on `at`, compressed after 7 days (migration 0010)."""
+
+    __tablename__ = "agent_item_transitions"
+
+    agent: Mapped[str] = mapped_column(String(32), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    agent_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    timeframe: Mapped[str] = mapped_column(String(8), primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    ord: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class IctSmcItem(Base):
+    """Latest payload of each ICT/SMC item (chart overlays). Hypertable on `confirmed_at`
+    (never changes for an item), compressed after 30 days (migration 0010)."""
+
+    __tablename__ = "ict_smc_items"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    timeframe: Mapped[str] = mapped_column(String(8), primary_key=True)
+    agent_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    pivot_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

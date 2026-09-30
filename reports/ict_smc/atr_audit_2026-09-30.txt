@@ -1,0 +1,141 @@
+
+=== BTCUSDT 5m  (36836 bars loaded)
+concept     kind                      confirmed_at      size $  basis               ATR used  ATR true    Wilder used/true size/ATR
+fvg         fvg_bullish               1786480500000      22.20  top-bottom             72.27     72.27     72.68    1.0000     0.31
+fvg         fvg_bullish               1786178400000      18.90  top-bottom             11.20     11.20     11.28    1.0000     1.69
+fvg         fvg_bullish               1787857500000      80.80  top-bottom            172.54    172.54    168.74    1.0000     0.47
+fvg         fvg_bearish               1788740700000     107.00  top-bottom            145.81    145.81    132.01    1.0000     0.73
+fvg         fvg_bullish               1784865000000      56.50  top-bottom             95.25     95.25     87.61    1.0000     0.59
+pool        bsl                       1789550700000          -  single swing (level only)    102.32    102.32     97.10    1.0000        -
+pool        bsl                       1785933600000          -  single swing (level only)     92.00     92.00     83.53    1.0000        -
+pool        bsl                       1789219500000       4.80  EQ swing diff          34.48     34.48     32.94    1.0000     0.14
+pool        ssl                       1787826600000       0.00  EQ swing diff         218.34    218.34    201.87    1.0000     0.00
+pool        bsl                       1789923300000          -  single swing (level only)    159.86    159.86    145.22    1.0000        -
+ob          ob_bearish                1788977700000     151.40  top-bottom             94.33     94.33    121.50    1.0000     1.61
+ob          ob_bullish                1788198300000     259.80  top-bottom            154.81    154.81    168.83    1.0000     1.68
+ob          ob_bearish                1786462800000     145.10  top-bottom            117.95    117.95    111.42    1.0000     1.23
+ob          ob_bullish                1790022000000     210.70  top-bottom            232.68    232.68    190.60    1.0000     0.91
+ob          ob_bullish                1783109400000      68.00  top-bottom             84.65     84.65     80.40    1.0000     0.80
+breaker     breaker_bearish           1783360500000     138.20  top-bottom            193.79    125.06    161.80    1.5495     0.71
+breaker     mitigation_block_bearish  1787826600000     201.60  top-bottom            159.59    218.34    201.87    0.7310     1.26
+breaker     breaker_bullish           1789403100000     257.60  top-bottom            254.99    175.82    193.08    1.4503     1.01
+breaker     mitigation_block_bullish  1789566600000     119.60  top-bottom            128.92    144.04    138.18    0.8950     0.93
+breaker     mitigation_block_bearish  1785325200000      46.80  top-bottom             59.14     71.15     66.96    0.8311     0.79
+void        liquidity_void            1788690300000      95.10  top-bottom             40.21     40.21     42.94    1.0000     2.37
+void        liquidity_void            1790107200000     334.30  top-bottom            127.28    127.28    137.74    1.0000     2.63
+void        liquidity_void            1788132900000     760.20  top-bottom            191.71    191.71    189.64    1.0000     3.97
+void        liquidity_void            1783227600000     128.80  top-bottom             52.85     52.85     58.60    1.0000     2.44
+void        liquidity_void            1783390500000     213.20  top-bottom            110.99    110.99    110.22    1.0000     1.92
+displacementdisplacement              1788986100000     186.60  candle range          118.78    118.78    118.98    1.0000     1.57
+displacementdisplacement              1784038500000     240.10  candle range          185.66    185.66    178.44    1.0000     1.29
+displacementdisplacement              1785156000000     111.60  candle range           83.21     83.21     77.85    1.0000     1.34
+displacementdisplacement              1790386800000      87.70  candle range           61.00     61.00     57.40    1.0000     1.44
+displacementdisplacement              1789435500000     144.70  candle range          102.21    102.21    103.55    1.0000     1.42
+
+=== BTCUSDT 15m  (13153 bars loaded)
+concept     kind                      confirmed_at      size $  basis               ATR used  ATR true    Wilder used/true size/ATR
+fvg         fvg_bullish               1785766500000     193.80  top-bottom            214.91    214.91    198.35    1.0000     0.90
+fvg         fvg_bullish               1783647900000     195.10  top-bottom            169.61    169.61    165.96    1.0000     1.15
+fvg         fvg_bullish               1790227800000      70.60  top-bottom            223.99    223.99    206.34    1.0000     0.32
+fvg         fvg_bullish               1785952800000      49.20  top-bottom            173.09    173.09    168.60    1.0000     0.28
+fvg         fvg_bearish               1788111900000      73.00  top-bottom            226.21    226.21    206.29    1.0000     0.32
+pool        ssl                       1787674500000          -  single swing (level only)    364.12    364.12    345.07    1.0000        -
+pool        ssl                       1783908000000       0.00  EQ swing diff         280.90    280.90    230.79    1.0000     0.00
+pool        ssl                       1788836400000       0.00  EQ swing diff         172.36    172.36    165.05    1.0000     0.00
+pool        bsl                       1783658700000       0.00  EQ swing diff         199.01    199.01    179.37    1.0000     0.00
+pool        bsl                       1786511700000          -  single swing (level only)     87.80     87.80     87.84    1.0000        -
+ob          ob_bearish                1782203400000     186.60  top-bottom            277.69    277.69    250.06    1.0000     0.67
+ob          ob_bullish                1789827300000     168.40  top-bottom            111.92    111.92    120.73    1.0000     1.50
+ob          ob_bearish                1786689000000      94.20  top-bottom             87.56     87.56     90.70    1.0000     1.08
+ob          ob_bearish                1789038000000     227.70  top-bottom            135.58    135.58    154.91    1.0000     1.68
+ob          ob_bullish                1789916400000     173.30  top-bottom            133.29    133.29    139.04    1.0000     1.30
+breaker     breaker_bearish           1784524500000     219.00  top-bottom            100.74    223.74    220.88    0.4503     2.17
+breaker     mitigation_block_bullish  1785765600000     114.90  top-bottom            134.16    198.25    189.51    0.6767     0.86
+breaker     breaker_bearish           1785280500000     194.50  top-bottom            161.29    111.82    134.69    1.4424     1.21
+breaker     breaker_bullish           1786626000000     118.80  top-bottom             89.41    106.80    103.94    0.8371     1.33
+breaker     breaker_bullish           1787897700000     268.70  top-bottom            284.41    195.86    229.81    1.4522     0.94
+void        liquidity_void            1788093000000     599.90  top-bottom            121.67    121.67    117.38    1.0000     4.93
+void        liquidity_void            1790421300000     170.40  top-bottom             97.41     97.41     88.91    1.0000     1.75
+void        liquidity_void            1786132800000     288.00  top-bottom            120.00    120.00    138.22    1.0000     2.40
+void        liquidity_void            1784700900000     440.20  top-bottom            136.34    136.34    134.22    1.0000     3.23
+void        liquidity_void            1785106800000     658.30  top-bottom            111.73    111.73    113.26    1.0000     5.89
+displacementdisplacement              1783339200000     518.00  candle range          154.01    154.01    165.17    1.0000     3.36
+displacementdisplacement              1787190300000     350.80  candle range          263.34    263.34    327.36    1.0000     1.33
+displacementdisplacement              1783393200000     334.60  candle range          208.54    208.54    224.01    1.0000     1.60
+displacementdisplacement              1788318900000     292.80  candle range          225.62    225.62    228.31    1.0000     1.30
+displacementdisplacement              1790140500000     278.90  candle range          230.66    230.66    235.82    1.0000     1.21
+
+=== BTCUSDT 1h  (4048 bars loaded)
+concept     kind                      confirmed_at      size $  basis               ATR used  ATR true    Wilder used/true size/ATR
+fvg         fvg_bullish               1789358400000     318.50  top-bottom            347.95    347.95    325.74    1.0000     0.92
+fvg         fvg_bullish               1788451200000    1356.90  top-bottom            604.13    604.13    592.95    1.0000     2.25
+fvg         fvg_bullish               1787824800000     566.70  top-bottom            448.42    448.42    499.91    1.0000     1.26
+fvg         fvg_bearish               1785510000000     303.70  top-bottom            380.64    380.64    357.98    1.0000     0.80
+fvg         fvg_bullish               1789984800000    1960.40  top-bottom            717.56    717.56    649.11    1.0000     2.73
+pool        ssl                       1783083600000          -  single swing (level only)    308.34    308.34    347.34    1.0000        -
+pool        bsl                       1787724000000          -  single swing (level only)    506.44    506.44    575.16    1.0000        -
+pool        bsl                       1785661200000          -  single swing (level only)    204.94    204.94    203.07    1.0000        -
+pool        ssl                       1787965200000          -  single swing (level only)    623.03    623.03    533.22    1.0000        -
+pool        ssl                       1786798800000          -  single swing (level only)    107.79    107.79    144.61    1.0000        -
+ob          ob_bearish                1786716000000     200.40  top-bottom            212.91    212.91    225.22    1.0000     0.94
+ob          ob_bullish                1784127600000     698.00  top-bottom            357.47    357.47    382.86    1.0000     1.95
+ob          ob_bullish                1782943200000     380.50  top-bottom            509.13    509.13    484.22    1.0000     0.75
+ob          ob_bullish                1783648800000     342.20  top-bottom            428.55    428.55    408.48    1.0000     0.80
+ob          ob_bullish                1787144400000     133.50  top-bottom            178.40    178.40    195.89    1.0000     0.75
+breaker     breaker_bearish           1785168000000     123.10  top-bottom            186.64    348.86    331.75    0.5350     0.66
+breaker     breaker_bullish           1789117200000     245.50  top-bottom            432.97    289.77    341.71    1.4942     0.57
+breaker     mitigation_block_bearish  1789448400000     576.60  top-bottom            474.22    374.59    374.88    1.2660     1.22
+breaker     breaker_bullish           1785639600000      60.90  top-bottom             99.73    215.41    213.45    0.4630     0.61
+breaker     mitigation_block_bullish  1786726800000     315.60  top-bottom            196.59    254.61    249.03    0.7721     1.61
+void        liquidity_void            1789747200000    3026.50  top-bottom            600.25    600.25    564.30    1.0000     5.04
+void        liquidity_void            1783656000000    1090.30  top-bottom            382.80    382.80    392.53    1.0000     2.85
+void        liquidity_void            1786705200000     699.00  top-bottom            203.51    203.51    233.85    1.0000     3.43
+void        liquidity_void            1786384800000     882.30  top-bottom            280.38    280.38    269.87    1.0000     3.15
+void        liquidity_void            1784037600000    1378.50  top-bottom            337.88    337.88    368.86    1.0000     4.08
+displacementdisplacement              1783515600000     461.10  candle range          456.31    456.31    456.32    1.0000     1.01
+displacementdisplacement              1786460400000     560.00  candle range          186.87    186.87    219.36    1.0000     3.00
+displacementdisplacement              1785254400000     782.30  candle range          334.83    334.83    379.29    1.0000     2.34
+displacementdisplacement              1786320000000     275.20  candle range          145.84    145.84    138.86    1.0000     1.89
+displacementdisplacement              1788015600000     508.10  candle range          217.21    217.21    334.32    1.0000     2.34
+
+=== BTCUSDT 2h  (2097 bars loaded)
+concept     kind                      confirmed_at      size $  basis               ATR used  ATR true    Wilder used/true size/ATR
+fvg         fvg_bearish               1786881600000      27.10  top-bottom             99.38     99.38    155.84    1.0000     0.27
+fvg         fvg_bearish               1789466400000     236.20  top-bottom            620.09    620.09    536.96    1.0000     0.38
+fvg         fvg_bullish               1783360800000     889.60  top-bottom            653.49    653.49    614.21    1.0000     1.36
+fvg         fvg_bearish               1783404000000     472.20  top-bottom            706.13    706.13    620.75    1.0000     0.67
+fvg         fvg_bullish               1785650400000     316.90  top-bottom            239.76    239.76    324.84    1.0000     1.32
+pool        bsl                       1784066400000          -  single swing (level only)    539.36    539.36    538.82    1.0000        -
+pool        ssl                       1787781600000          -  single swing (level only)    690.46    690.46    779.71    1.0000        -
+pool        bsl                       1788228000000          -  single swing (level only)    740.59    740.59    611.43    1.0000        -
+pool        bsl                       1783137600000          -  single swing (level only)    437.07    437.07    521.23    1.0000        -
+pool        ssl                       1783591200000          -  single swing (level only)    586.83    586.83    593.00    1.0000        -
+ob          ob_bullish                1784073600000     679.00  top-bottom            552.47    552.47    546.38    1.0000     1.23
+ob          ob_bullish                1787824800000     477.30  top-bottom            662.10    662.10    736.62    1.0000     0.72
+ob          ob_bearish                1779890400000     662.20  top-bottom            656.34    656.34    557.17    1.0000     1.01
+ob          ob_bearish                1781726400000    1868.50  top-bottom            675.35    675.35    706.34    1.0000     2.77
+ob          ob_bearish                1786644000000     413.60  top-bottom            379.54    379.54    374.22    1.0000     1.09
+breaker     breaker_bullish           1786939200000     410.90  top-bottom            130.27    202.38    224.65    0.6437     3.15
+breaker     mitigation_block_bearish  1787752800000    1429.80  top-bottom            971.41    736.91    813.77    1.3182     1.47
+breaker     mitigation_block_bearish  1783346400000     268.00  top-bottom            410.24    516.60    518.45    0.7941     0.65
+breaker     breaker_bearish           1786464000000     594.70  top-bottom            432.30    367.93    322.98    1.1750     1.38
+breaker     breaker_bullish           1787011200000     560.00  top-bottom            367.93    368.44    289.85    0.9986     1.52
+void        liquidity_void            1784052000000    2193.50  top-bottom            604.69    604.69    566.14    1.0000     3.63
+void        liquidity_void            1788105600000    1006.50  top-bottom            321.14    321.14    424.00    1.0000     3.13
+void        liquidity_void            1789466400000    1375.00  top-bottom            620.09    620.09    536.96    1.0000     2.22
+void        liquidity_void            1785211200000    1769.30  top-bottom            539.76    539.76    460.62    1.0000     3.28
+void        liquidity_void            1788264000000    1402.80  top-bottom            656.63    656.63    624.82    1.0000     2.14
+displacementdisplacement              1783238400000     395.00  candle range          355.84    355.84    417.78    1.0000     1.11
+displacementdisplacement              1784397600000     411.50  candle range          295.89    295.89    347.05    1.0000     1.39
+displacementdisplacement              1785844800000     497.20  candle range          486.06    486.06    417.44    1.0000     1.02
+displacementdisplacement              1783821600000     488.80  candle range          289.69    289.69    383.45    1.0000     1.69
+displacementdisplacement              1788530400000    2410.80  candle range          976.30    976.30    851.67    1.0000     2.47
+
+all items with an ATR checked: 24806, stored ATR != independent SMA14: 1217
+
+=== FVG size buckets (gap / ATR), all stored FVGs; ATR = stored (== independent)
+tf        n    [0.25,0.5)     [0.5,1.0)     [1.0,2.0)     [2.0,inf)   <0.25
+5m     3875  1673 (43.2%)  1508 (38.9%)   589 (15.2%)   105 ( 2.7%)       0
+15m     990   455 (46.0%)   375 (37.9%)   134 (13.5%)    26 ( 2.6%)       0
+1h      188    81 (43.1%)    74 (39.4%)    27 (14.4%)     6 ( 3.2%)       0
+2h      101    42 (41.6%)    42 (41.6%)    13 (12.9%)     4 ( 4.0%)       0

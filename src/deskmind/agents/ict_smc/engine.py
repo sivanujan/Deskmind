@@ -166,6 +166,10 @@ class IctSmcEngine:
             c2 = self.bars[-2]
             c3 = self.bars[-1]
 
+            # Tags only (detection is unchanged): size in ATRs and whether the middle candle
+            # was a displacement candle. Strategy research decides filters.
+            backed = any(d.time == c2.open_time for d in self.displacements)
+
             # Bullish FVG: c1.high < c3.low
             if c1.high < c3.low:
                 gap = c3.low - c1.high
@@ -177,6 +181,9 @@ class IctSmcEngine:
                         ce=(c3.low + c1.high) / 2.0,
                         created_time=c2.open_time,
                         confirmed_at=c3.close_time,
+                        atr=atr,
+                        size_atr=gap / atr,
+                        displacement_backed=backed,
                     )
                     self.fvgs.append(fvg)
                     changes.append(fvg.item())
@@ -192,6 +199,9 @@ class IctSmcEngine:
                         ce=(c1.low + c3.high) / 2.0,
                         created_time=c2.open_time,
                         confirmed_at=c3.close_time,
+                        atr=atr,
+                        size_atr=gap / atr,
+                        displacement_backed=backed,
                     )
                     self.fvgs.append(fvg)
                     changes.append(fvg.item())
@@ -241,18 +251,27 @@ class IctSmcEngine:
         bar: Bar,
         changes: list[dict[str, Any]],
     ) -> None:
-        new_swings = [c for c in trend_changes if c.get("kind") in ("swing_high", "swing_low")]
-        for sw in new_swings:
+        swing_changes = [c for c in trend_changes if c.get("kind") in ("swing_high", "swing_low")]
+        for sw in swing_changes:
+            # The trend engine re-sends a swing (same id) when its state changes: update the
+            # stored swing in place; only a NEW swing can form a pool.
+            known = next(
+                (i for i, s in enumerate(self.confirmed_swings) if s["id"] == sw["id"]), None
+            )
+            if known is not None:
+                self.confirmed_swings[known] = sw
+                continue
             self.confirmed_swings.append(sw)
             side = "high" if sw["kind"] == "swing_high" else "low"
             price = sw["price"]
 
-            # Lookback for equal swings
+            # Lookback for equal swings: other swings on a DIFFERENT candle only
             lookback = list(self.confirmed_swings)[-self.cfg.pool_swing_lookback : -1]
             eq_swings = [
                 s
                 for s in lookback
                 if s["kind"] == sw["kind"]
+                and s["pivot_time"] != sw["pivot_time"]
                 and abs(s["price"] - price) <= self.cfg.eq_tolerance_atr * atr
             ]
 
@@ -267,6 +286,7 @@ class IctSmcEngine:
                     swings=[other["pivot_time"], sw["pivot_time"]],
                     created_time=other["pivot_time"],
                     confirmed_at=bar.close_time,
+                    atr=atr,
                 )
             else:
                 # Single significant swing pool
@@ -277,6 +297,7 @@ class IctSmcEngine:
                     swings=[sw["pivot_time"]],
                     created_time=sw["pivot_time"],
                     confirmed_at=bar.close_time,
+                    atr=atr,
                 )
 
             self.pools.append(pool)
@@ -364,9 +385,12 @@ class IctSmcEngine:
                 created_time=ob_candles[-1].open_time,  # earliest candle in sequence
                 confirmed_at=bar.close_time,
                 from_bos_id=bos["id"],
+                atr=atr,
             )
-            self.order_blocks.append(ob)
-            changes.append(ob.item())
+            # an identical OB (same candles, same bar) from a second BOS change is not a new OB
+            if all(o.id != ob.id for o in self.order_blocks):
+                self.order_blocks.append(ob)
+                changes.append(ob.item())
 
         # Update Dealing Range / PD Range
         if direction == "up":
@@ -458,6 +482,7 @@ class IctSmcEngine:
                             sweep_id=self.last_sweep["id"]
                             if has_prior_sweep and self.last_sweep
                             else None,
+                            atr=ob.atr or self.atr,
                         )
                         self.breakers.append(breaker)
                         changes.append(breaker.item())
@@ -495,6 +520,7 @@ class IctSmcEngine:
                             sweep_id=self.last_sweep["id"]
                             if has_prior_sweep and self.last_sweep
                             else None,
+                            atr=ob.atr or self.atr,
                         )
                         self.breakers.append(breaker)
                         changes.append(breaker.item())
@@ -572,6 +598,7 @@ class IctSmcEngine:
                         bottom=bottom,
                         created_time=start_b.open_time,
                         confirmed_at=bar.close_time,
+                        atr=atr,
                     )
                     # Deduplicate with existing open voids
                     if not any(v.created_time == void.created_time for v in self.voids):
@@ -657,11 +684,15 @@ class IctSmcEngine:
 
     def state(self) -> dict[str, Any]:
         """Current state for the timeframe, formatted for the agent report."""
-        bsl_pools = [p.summary() for p in self.pools if p.side == "high"][
-            -self.cfg.max_active_pools :
+        # Select the newest N first, then summarise only those: self.pools / self.breakers are
+        # never pruned, so summarising all of them per call made replays quadratic.
+        bsl_pools = [
+            p.summary()
+            for p in [p for p in self.pools if p.side == "high"][-self.cfg.max_active_pools :]
         ]
-        ssl_pools = [p.summary() for p in self.pools if p.side == "low"][
-            -self.cfg.max_active_pools :
+        ssl_pools = [
+            p.summary()
+            for p in [p for p in self.pools if p.side == "low"][-self.cfg.max_active_pools :]
         ]
         active_fvgs_objs = [f for f in self.fvgs if f.state != "filled"][
             -self.cfg.max_active_fvgs :
@@ -671,8 +702,11 @@ class IctSmcEngine:
         ]
         active_fvgs = [f.summary() for f in active_fvgs_objs]
         active_obs = [ob.summary() for ob in active_obs_objs]
-        active_breakers = [b.summary() for b in self.breakers if b.state != "invalidated"][
-            -self.cfg.max_active_breakers :
+        active_breakers = [
+            b.summary()
+            for b in [b for b in self.breakers if b.state != "invalidated"][
+                -self.cfg.max_active_breakers :
+            ]
         ]
 
         # PD arrays inside the actionable zone

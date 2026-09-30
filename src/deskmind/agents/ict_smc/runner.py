@@ -2,7 +2,11 @@
 
 Live: warm up each symbol by replaying the last `warmup_bars` candles per timeframe through
 `run_batch`, then react to `deskmind:bar_close` events: feed newly closed candles from Redis,
-store items + report, publish `deskmind:agent_report`.
+store items + transitions + report (reports kept ICT_SMC_REPORT_RETENTION_DAYS), publish
+`deskmind:agent_report`.
+
+Backfill: items + transitions only (the point-in-time record); full reports only for an optional
+short debug window at the end.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from redis.asyncio import Redis
 from deskmind.agents.candles import load_bars, redis_bars
 from deskmind.agents.ict_smc.agent import SymbolIctSmcAgent, check_smt_divergence, run_batch
 from deskmind.agents.ict_smc.config import AGENT_NAME, DEFAULT_CONFIG, IctSmcConfig
+from deskmind.agents.ict_smc.history import TransitionRecorder
 from deskmind.agents.ict_smc.store import IctSmcStore
 from deskmind.agents.trend.config import DEFAULT_CONFIG as DEFAULT_TREND_CONFIG
 from deskmind.agents.trend.config import TrendConfig
@@ -62,19 +67,43 @@ async def backfill(
     store: IctSmcStore,
     cfg: IctSmcConfig = DEFAULT_CONFIG,
     trend_cfg: TrendConfig = DEFAULT_TREND_CONFIG,
+    debug_report_days: float = 0.0,
 ) -> dict[str, Any]:
-    """Replay [start - warm-up, end] and store reports + items for [start, end]."""
+    """Replay [start - warm-up, end]; store items + transitions for [start, end].
+
+    debug_report_days > 0 also stores full reports for the last N days of the window."""
+    timings: dict[str, float] = {}
+    t0 = time.perf_counter()
     bars: dict[str, list[Bar]] = {}
     for tf in timeframes:
         warm = start_ms - cfg.warmup_bars * TIMEFRAME_MS[tf]
         bars[tf] = await load_bars(data_dir, recent, symbol, tf, start_ms=warm, end_ms=end_ms)
+    timings["load_s"] = time.perf_counter() - t0
     agent = SymbolIctSmcAgent(symbol, timeframes, cfg, trend_cfg)
+    t0 = time.perf_counter()
+    report_from = end_ms - int(debug_report_days * 86_400_000) if debug_report_days else None
     result = await asyncio.to_thread(
-        run_batch, agent, bars, report_from=start_ms, store_from=start_ms
+        run_batch,
+        agent,
+        bars,
+        report_from=report_from,
+        store_from=start_ms,
+        reports=bool(debug_report_days),
+        recorder=TransitionRecorder(),
     )
+    timings["replay_s"] = time.perf_counter() - t0
+    rows = result.recorder.rows if result.recorder else []
     items = [(tf, item) for (tf, _), item in result.items.items()]
+    t0 = time.perf_counter()
     await store.upsert_items(symbol, items, cfg.version)
-    await store.upsert_reports(symbol, result.reports)
+    timings["write_items_s"] = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    await store.replace_transitions(symbol, cfg.version, start_ms, rows)
+    timings["write_transitions_s"] = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    if result.reports:
+        await store.upsert_reports(symbol, result.reports)
+    timings["write_reports_s"] = time.perf_counter() - t0
     counts: dict[str, dict[str, int]] = {}
     for tf, item in items:
         counts.setdefault(tf, {}).setdefault(item["kind"], 0)
@@ -84,7 +113,9 @@ async def backfill(
         "candles": {tf: len(b) for tf, b in bars.items()},
         "reports": len(result.reports),
         "items": len(items),
+        "transitions": len(rows),
         "counts": counts,
+        "timings": {k: round(v, 1) for k, v in timings.items()},
     }
 
 
@@ -113,7 +144,9 @@ class LiveIctSmcRunner:
         self.trend_cfg = trend_cfg
         self.timeframes = list(settings.live_timeframes)
         self.agents: dict[str, SymbolIctSmcAgent] = {}
+        self.recorders: dict[str, TransitionRecorder] = {}
         self.reports = 0
+        self._last_prune = 0.0
 
     async def _symbols(self) -> list[str]:
         if self.symbol_source is None:
@@ -125,6 +158,7 @@ class LiveIctSmcRunner:
         removed = [s for s in self.agents if s not in desired]
         for symbol in removed:
             del self.agents[symbol]
+            self.recorders.pop(symbol, None)
         for symbol in added:
             try:
                 await self.warm_symbol(symbol, now_ms)
@@ -153,19 +187,27 @@ class LiveIctSmcRunner:
         agent = SymbolIctSmcAgent(symbol, self.timeframes, self.cfg, self.trend_cfg)
         base = min(TIMEFRAME_MS[tf] for tf in self.timeframes)
         store_from = now_ms - (self.cfg.warmup_bars // 2) * base
-        result = await asyncio.to_thread(run_batch, agent, bars, store_from=store_from)
+        recorder = TransitionRecorder()
+        result = await asyncio.to_thread(
+            run_batch, agent, bars, store_from=store_from, reports=False, recorder=recorder
+        )
         await self.store.upsert_items(
             symbol, [(tf, it) for (tf, _), it in result.items.items()], self.cfg.version
         )
-        if result.reports:
-            await self.store.upsert_reports(symbol, result.reports[-1:])
+        # rows from store_from on are rewritten: a fresh baseline supersedes older sessions
+        await self.store.replace_transitions(symbol, self.cfg.version, store_from, recorder.rows)
+        recorder.rows = []
+        last_t = max((b.close_time for bs in bars.values() for b in bs), default=None)
+        if last_t is not None:
+            await self.store.upsert_reports(symbol, [agent.report(last_t)])
         self.agents[symbol] = agent
+        self.recorders[symbol] = recorder
         log.info(
             "ict_smc_warm",
             symbol=symbol,
             candles={tf: len(b) for tf, b in bars.items()},
             items=len(result.items),
-            last=result.reports[-1]["as_of"] if result.reports else None,
+            transitions_from=store_from,
         )
 
     async def _new_bars(self, agent: SymbolIctSmcAgent, tf: str, close_time: int) -> list[Bar]:
@@ -213,7 +255,14 @@ class LiveIctSmcRunner:
 
         if out.changes:
             await self.store.upsert_items(agent.symbol, out.changes, self.cfg.version)
+        recorder = self.recorders.get(agent.symbol)
+        if recorder is not None:  # after the SMT check, so SMT changes are recorded too
+            recorder.boundary(close_time, agent, out.changes)
+            await self.store.append_transitions(agent.symbol, self.cfg.version, recorder.rows)
+            recorder.rows = []
+        assert out.report is not None
         await self.store.upsert_reports(agent.symbol, [out.report])
+        await self._prune_reports()
         await self.redis.publish(
             AGENT_REPORT_CHANNEL, json.dumps(out.report, separators=(",", ":"))
         )
@@ -235,6 +284,20 @@ class LiveIctSmcRunner:
             new_items=len(out.changes),
         )
         return out.report
+
+    async def _prune_reports(self) -> None:
+        """Keep full live reports for the retention window only (checked hourly)."""
+        if time.monotonic() - self._last_prune < 3600:
+            return
+        self._last_prune = time.monotonic()
+        cutoff = B.now_ms() - int(self.settings.ict_smc_report_retention_days * 86_400_000)
+        for symbol in list(self.agents):
+            try:
+                n = await self.store.prune_reports(symbol, cutoff)
+                if n:
+                    log.info("ict_smc_reports_pruned", symbol=symbol, deleted=n)
+            except Exception as exc:
+                log.warning("ict_smc_prune_failed", symbol=symbol, error=str(exc))
 
     async def run(self, stop: asyncio.Event) -> None:
         await self.warm_up(B.now_ms())

@@ -214,6 +214,12 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
   Redis buffers, writes `agent_events` + `agent_reports`, publishes `deskmind:agent_report`).
 - Overlays: `GET /api/overlays?symbol&tf&start&end&as_of` (as_of = replay), report:
   `GET /api/agents/trend/report?symbol&as_of`. The chart's Replay mode uses both.
+- Agent storage (ict_smc since 1.2.0; do the same for new agents): items + every state
+  transition are the point-in-time source of truth (`agent_item_transitions`, `ict_smc_items`,
+  compressed TimescaleDB hypertables). NEVER store a full report per bar for backfills: state as
+  of T is rebuilt (`agents/ict_smc/history.reconstruct_state`, tested equal to the live engine).
+  Full reports only for live runs, kept ICT_SMC_REPORT_RETENTION_DAYS (default 7).
+  Old-version reports/items are deleted only after the user confirms.
 
 ## Commands
 `make up | down | logs | ps | migrate | test | lint | format | health`, and `uv run deskmind health`.

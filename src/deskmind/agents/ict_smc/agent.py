@@ -10,10 +10,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
 
 from deskmind.agents.ict_smc.config import AGENT_NAME, DEFAULT_CONFIG, IctSmcConfig
 from deskmind.agents.ict_smc.engine import IctSmcEngine
+from deskmind.agents.ict_smc.history import TransitionRecorder
 from deskmind.agents.ict_smc.models import SMTDivergence
 from deskmind.agents.trend.config import DEFAULT_CONFIG as DEFAULT_TREND_CONFIG
 from deskmind.agents.trend.config import TrendConfig
@@ -23,7 +25,9 @@ from deskmind.data.datasets import TIMEFRAME_MS
 REPORT_TIMEFRAME = "all"
 
 
+@lru_cache(maxsize=65536)
 def iso(ms: int | None) -> str | None:
+    # Cached: reports format the same few timestamps millions of times during a replay.
     return datetime.fromtimestamp(ms / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if ms else None
 
 
@@ -43,7 +47,7 @@ def _iso_times(obj: Any) -> Any:
 
 @dataclass
 class AgentOutput:
-    report: dict[str, Any]
+    report: dict[str, Any] | None  # None when the caller did not ask for a report
     changes: list[tuple[str, dict[str, Any]]] = field(default_factory=list)  # (timeframe, item)
 
 
@@ -61,14 +65,16 @@ class SymbolIctSmcAgent:
         self.trend_cfg = trend_cfg
         self.engines = {tf: IctSmcEngine(symbol, tf, cfg, trend_cfg) for tf in self.timeframes}
 
-    def on_bar_close(self, close_time: int, bars_by_tf: dict[str, list[Bar]]) -> AgentOutput:
+    def on_bar_close(
+        self, close_time: int, bars_by_tf: dict[str, list[Bar]], with_report: bool = True
+    ) -> AgentOutput:
         changes: list[tuple[str, dict[str, Any]]] = []
         for tf in self.timeframes:
             for bar in sorted(bars_by_tf.get(tf, []), key=lambda b: b.open_time):
                 if bar.close_time > close_time:
                     continue  # never feed a candle that has not closed at this boundary
                 changes.extend((tf, item) for item in self.engines[tf].on_candle(bar))
-        return AgentOutput(self.report(close_time), changes)
+        return AgentOutput(self.report(close_time) if with_report else None, changes)
 
     def report(self, as_of: int) -> dict[str, Any]:
         return {
@@ -189,6 +195,7 @@ class BatchResult:
     reports: list[dict[str, Any]]
     items: dict[tuple[str, str], dict[str, Any]]  # (timeframe, id) -> latest item version
     boundaries: int = 0
+    recorder: TransitionRecorder | None = None  # item/state transitions from store_from on
 
 
 def run_batch(
@@ -197,27 +204,54 @@ def run_batch(
     *,
     report_from: int | None = None,
     store_from: int | None = None,
+    reports: bool = True,
+    recorder: TransitionRecorder | None = None,
 ) -> BatchResult:
-    """Replay history through `agent.on_bar_close`, one bar-close boundary at a time."""
+    """Replay history through `agent.on_bar_close`, one bar-close boundary at a time.
+
+    reports=False skips building full reports (most of the replay time); `report_from` limits
+    them to boundaries >= report_from. With a recorder, transitions are recorded from the first
+    boundary >= store_from (a baseline of everything the engines hold at that boundary)."""
     base = min(TIMEFRAME_MS[tf] for tf in agent.timeframes)
     by_close: dict[int, dict[str, list[Bar]]] = {}
     for tf, bars in bars_by_tf.items():
         for b in bars:
             by_close.setdefault(b.close_time, {}).setdefault(tf, []).append(b)
 
-    reports: list[dict[str, Any]] = []
+    report_list: list[dict[str, Any]] = []
     items: dict[tuple[str, str], dict[str, Any]] = {}
     boundaries = 0
 
     for t in sorted(by_close):
         if t % base:
             continue
-        out = agent.on_bar_close(t, by_close[t])
+        closed_bars = by_close.get(t, {})
+        if not closed_bars or not any(closed_bars.values()):
+            continue
+        want = reports and (report_from is None or t >= report_from)
+        out = agent.on_bar_close(t, closed_bars, with_report=want)
         boundaries += 1
-        if report_from is None or t >= report_from:
-            reports.append(out.report)
+        if out.report is not None:
+            report_list.append(out.report)
+        if recorder is not None and (store_from is None or t >= store_from):
+            if recorder.started:
+                recorder.boundary(t, agent, out.changes)
+            else:
+                recorder.baseline(t, agent)
         for tf, item in out.changes:
             if store_from is None or item["confirmed_at"] >= store_from:
                 items[(tf, item["id"])] = item
 
-    return BatchResult(reports, items, boundaries)
+    # Persist warm-up ancestor OBs (and any warm-up item referenced by an in-window item)
+    # so relationships (breaker -> source_ob) are always complete.
+    for (tf, _item_id), item in list(items.items()):
+        source_ob_id = item.get("source_ob_id")
+        if source_ob_id and (tf, source_ob_id) not in items:
+            eng = agent.engines.get(tf)
+            if eng:
+                for ob in eng.order_blocks:
+                    if ob.id == source_ob_id:
+                        items[(tf, ob.id)] = ob.item()
+                        break
+
+    return BatchResult(report_list, items, boundaries, recorder)

@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 AGENT_NAME = "ict_smc"
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.2.0"
 
 
 @dataclass(frozen=True)

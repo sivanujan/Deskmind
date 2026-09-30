@@ -313,3 +313,374 @@ def test_to_overlays_structure() -> None:
         assert o.confirmed_at is not None
         assert o.type in ("zone", "line", "marker")
         assert "rule" in o.meta
+
+
+# ==============================================================================
+# Concept 11: ATR End-to-End Audit & Consistency Across Timeframes
+# ==============================================================================
+
+
+def test_atr_audit_and_consistency() -> None:
+    """Verify that ATR used by engine matches independent ATR(14) in $,
+
+    and that items on 1h use 1h ATR at confirmed_at while items on 5m use 5m ATR.
+    """
+    bars_1h = make_bars([100, 95, 120, 105, 130, 110, 140], steps=4, spread=0.8, iv=3600_000)
+    bars_5m = make_bars([100, 98, 105, 102, 108, 104, 110], steps=4, spread=0.2, iv=300_000)
+
+    # Independent ATR calculation
+    def calc_indep_atr(bars: list[Bar], period: int = 14) -> dict[int, float]:
+        trs, atrs = [], {}
+        for i, b in enumerate(bars):
+            prev = bars[i - 1] if i > 0 else None
+            tr = (
+                b.high - b.low
+                if prev is None
+                else max(b.high - b.low, abs(b.high - prev.close), abs(b.low - prev.close))
+            )
+            trs.append(tr)
+            if len(trs) >= period:
+                atrs[b.close_time] = sum(trs[-period:]) / float(period)
+        return atrs
+
+    indep_1h = calc_indep_atr(bars_1h, period=TREND_CFG.atr_period)
+    indep_5m = calc_indep_atr(bars_5m, period=TREND_CFG.atr_period)
+
+    eng_1h = IctSmcEngine("BTCUSDT", "1h", CFG, TREND_CFG)
+    items_1h = []
+    for b in bars_1h:
+        changes = eng_1h.on_candle(b)
+        if eng_1h.atr is not None:
+            expected = indep_1h[b.close_time]
+            assert eng_1h.atr == pytest.approx(expected, rel=1e-5)
+        items_1h.extend(changes)
+
+    eng_5m = IctSmcEngine("BTCUSDT", "5m", CFG, TREND_CFG)
+    items_5m = []
+    for b in bars_5m:
+        changes = eng_5m.on_candle(b)
+        if eng_5m.atr is not None:
+            expected = indep_5m[b.close_time]
+            assert eng_5m.atr == pytest.approx(expected, rel=1e-5)
+        items_5m.extend(changes)
+
+    # Every item confirmed at time T must record the timeframe's ATR at that time
+    for it in items_1h:
+        if "atr" in it and it["atr"] is not None:
+            t = it["confirmed_at"]
+            if t in indep_1h:
+                assert it["atr"] == pytest.approx(indep_1h[t], rel=1e-5)
+
+    for it in items_5m:
+        if "atr" in it and it["atr"] is not None:
+            t = it["confirmed_at"]
+            if t in indep_5m:
+                assert it["atr"] == pytest.approx(indep_5m[t], rel=1e-5)
+
+
+# ==============================================================================
+# Concept 12: Liquidity Pool Strength (Strong vs Weak)
+# ==============================================================================
+
+
+def test_pool_strength_tagging() -> None:
+    # EQH should produce strong pool; single swing produces weak pool
+    pts = [100, 110, 104, 110.2, 103, 115]
+    bars = make_bars(pts, steps=3, spread=0.2)
+    _eng, items = run_engine(bars)
+
+    pools = [it for it in items.values() if it["kind"] in ("bsl", "ssl")]
+    assert len(pools) > 0
+
+    strong_pools = [p for p in pools if p.get("strength") == "strong"]
+    weak_pools = [p for p in pools if p.get("strength") == "weak"]
+
+    assert len(strong_pools) >= 1
+    assert len(weak_pools) >= 1
+
+    for p in strong_pools:
+        assert p["pool_type"] in ("eqh", "eql")
+    for p in weak_pools:
+        assert p["pool_type"] in ("single_high", "single_low")
+
+    # Check overlays inherit strength
+    overlays = to_overlays(pools, CFG.version, bars[-1].close_time)
+    for o in overlays:
+        if o.kind in ("bsl", "ssl"):
+            assert o.meta.get("strength") in ("strong", "weak")
+
+
+# ==============================================================================
+# Concept 13: Warm-up Ancestor OB Persistence
+# ==============================================================================
+
+
+def test_warmup_ancestor_ob_persisted() -> None:
+    """An ancestor OB created in warm-up must be persisted when referenced
+
+    by an in-window breaker.
+    """
+    # 1. Sequence that creates an OB early:
+    bars = make_bars([100, 95, 115, 105, 125, 90, 85], steps=3, spread=0.5)
+
+    # Let store_from be midway through history so the OB is in warm-up
+    # but the breaker invalidation occurs in-window
+    mid_idx = len(bars) // 2
+    store_from = bars[mid_idx].close_time
+
+    agent = SymbolIctSmcAgent("BTCUSDT", ["1h"], CFG, TREND_CFG)
+    res = run_batch(agent, {"1h": bars}, store_from=store_from)
+
+    breakers = [it for (tf, _id), it in res.items.items() if "breaker" in it.get("kind", "")]
+    if breakers:
+        for b in breakers:
+            src_id = b.get("source_ob_id")
+            assert src_id is not None
+            # The ancestor OB must be present in res.items!
+            assert ("1h", src_id) in res.items
+            ancestor_ob = res.items[("1h", src_id)]
+            assert ancestor_ob["id"] == src_id
+            assert ancestor_ob["kind"].startswith("ob_")
+
+
+# ==============================================================================
+# Concept 14: Batch Persistence Parity
+# ==============================================================================
+
+
+def test_batch_persistence_parity_on_fixtures() -> None:
+    """Prove results are identical (same unique items + same report content)."""
+    bars_1h = make_bars([100, 95, 115, 105, 125, 110, 130], steps=3, spread=0.5, iv=3600_000)
+    bars_15m = make_bars([100, 96, 112, 107, 122, 114, 128], steps=3, spread=0.3, iv=900_000)
+
+    agent1 = SymbolIctSmcAgent("BTCUSDT", ["15m", "1h"], CFG, TREND_CFG)
+    res1 = run_batch(agent1, {"15m": bars_15m, "1h": bars_1h})
+
+    agent2 = SymbolIctSmcAgent("BTCUSDT", ["15m", "1h"], CFG, TREND_CFG)
+    res2 = run_batch(agent2, {"15m": bars_15m, "1h": bars_1h})
+
+    assert len(res1.items) == len(res2.items)
+    assert set(res1.items.keys()) == set(res2.items.keys())
+    for k in res1.items:
+        assert res1.items[k] == res2.items[k]
+
+    assert len(res1.reports) == len(res2.reports)
+    for r1, r2 in zip(res1.reports, res2.reports, strict=True):
+        assert r1 == r2
+
+
+# ==============================================================================
+# Performance fix must not change results: legacy vs optimised report path
+# ==============================================================================
+
+
+def _legacy_state(self: IctSmcEngine) -> dict[str, Any]:
+    """state() exactly as before the performance fix (summarise all, then slice)."""
+    bsl_pools = [p.summary() for p in self.pools if p.side == "high"][-self.cfg.max_active_pools :]
+    ssl_pools = [p.summary() for p in self.pools if p.side == "low"][-self.cfg.max_active_pools :]
+    active_fvgs_objs = [f for f in self.fvgs if f.state != "filled"][-self.cfg.max_active_fvgs :]
+    active_obs_objs = [ob for ob in self.order_blocks if ob.state != "invalidated"][
+        -self.cfg.max_active_obs :
+    ]
+    active_breakers = [b.summary() for b in self.breakers if b.state != "invalidated"][
+        -self.cfg.max_active_breakers :
+    ]
+    pd_arrays_in_zone: list[dict[str, Any]] = []
+    if self.pd_range:
+        zone, eq = self.pd_range.zone, self.pd_range.equilibrium
+        if zone == "discount":
+            pd_arrays_in_zone = [
+                ob.summary() for ob in active_obs_objs if ob.direction == "bullish" and ob.top <= eq
+            ] + [f.summary() for f in active_fvgs_objs if f.direction == "bullish" and f.top <= eq]
+        elif zone == "premium":
+            pd_arrays_in_zone = [
+                ob.summary()
+                for ob in active_obs_objs
+                if ob.direction == "bearish" and ob.bottom >= eq
+            ] + [
+                f.summary() for f in active_fvgs_objs if f.direction == "bearish" and f.bottom >= eq
+            ]
+    return {
+        "pd_range": self.pd_range.as_dict() if self.pd_range else None,
+        "liquidity": {"bsl": bsl_pools, "ssl": ssl_pools, "last_sweep": self.last_sweep},
+        "fvgs": [f.summary() for f in active_fvgs_objs],
+        "order_blocks": [ob.summary() for ob in active_obs_objs],
+        "breakers": active_breakers,
+        "pd_arrays_in_zone": pd_arrays_in_zone,
+        "displacement": self.displacements[-1].summary() if self.displacements else None,
+        "smt": self.last_smt.summary() if self.last_smt else None,
+    }
+
+
+def _random_walk_bars(n: int, seed: int, iv: int) -> list[Bar]:
+    import random
+
+    rng = random.Random(seed)
+    bars, price = [], 100.0
+    for i in range(n):
+        o = price
+        price = max(5.0, price + rng.gauss(0, 1.2) + (0.8 if (i // 60) % 2 else -0.8))
+        hi = max(o, price) + abs(rng.gauss(0, 0.6))
+        lo = min(o, price) - abs(rng.gauss(0, 0.6))
+        t = T0 + i * iv
+        bars.append(Bar(t, t + iv, o, hi, lo, price))
+    return bars
+
+
+def test_performance_fix_keeps_reports_and_items_identical(monkeypatch) -> None:
+    """Same unique items and byte-identical reports with the optimised state()/iso()."""
+    import json
+
+    import deskmind.agents.ict_smc.agent as agent_mod
+
+    h1 = _random_walk_bars(1500, seed=7, iv=H)
+    h2 = [
+        Bar(a.open_time, b.close_time, a.open, max(a.high, b.high), min(a.low, b.low), b.close)
+        for a, b in zip(h1[::2], h1[1::2], strict=False)
+    ]
+    bars = {"1h": h1, "2h": h2}
+    report_from = h1[400].close_time
+
+    def run():
+        agent = SymbolIctSmcAgent("TEST", ["1h", "2h"], CFG, TREND_CFG)
+        res = run_batch(agent, bars, report_from=report_from, store_from=report_from)
+        return agent, res
+
+    fast_agent, fast = run()
+    uncached_iso = agent_mod.iso.__wrapped__
+    monkeypatch.setattr(IctSmcEngine, "state", _legacy_state)
+    monkeypatch.setattr(agent_mod, "iso", uncached_iso)
+    _, slow = run()
+
+    # the fixture must exercise the path that changed: more pools/breakers than are reported
+    eng = fast_agent.engines["1h"]
+    assert len(eng.pools) > 5 * CFG.max_active_pools
+    assert len(eng.breakers) > 0
+    assert set(fast.items) == set(slow.items)  # identical unique items
+    assert fast.items == slow.items  # and identical content
+    assert len(fast.reports) == len(slow.reports) > 1000
+    assert json.dumps(fast.reports, sort_keys=True) == json.dumps(slow.reports, sort_keys=True)
+
+
+# ==============================================================================
+# v1.2.0: EQH/EQL self-pairing fix, FVG tags, point-in-time reconstruction
+# ==============================================================================
+
+
+def _swing(pid: str, kind: str, price: float, pivot: int, confirmed: int, **extra: Any) -> dict:
+    return {"id": pid, "kind": kind, "price": price, "pivot_time": pivot,
+            "confirmed_at": confirmed, **extra}  # fmt: skip
+
+
+def test_resent_swing_updates_in_place_and_never_pairs_with_itself() -> None:
+    eng = IctSmcEngine("TEST", "1h", CFG, TREND_CFG)
+    bars = make_bars([100, 101, 100, 101, 100, 101, 100], steps=2, spread=0.3)
+    for b in bars[:8]:  # warm up ATR with the engine's own trend engine
+        eng.on_candle(b)
+    pools_before = len(eng.pools)
+    sw = _swing("swing_high:1", "swing_high", 250.0, bars[7].open_time, bars[8].close_time)
+    first = eng.on_candle(bars[8], trend_changes=[sw])
+    new_pools = [i for i in first if i["kind"] == "bsl"]
+    assert len(new_pools) == 1 and new_pools[0]["pool_type"] == "single_high"
+    # the trend engine re-sends the same swing on a state change (e.g. broken)
+    resent = dict(sw, status="broken")
+    again = eng.on_candle(bars[9], trend_changes=[resent])
+    assert [i for i in again if i["kind"] in ("bsl", "ssl")] == []
+    assert len(eng.pools) == pools_before + 1
+    assert sum(1 for s in eng.confirmed_swings if s["id"] == sw["id"]) == 1
+    assert next(s for s in eng.confirmed_swings if s["id"] == sw["id"])["status"] == "broken"
+
+
+def test_eq_pools_always_have_two_distinct_swings() -> None:
+    bars = _random_walk_bars(1500, seed=11, iv=H)
+    eng, _items = run_engine(bars)
+    eq = [p for p in eng.pools if p.pool_type in ("eqh", "eql")]
+    assert eq, "fixture should produce equal-high/low pools"
+    assert all(len(set(p.swings)) == 2 for p in eq)
+    ids = [s["id"] for s in eng.confirmed_swings]
+    assert len(ids) == len(set(ids))  # no swing stored twice
+
+
+def test_fvgs_tagged_with_size_atr_and_displacement_backing() -> None:
+    bars = _random_walk_bars(1500, seed=3, iv=H)
+    _eng, items = run_engine(bars)
+    fvgs = [i for i in items.values() if i["kind"].startswith("fvg_")]
+    disp_times = {i["created_time"] for i in items.values() if i["kind"] == "displacement"}
+    assert fvgs
+    for f in fvgs:
+        assert f["size_atr"] == pytest.approx((f["top"] - f["bottom"]) / f["atr"])
+        assert f["size_atr"] >= CFG.fvg_min_atr - 1e-12  # detection threshold unchanged
+        assert f["displacement_backed"] is (f["created_time"] in disp_times)
+    assert any(f["displacement_backed"] for f in fvgs)
+    assert any(not f["displacement_backed"] for f in fvgs)
+
+
+def test_state_reconstructed_from_transitions_equals_engine_state_at_random_t() -> None:
+    """Point-in-time state as of T from items + transitions == the engine's live state at T."""
+    import copy
+    import json
+    import random
+
+    from deskmind.agents.ict_smc.history import TransitionRecorder, reconstruct_state
+
+    h1 = _random_walk_bars(2400, seed=21, iv=H)
+    h2 = [
+        Bar(a.open_time, b.close_time, a.open, max(a.high, b.high), min(a.low, b.low), b.close)
+        for a, b in zip(h1[::2], h1[1::2], strict=False)
+    ]
+    bars = {"1h": h1, "2h": h2}
+    by_close: dict[int, dict[str, list[Bar]]] = {}
+    for tf, bs in bars.items():
+        for b in bs:
+            by_close.setdefault(b.close_time, {}).setdefault(tf, []).append(b)
+    agent = SymbolIctSmcAgent("TEST", ["1h", "2h"], CFG, TREND_CFG)
+    rec = TransitionRecorder()
+    store_from = h1[500].close_time  # everything before is warm-up (baseline covers it)
+    boundaries = sorted(by_close)
+    random.seed(5)
+    check_at = set(random.sample([t for t in boundaries if t > store_from], 60))
+    check_at |= {next(t for t in boundaries if t >= store_from), boundaries[-1]}
+    live: dict[int, dict[str, Any]] = {}
+    last_close: dict[str, float] = {}
+    for t in boundaries:
+        out = agent.on_bar_close(t, by_close[t], with_report=False)
+        for tf, bs in by_close[t].items():
+            last_close[tf] = bs[-1].close
+        if t >= store_from:
+            if rec.started:
+                rec.boundary(t, agent, out.changes)
+            else:
+                rec.baseline(t, agent)
+        if t in check_at:
+            live[t] = {
+                tf: (copy.deepcopy(e.state()), last_close.get(tf))
+                for tf, e in agent.engines.items()
+            }
+
+    # stored rows go through JSON (like Postgres JSONB)
+    rows = json.loads(json.dumps(rec.rows))
+    by_tf: dict[str, list[dict[str, Any]]] = {}
+    for r in sorted(rows, key=lambda r: (r["at"], r["ord"])):
+        by_tf.setdefault(r["tf"], []).append(r)
+    eng1 = agent.engines["1h"]
+    assert len(eng1.pools) > 3 * CFG.max_active_pools and eng1.breakers and eng1.pd_range
+    compared = 0
+    for t, per_tf in live.items():
+        for tf, (state, close) in per_tf.items():
+            got = reconstruct_state(by_tf[tf], t, CFG, close)
+            assert json.loads(json.dumps(got)) == json.loads(json.dumps(state)), (t, tf)
+            compared += 1
+    assert compared == 2 * len(check_at)
+    # far fewer bytes than storing a snapshot per boundary
+    snapshot_bytes = sum(len(json.dumps(s)) for p in live.values() for s, _ in p.values())
+    snapshot_bytes *= len([t for t in boundaries if t >= store_from]) / len(live)
+    assert len(json.dumps(rows)) < snapshot_bytes / 3
+
+
+def test_item_ids_are_unique_so_storage_never_merges_two_items() -> None:
+    """Two OBs from the same earliest candle (different BOS) used to share one id."""
+    for seed in (21, 3, 11):
+        eng, _ = run_engine(_random_walk_bars(2400, seed=seed, iv=H))
+        for objs in (eng.pools, eng.order_blocks, eng.breakers, eng.fvgs, eng.voids):
+            ids = [o.id for o in objs]
+            assert len(ids) == len(set(ids)), (seed, type(objs[0]).__name__ if objs else None)

@@ -116,8 +116,12 @@ def test_symbols_include_universe_members_with_state(env) -> None:
     by = {e["symbol"]: e for e in body["entries"]}
     assert body["symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "NEWUSDT"]
     assert by["NEWUSDT"] == {
-        "symbol": "NEWUSDT", "state": "watch_only", "reason": None, "configured": False, "has_data": False
-    }  # fmt: skip
+        "symbol": "NEWUSDT",
+        "state": "watch_only",
+        "reason": None,
+        "configured": False,
+        "has_data": False,
+    }
     assert by["DOGEUSDT"]["state"] == "downloading"
     assert "OLDUSDT" not in by  # exited: no longer offered in the selector
     assert candles.status_code == 200 and candles.json()["count"] == 0  # known, no data yet

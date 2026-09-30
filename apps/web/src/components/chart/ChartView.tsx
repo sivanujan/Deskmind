@@ -119,6 +119,16 @@ interface FilterOptions {
   maxSwings?: number;
 }
 
+/** Display-only default: FVGs smaller than this many ATRs are hidden unless "All FVGs" is on.
+ *  The agent stores every FVG with its size_atr; strategy research decides real filters. */
+const FVG_DEFAULT_MIN_SIZE_ATR = 0.5;
+
+function isSmallFvg(o: Overlay): boolean {
+  if (!(o.kind.startsWith("fvg_") || o.kind.startsWith("ifvg_"))) return false;
+  const size = (o.meta as Record<string, unknown> | undefined)?.size_atr;
+  return typeof size === "number" && size < FVG_DEFAULT_MIN_SIZE_ATR;
+}
+
 /** Focus mode: show only active items by default. Historical/finished items are hidden or faded. */
 function filterFocusOverlays(
   overlays: Overlay[],
@@ -198,10 +208,13 @@ function filterFocusOverlays(
       }
       return true;
     }
-    // Pools (BSL / SSL): active when not swept or taken
+    // Pools (BSL / SSL): active when not swept or taken; weak single-swing pools hidden in default focus mode
     if (kind === "bsl" || kind === "ssl") {
       const st = state ?? status;
       if (st === "swept" || st === "taken" || meta.swept_at != null || meta.taken_at != null) {
+        return false;
+      }
+      if (meta.strength === "weak" || meta.pool_type === "single_high" || meta.pool_type === "single_low") {
         return false;
       }
       return true;
@@ -437,6 +450,7 @@ export default function ChartView({
   }, []);
 
   const [showHistory, setShowHistory] = useState(false);
+  const [showAllFvgs, setShowAllFvgs] = useState(false);
   const tfStatus = status?.symbols.find((s) => s.symbol === symbol)?.timeframes.find((t) => t.timeframe === tf);
   const symStatus = status?.symbols.find((s) => s.symbol === symbol);
   const effectiveWs: WsState = replayT !== null ? "paused" : wsState;
@@ -462,10 +476,10 @@ export default function ChartView({
       return !hiddenAgents.has(o.source_agent);
     };
     const filtered = mergedOverlays.filter(
-      (o) => isAgentVisible(o) && !hiddenGroups.has(groupOf(o)),
+      (o) => isAgentVisible(o) && !hiddenGroups.has(groupOf(o)) && (showAllFvgs || !isSmallFvg(o)),
     );
     return filterFocusOverlays(filtered, { showHistory });
-  }, [mergedOverlays, hiddenAgents, hiddenGroups, showHistory]);
+  }, [mergedOverlays, hiddenAgents, hiddenGroups, showHistory, showAllFvgs]);
 
   const toggle = (setter: typeof setHiddenAgents, v: string) =>
     setter((prev) => {
@@ -661,6 +675,17 @@ export default function ChartView({
             }
           >
             {showHistory ? "History: ON" : "Focus Mode"}
+          </button>
+          <button
+            onClick={() => setShowAllFvgs((v) => !v)}
+            className={`rounded border px-2 py-0.5 text-xs font-semibold transition-colors ${
+              showAllFvgs
+                ? "border-accent bg-accent/20 text-accent"
+                : "border-border bg-surface-2 text-muted hover:text-foreground"
+            }`}
+            title={`FVGs smaller than ${FVG_DEFAULT_MIN_SIZE_ATR} x ATR are hidden by default`}
+          >
+            {showAllFvgs ? "FVGs: all" : `FVGs: >= ${FVG_DEFAULT_MIN_SIZE_ATR} ATR`}
           </button>
           <span className="text-muted">Overlays:</span>
           {agents.length === 0 && <span className="text-muted">none</span>}

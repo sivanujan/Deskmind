@@ -29,6 +29,7 @@ class LiquidityPool:
     swings: list[int]  # swing pivot times
     created_time: int
     confirmed_at: int
+    atr: float | None = None
     state: PoolState = "active"
     swept_at: int | None = None
     swept_by: str | None = None
@@ -37,9 +38,14 @@ class LiquidityPool:
     expired_at: int | None = None
 
     @property
+    def strength(self) -> Literal["strong", "weak"]:
+        return "strong" if self.pool_type in ("eqh", "eql") else "weak"
+
+    @property
     def id(self) -> str:
+        # unique per pool: its swing candle(s). Single swing pools keep the old "<kind>:<time>".
         kind = "bsl" if self.side == "high" else "ssl"
-        return f"{kind}_{self.pool_type}:{self.created_time}"
+        return f"{kind}_{self.pool_type}:{'_'.join(str(s) for s in self.swings)}"
 
     @property
     def kind(self) -> str:
@@ -54,7 +60,9 @@ class LiquidityPool:
             "confirmed_at": self.confirmed_at,
             "side": self.side,
             "pool_type": self.pool_type,
+            "strength": self.strength,
             "level": self.level,
+            "atr": self.atr,
             "swings": list(self.swings),
             "state": self.state,
             "swept_at": self.swept_at,
@@ -70,6 +78,7 @@ class LiquidityPool:
             "id": self.id,
             "level": self.level,
             "pool_type": self.pool_type,
+            "strength": self.strength,
             "state": self.state,
             "created_time": self.created_time,
             "confirmed_at": self.confirmed_at,
@@ -131,6 +140,9 @@ class FVG:
     ce: float  # Consequent Encroachment (50%)
     created_time: int
     confirmed_at: int
+    atr: float | None = None
+    size_atr: float | None = None  # gap / ATR at confirmation (tag only; not a filter)
+    displacement_backed: bool = False  # middle candle was a displacement candle
     state: FvgState = "fresh"
     partially_filled_at: int | None = None
     filled_at: int | None = None
@@ -156,6 +168,9 @@ class FVG:
             "top": self.top,
             "bottom": self.bottom,
             "ce": self.ce,
+            "atr": self.atr,
+            "size_atr": self.size_atr,
+            "displacement_backed": self.displacement_backed,
             "state": self.state,
             "partially_filled_at": self.partially_filled_at,
             "filled_at": self.filled_at,
@@ -171,6 +186,7 @@ class FVG:
             "top": self.top,
             "bottom": self.bottom,
             "ce": self.ce,
+            "atr": self.atr,
             "state": self.state,
             "created_time": self.created_time,
             "confirmed_at": self.confirmed_at,
@@ -186,6 +202,7 @@ class OrderBlock:
     created_time: int
     confirmed_at: int
     from_bos_id: str
+    atr: float | None = None
     state: ObState = "fresh"
     tested_at: int | None = None
     mitigated_at: int | None = None
@@ -194,7 +211,8 @@ class OrderBlock:
 
     @property
     def id(self) -> str:
-        return f"ob_{self.direction}:{self.created_time}"
+        # created_time alone is not unique: two BOS can pick the same earliest candle
+        return f"ob_{self.direction}:{self.created_time}:{self.confirmed_at}"
 
     @property
     def kind(self) -> str:
@@ -211,6 +229,7 @@ class OrderBlock:
             "top": self.top,
             "bottom": self.bottom,
             "mt": self.mt,
+            "atr": self.atr,
             "from_bos_id": self.from_bos_id,
             "state": self.state,
             "tested_at": self.tested_at,
@@ -227,6 +246,7 @@ class OrderBlock:
             "top": self.top,
             "bottom": self.bottom,
             "mt": self.mt,
+            "atr": self.atr,
             "state": self.state,
             "created_time": self.created_time,
             "confirmed_at": self.confirmed_at,
@@ -243,6 +263,7 @@ class BreakerBlock:
     confirmed_at: int
     source_ob_id: str
     sweep_id: str | None = None
+    atr: float | None = None
     state: BreakerState = "active"
     mitigated_at: int | None = None
     invalidated_at: int | None = None
@@ -250,8 +271,9 @@ class BreakerBlock:
 
     @property
     def id(self) -> str:
+        # one breaker/mitigation block per source OB, so reuse the OB's unique suffix
         prefix = "mitigation" if self.is_mitigation else "breaker"
-        return f"{prefix}_{self.direction}:{self.created_time}"
+        return f"{prefix}_{self.direction}:{self.source_ob_id.split(':', 1)[1]}"
 
     @property
     def kind(self) -> str:
@@ -271,6 +293,7 @@ class BreakerBlock:
             "bottom": self.bottom,
             "source_ob_id": self.source_ob_id,
             "sweep_id": self.sweep_id,
+            "atr": self.atr,
             "state": self.state,
             "mitigated_at": self.mitigated_at,
             "invalidated_at": self.invalidated_at,
@@ -289,6 +312,7 @@ class BreakerBlock:
             "is_mitigation": self.is_mitigation,
             "top": self.top,
             "bottom": self.bottom,
+            "atr": self.atr,
             "state": self.state,
             "created_time": self.created_time,
             "confirmed_at": self.confirmed_at,
@@ -302,6 +326,7 @@ class LiquidityVoid:
     bottom: float
     created_time: int
     confirmed_at: int
+    atr: float | None = None
     state: VoidState = "open"
     rebalanced_at: int | None = None
     filled_at: int | None = None
@@ -325,6 +350,7 @@ class LiquidityVoid:
             "direction": self.direction,
             "top": self.top,
             "bottom": self.bottom,
+            "atr": self.atr,
             "state": self.state,
             "rebalanced_at": self.rebalanced_at,
             "filled_at": self.filled_at,
@@ -338,6 +364,7 @@ class LiquidityVoid:
             "direction": self.direction,
             "top": self.top,
             "bottom": self.bottom,
+            "atr": self.atr,
             "state": self.state,
             "created_time": self.created_time,
             "confirmed_at": self.confirmed_at,

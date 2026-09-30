@@ -254,8 +254,13 @@ def agents_backfill(
     all_symbols: bool = AllOpt,
     start: str = typer.Option(..., help="UTC start, e.g. 2026-06-28"),
     end: str = typer.Option("", help="UTC end (default: now)"),
+    debug_report_days: float = typer.Option(
+        0.0,
+        help="ict_smc only: also store full reports for the last N days (debug). Default: "
+        "items + transitions only; state as of any T is rebuilt from them.",
+    ),
 ) -> None:
-    """Replay history through the agent and store reports + overlays for [start, end]."""
+    """Replay history through the agent and store its point-in-time record for [start, end]."""
     _check_agent(agent)
     import time
     from datetime import UTC, datetime
@@ -308,6 +313,7 @@ def agents_backfill(
                         data_dir=settings.data_dir,
                         recent=PostgresRecentCandles(engine),
                         store=PostgresIctSmcStore(engine),
+                        debug_report_days=debug_report_days,
                     )
                     kinds = [
                         "bsl",
@@ -322,13 +328,18 @@ def agents_backfill(
                     ]
 
                 typer.echo(
-                    f"\n== {sym}: {r['reports']} reports, {r['items']} items "
-                    f"({time.time() - t0:.1f}s)"
+                    f"\n== {sym}: {r['reports']} reports, {r['items']} items"
+                    + (f", {r['transitions']} transitions" if "transitions" in r else "")
+                    + f" ({time.time() - t0:.1f}s)"
                 )
                 typer.echo(f"{'tf':<5}" + "".join(f"{k:>20}" for k in kinds))
                 for tf in settings.live_timeframes:
                     c = r["counts"].get(tf, {})
                     typer.echo(f"{tf:<5}" + "".join(f"{c.get(k, 0):>20}" for k in kinds))
+                if r.get("timings"):
+                    typer.echo(
+                        "timings: " + ", ".join(f"{k} {v}s" for k, v in r["timings"].items())
+                    )
         finally:
             await engine.dispose()
 

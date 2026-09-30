@@ -1,6 +1,6 @@
 # ICT / SMC Liquidity agent — rule specification
 
-Agent name `ict_smc`, version **1.0.0** (`src/deskmind/agents/ict_smc/config.py`). Deterministic
+Agent name `ict_smc`, version **1.2.0** (`src/deskmind/agents/ict_smc/config.py`). Deterministic
 Python, no LLM. Every parameter below is a property of `IctSmcConfig`; changing any parameter
 requires a new `agent_version`.
 
@@ -260,5 +260,29 @@ Overlays strictly conform to schema version 1 (`OverlayResponse`):
 
 ---
 
-## 11. Version History
+## 11. Point-in-time storage (since 1.2.0)
+- Source of truth = items (`agent_events`, latest version per id) + every item/state change in
+  `agent_item_transitions` (`at` = bar-close boundary, `ord` = emission order; first row of an
+  item = full payload, later rows = changed fields only). Engine state that is not an item is
+  stored as synthetic rows: `state:pd_range` (only when the range changes; position/zone/in_ote
+  are re-derived from the candle close), `state:last_sweep`, `state:smt`. Each stored run starts
+  with `state:baseline` + a full snapshot of everything the engines hold, so replay starts at the
+  last baseline <= T.
+- `history.reconstruct_state(rows, T, cfg, last_close)` rebuilds `IctSmcEngine.state()` at T
+  exactly (tested against the live engine at random T). The API rebuilds reports from it.
+- Full reports: live runs only, kept `ICT_SMC_REPORT_RETENTION_DAYS` (default 7). Backfills store
+  items + transitions only (`--debug-report-days N` for a short debug window).
+
+## 12. Version History
 - 1.0.0 — Initial deterministic ICT/SMC liquidity and PD implementation.
+- 1.1.0 — Items store the ATR used at detection; pools carry `strength` (strong = EQH/EQL);
+  warm-up source OBs of in-window breakers are persisted.
+- 1.2.0 — (a) A swing re-sent by the trend engine on a state change updates the stored swing and
+  never forms a new pool; EQH/EQL pools need two DISTINCT swing candles (66% of 1.1.0 EQ pools
+  paired a swing with itself). (b) Unique ids: OB `ob_<dir>:<created>:<confirmed>`, breaker /
+  mitigation block reuse their source OB's suffix, pools list their swing times (single-swing
+  ids unchanged); an identical OB from a second BOS change is not added twice. (c) FVGs are
+  tagged `size_atr` (gap / ATR) and `displacement_backed` (middle candle was a displacement);
+  `fvg_min_atr` stays 0.25 and detection is unchanged (the chart hides < 0.5 ATR by default).
+  (d) state() summarises only the reported pools/breakers (performance, identical output).
+  (e) Point-in-time storage (section 11).
