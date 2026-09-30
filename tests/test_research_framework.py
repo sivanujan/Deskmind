@@ -66,3 +66,40 @@ def test_deflated_sharpe_calculation() -> None:
     returns = [0.5, 1.2, -0.8, 1.5, 0.4, 0.9, -0.2, 1.1, 0.7, -0.5]
     dsr = calculate_deflated_sharpe(returns, total_trials=3)
     assert isinstance(dsr, float)
+
+
+def test_event_study_train_split_never_reads_2025_row(tmp_path) -> None:
+    """Event study on 'train' split never reads a 2025 feature row."""
+    from datetime import UTC, datetime
+    from deskmind.features.builder import build_feature_row
+    from deskmind.features.store import FeatureStore
+
+    store = FeatureStore(base_dir=tmp_path)
+    # 2024-12-31 timestamp (train split)
+    t_2024 = int(datetime(2024, 12, 31, 23, 0, tzinfo=UTC).timestamp() * 1000)
+    # 2025-01-01 timestamp (validation split)
+    t_2025 = int(datetime(2025, 1, 1, 1, 0, tzinfo=UTC).timestamp() * 1000)
+
+    row_2024 = build_feature_row("BTCUSDT", t_2024, None, None, None, None, None, None, None, None, None, None, 65000.0)
+    row_2025 = build_feature_row("BTCUSDT", t_2025, None, None, None, None, None, None, None, None, None, None, 66000.0)
+
+    store.write_features([row_2024, row_2025])
+
+    # Read on train split
+    train_rows = store.read_features("BTCUSDT", split="train")
+    assert len(train_rows) == 1
+    assert train_rows[0]["timestamp"] == t_2024
+
+
+def test_validation_split_without_passing_gates_refused() -> None:
+    """Running on 'validation' split without passing gates is refused."""
+    from deskmind.research.split_guard import SplitGuard
+
+    # Without gate result
+    with pytest.raises(PermissionError, match="refused"):
+        SplitGuard.validate_split_request(split="validation", hypothesis_id="H1_v1.0.0", gate_result=None)
+
+    # Test split permanently locked
+    with pytest.raises(PermissionError, match="locked"):
+        SplitGuard.validate_split_request(split="test", hypothesis_id="H1_v1.0.0")
+

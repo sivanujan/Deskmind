@@ -7,6 +7,7 @@ import pytest
 
 from deskmind.features.builder import build_feature_row
 from deskmind.features.store import FeatureStore
+from deskmind.agents.trend.config import TrendConfig
 from deskmind.agents.trend.engine import TrendEngine
 from deskmind.agents.trend.models import Bar
 
@@ -24,13 +25,14 @@ def _make_bar(ts_ms: int, c: float) -> Bar:
 
 def test_feature_row_truncation_point_in_time(tmp_path) -> None:
     """Features at time T built from full stream cut at T are identical to features at T built from stream up to T."""
-    t0 = int(datetime(2026, 9, 28, 12, 0, tzinfo=UTC).timestamp() * 1000)
+    t0 = int(datetime(2024, 1, 1, 12, 0, tzinfo=UTC).timestamp() * 1000)
 
     # Full stream of 50 bars
     bars_full = [_make_bar(t0 + i * 300_000, 100.0 + i * 0.5) for i in range(50)]
 
+    cfg = TrendConfig(min_warmup_bars=2)
     # Run engine on full stream up to bar 30 (time T)
-    eng_full = TrendEngine("BTC", "5m")
+    eng_full = TrendEngine("BTC", "5m", cfg=cfg)
     for b in bars_full[:30]:
         eng_full.on_candle(b)
 
@@ -38,7 +40,7 @@ def test_feature_row_truncation_point_in_time(tmp_path) -> None:
     cut_time = bars_full[29].close_time
 
     # Run engine on stream cut at bar 30
-    eng_cut = TrendEngine("BTC", "5m")
+    eng_cut = TrendEngine("BTC", "5m", cfg=cfg)
     for b in bars_full[:30]:
         eng_cut.on_candle(b)
     st_cut_at_30 = eng_cut.state()
@@ -82,7 +84,7 @@ def test_feature_row_truncation_point_in_time(tmp_path) -> None:
 def test_feature_store_parquet_roundtrip(tmp_path) -> None:
     """Test Parquet file writing and reading roundtrip."""
     store = FeatureStore(base_dir=tmp_path)
-    t0 = 1750000000000
+    t0 = 1704067200000  # 2024-01-01 00:00 UTC (TRAIN split)
     row = build_feature_row(
         symbol="BTCUSDT",
         timestamp=t0,

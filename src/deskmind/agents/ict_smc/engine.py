@@ -36,9 +36,12 @@ class IctSmcEngine:
         cfg: IctSmcConfig = DEFAULT_CONFIG,
         trend_cfg: TrendConfig = DEFAULT_TREND_CONFIG,
     ) -> None:
+        from dataclasses import replace
         self.symbol = symbol
         self.timeframe = timeframe
         self.cfg = cfg
+        if trend_cfg.min_warmup_bars != cfg.min_warmup_bars:
+            trend_cfg = replace(trend_cfg, min_warmup_bars=cfg.min_warmup_bars)
         self.trend_cfg = trend_cfg
         self.trend_engine = TrendEngine(symbol, timeframe, trend_cfg)
 

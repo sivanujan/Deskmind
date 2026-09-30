@@ -13,6 +13,9 @@ from deskmind.agents.price_action.engine import PriceActionEngine
 from deskmind.agents.price_action.models import as_of
 from deskmind.agents.price_action.store import MemoryPriceActionStore
 from deskmind.agents.trend.models import Bar
+from dataclasses import replace
+
+TEST_CFG = replace(DEFAULT_CONFIG, min_warmup_bars=2)
 
 
 def _bar(t: int, *, o=100.0, h=101.0, l=99.0, c=100.5, ms=60_000) -> Bar:
@@ -47,7 +50,7 @@ def _swing_items(prices: list[tuple[float, str, int]]) -> list[dict]:
 
 
 def test_sr_zone_created_from_swings() -> None:
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     # Warm ATR
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
@@ -68,7 +71,7 @@ def test_sr_zone_created_from_swings() -> None:
 
 def test_sr_zone_not_created_single_swing() -> None:
     """A single swing is not enough to form a zone (need min sr_min_touches=2)."""
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
         eng.on_candle(b)
@@ -81,7 +84,7 @@ def test_sr_zone_not_created_single_swing() -> None:
 
 
 def test_support_zone_from_swing_lows() -> None:
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
         eng.on_candle(b)
@@ -97,7 +100,7 @@ def test_support_zone_from_swing_lows() -> None:
 
 
 def test_breakout_detected_when_close_above_resistance() -> None:
-    eng = PriceActionEngine("BTC", "1h", DEFAULT_CONFIG)
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     # Warm ATR
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
@@ -132,7 +135,7 @@ def test_breakout_detected_when_close_above_resistance() -> None:
 
 
 def test_bullish_engulfing() -> None:
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
         eng.on_candle(b)
@@ -148,7 +151,7 @@ def test_bullish_engulfing() -> None:
 
 
 def test_hammer_pattern() -> None:
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
         eng.on_candle(b)
@@ -166,7 +169,7 @@ def test_hammer_pattern() -> None:
 
 
 def test_doji_detected() -> None:
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
         eng.on_candle(b)
@@ -187,7 +190,7 @@ def test_doji_detected() -> None:
 
 
 def test_range_detected_in_sideways_bars() -> None:
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     # Warm ATR
     trend_bars = _ascending_bars(20, step_ms=3_600_000)
     for b in trend_bars:
@@ -309,7 +312,7 @@ def test_truncation_no_lookahead() -> None:
 @pytest.mark.asyncio
 async def test_memory_store_upsert_and_items() -> None:
     store = MemoryPriceActionStore()
-    agent = PriceActionAgent("BTCUSDT")
+    agent = PriceActionAgent("BTCUSDT", cfg=TEST_CFG)
     bars = _ascending_bars(100, step_ms=3_600_000)
     tf = "1h"
     result = run_batch(agent, {tf: bars}, reports=True)
@@ -333,8 +336,8 @@ async def test_memory_store_upsert_and_items() -> None:
 
 
 def test_multi_symbol_isolation() -> None:
-    btc = PriceActionEngine("BTC", "1h")
-    eth = PriceActionEngine("ETH", "1h")
+    btc = PriceActionEngine("BTC", "1h", TEST_CFG)
+    eth = PriceActionEngine("ETH", "1h", TEST_CFG)
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
         btc.on_candle(b)
@@ -352,7 +355,7 @@ def test_multi_symbol_isolation() -> None:
 
 
 def test_multi_timeframe_engines_independent() -> None:
-    agent = PriceActionAgent("BTC")
+    agent = PriceActionAgent("BTC", cfg=TEST_CFG)
     bars_1h = _ascending_bars(50, step_ms=3_600_000)
     bars_4h = _ascending_bars(50, step_ms=14_400_000)
     agent.on_bar_close(
@@ -368,7 +371,7 @@ def test_multi_timeframe_engines_independent() -> None:
 
 
 def test_round_numbers_for_btc() -> None:
-    eng = PriceActionEngine("BTCUSDT", "1h")
+    eng = PriceActionEngine("BTCUSDT", "1h", TEST_CFG)
     bars = [_bar(i * 3_600_000, o=65000.0, h=65500.0, l=64500.0, c=65100.0, ms=3_600_000) for i in range(20)]
     for b in bars:
         eng.on_candle(b)
@@ -384,7 +387,7 @@ def test_round_numbers_for_btc() -> None:
 
 def test_pattern_near_miss_negatives() -> None:
     """Verify that near-miss patterns failing numeric threshold checks produce NO pattern items."""
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(20, step_ms=3_600_000)
     for b in bars:
         eng.on_candle(b)
@@ -400,7 +403,7 @@ def test_pattern_near_miss_negatives() -> None:
 
 def test_reconstruct_state_equals_live_engine() -> None:
     """reconstruct_state(T) from item log matches live engine active zones at random time T."""
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(50, step_ms=3_600_000)
     all_items = []
     for b in bars:
@@ -408,7 +411,7 @@ def test_reconstruct_state_equals_live_engine() -> None:
 
     cut_bar = bars[30]
     cut_t = cut_bar.close_time
-    live_eng = PriceActionEngine("BTC", "1h")
+    live_eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     for b in bars[:31]:
         live_eng.on_candle(b)
 
@@ -420,7 +423,7 @@ def test_reconstruct_state_equals_live_engine() -> None:
 
 def test_unique_item_ids() -> None:
     """All items produced by Price Action engine have deterministic, collision-free IDs across entities."""
-    eng = PriceActionEngine("BTC", "1h")
+    eng = PriceActionEngine("BTC", "1h", TEST_CFG)
     bars = _ascending_bars(50, step_ms=3_600_000)
     items_by_id = {}
     for b in bars:
@@ -431,11 +434,12 @@ def test_unique_item_ids() -> None:
 
 
 def test_price_action_cold_start_warmup() -> None:
-    """Engine refuses to emit items on a single synthetic bar without warmup."""
+    """Engine refuses to emit items until 200 warmup bars are met."""
     eng = PriceActionEngine("BTC", "1h")
-    bar = _bar(1000, o=100.0, h=101.0, l=99.0, c=100.5, ms=3_600_000)
-    changes = eng.on_candle(bar)
-    assert changes == [], "Expected no items emitted on cold start single candle"
+    for i in range(199):
+        bar = _bar(1000 + i * 3600000, o=100.0, h=101.0, l=99.0, c=100.5, ms=3_600_000)
+        assert eng.on_candle(bar) == [], f"Expected no items emitted before 200 warmup bars on bar {i+1}"
+
 
 
 

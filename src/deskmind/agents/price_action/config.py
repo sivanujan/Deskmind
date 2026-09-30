@@ -37,7 +37,7 @@ class PriceActionConfig:
     round_number_step: float = 0.0
 
     # Housekeeping
-    min_warmup_bars: int = 2          # refuse cold-start emission on synthetic single bar
+    min_warmup_bars: int = 200        # justified: 14-period ATR + S/R swing cluster formation lookback
     warmup_bars: int = 1000          # bars to replay on warm-up
     bar_memory: int = 2000
     atr_period: int = 14

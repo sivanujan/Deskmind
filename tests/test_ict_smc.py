@@ -32,12 +32,14 @@ CFG = IctSmcConfig(
     ote_low_pct=0.62,
     ote_high_pct=0.79,
     zone_max_age_bars=1000,
+    min_warmup_bars=2,
 )
 TREND_CFG = TrendConfig(
     left_bars=2,
     right_bars=2,
     atr_period=3,
     min_swing_atr=1.0,
+    min_warmup_bars=2,
     trendline_tolerance_atr=0.25,
     range_after_bars=1000,
 )
@@ -688,13 +690,14 @@ def test_item_ids_are_unique_so_storage_never_merges_two_items() -> None:
 
 
 def test_ict_smc_cold_start_warmup() -> None:
-    """Engine refuses to emit items on a single synthetic bar without warmup."""
+    """Engine refuses to emit items until 200 warmup bars are met."""
     from deskmind.agents.ict_smc.engine import IctSmcEngine
     from deskmind.agents.trend.models import Bar
     eng = IctSmcEngine("BTC", "1h")
-    bar = Bar(open_time=1000, close_time=3601000, open=100.0, high=101.0, low=99.0, close=100.5)
-    changes = eng.on_candle(bar)
-    assert changes == [], "Expected no items emitted on cold start single candle"
+    for i in range(199):
+        bar = Bar(open_time=1000 + i * 3600000, close_time=1000 + (i + 1) * 3600000, open=100.0, high=101.0, low=99.0, close=100.5)
+        assert eng.on_candle(bar) == [], f"Expected no items emitted before 200 warmup bars on bar {i+1}"
+
 
 
 

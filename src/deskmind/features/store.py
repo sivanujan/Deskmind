@@ -10,6 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from deskmind.features.models import FeatureRow
+from deskmind.research.split_guard import SplitGuard
 
 
 class FeatureStore:
@@ -37,9 +38,17 @@ class FeatureStore:
             pq.write_table(table, file_path, compression="snappy")
 
     def read_features(
-        self, symbol: str, year_month: str | None = None
+        self,
+        symbol: str,
+        split: str | None = "train",
+        year_month: str | None = None,
+        hypothesis_id: str | None = None,
+        gate_result: Any = None,
     ) -> list[dict[str, Any]]:
-        """Read feature dicts for symbol, optionally filtered by YYYY-MM."""
+        """Read feature dicts for symbol, strictly filtered by split (default='train') or YYYY-MM."""
+        if split:
+            SplitGuard.validate_split_request(split=split, hypothesis_id=hypothesis_id, gate_result=gate_result)
+
         sym_dir = self.base_dir / f"symbol={symbol}"
         if not sym_dir.exists():
             return []
@@ -48,7 +57,8 @@ class FeatureStore:
             ym_path = sym_dir / f"year_month={year_month}" / "features.parquet"
             if ym_path.exists():
                 table = pq.read_table(ym_path)
-                return table.to_pylist()
+                rows = table.to_pylist()
+                return SplitGuard.filter_features_by_split(rows, split) if split else rows
             return []
 
         files = list(sym_dir.glob("year_month=*/features.parquet"))
@@ -60,4 +70,8 @@ class FeatureStore:
             table = pq.read_table(f)
             results.extend(table.to_pylist())
         results.sort(key=lambda r: r["timestamp"])
+
+        if split:
+            results = SplitGuard.filter_features_by_split(results, split)
+
         return results

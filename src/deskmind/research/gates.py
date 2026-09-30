@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import math
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
-from deskmind.research.event_study import EventStudyResult
+if TYPE_CHECKING:
+    from deskmind.research.event_study import EventStudyResult
 
 
 @dataclass(frozen=True)

@@ -22,8 +22,14 @@ from deskmind.data.datasets import TIMEFRAME_MS
 REPORT_TIMEFRAME = "all"  # agent_reports.timeframe for multi-timeframe reports
 
 
-def iso(ms: int | None) -> str | None:
-    return datetime.fromtimestamp(ms / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if ms else None
+def iso(ms: Any) -> str | None:
+    if ms is None:
+        return None
+    if isinstance(ms, datetime):
+        return ms.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if isinstance(ms, (int, float)):
+        return datetime.fromtimestamp(ms / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return str(ms)
 
 
 def _iso_times(obj: Any) -> Any:

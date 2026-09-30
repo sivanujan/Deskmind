@@ -251,7 +251,7 @@ def _seed_trend(store: MemoryTrendStore) -> tuple[list[Bar], dict]:
         prev = v
     from deskmind.agents.trend.config import TrendConfig
 
-    cfg = TrendConfig(left_bars=2, right_bars=2, atr_period=3)
+    cfg = TrendConfig(left_bars=2, right_bars=2, atr_period=3, min_warmup_bars=2)
     res = run_batch(SymbolTrendAgent("BTCUSDT", ["1h"], cfg), {"1h": bars})
     asyncio.run(
         store.upsert_items("BTCUSDT", [(tf, it) for (tf, _), it in res.items.items()], "1.0.0")
@@ -387,12 +387,14 @@ def test_cors_only_for_web_origin(env) -> None:
 def test_overlays_and_report_from_ict_smc(env) -> None:
     import asyncio
 
+    from dataclasses import replace
     from deskmind.agents.ict_smc.agent import SymbolIctSmcAgent, run_batch
     from deskmind.agents.ict_smc.config import DEFAULT_CONFIG as ICT_CFG
 
     app, _ = env
     bars, _ = _seed_trend(app.state.trend_seed)
-    ict_agent = SymbolIctSmcAgent("BTCUSDT", ["1h"], ICT_CFG)
+    ict_cfg = replace(ICT_CFG, min_warmup_bars=2)
+    ict_agent = SymbolIctSmcAgent("BTCUSDT", ["1h"], ict_cfg)
     res = run_batch(ict_agent, {"1h": bars})
     store = app.state.ict_smc_store
     asyncio.run(
@@ -433,8 +435,10 @@ def test_trend_report_rebuilt_from_transitions_when_no_report_stored(env) -> Non
         assert len(bars) >= 40
         store_from = bars[20].close_time
         rec = TrendTransitionRecorder()
+        from dataclasses import replace
+        t_cfg = replace(DEFAULT_CONFIG, min_warmup_bars=2)
         res = run_batch(
-            SymbolTrendAgent("BTCUSDT", ["1h"], DEFAULT_CONFIG),
+            SymbolTrendAgent("BTCUSDT", ["1h"], t_cfg),
             {"1h": bars},
             store_from=store_from,
             reports=False,
@@ -449,7 +453,7 @@ def test_trend_report_rebuilt_from_transitions_when_no_report_stored(env) -> Non
         checked = 0
         for probe in (bars[25], bars[33], bars[-1]):
             expected = run_batch(
-                SymbolTrendAgent("BTCUSDT", ["1h"], DEFAULT_CONFIG),
+                SymbolTrendAgent("BTCUSDT", ["1h"], t_cfg),
                 {"1h": [b for b in bars if b.close_time <= probe.close_time]},
             ).reports[-1]
             got = c.get(

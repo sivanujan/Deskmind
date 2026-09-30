@@ -112,9 +112,19 @@ def build_feature_row(
     silver_bullet_active = bool(time_st.get("current_silver_bullet") is not None)
     session = str(time_st.get("current_session") or "off_hours")
 
-    key_levels = time_st.get("key_levels") or {}
-    pdh_obj = key_levels.get("pdh") or {}
-    pdl_obj = key_levels.get("pdl") or {}
+    key_levels_raw = time_st.get("key_levels")
+    pdh_obj: dict[str, Any] = {}
+    pdl_obj: dict[str, Any] = {}
+    if isinstance(key_levels_raw, dict):
+        pdh_obj = key_levels_raw.get("pdh") or {}
+        pdl_obj = key_levels_raw.get("pdl") or {}
+    elif isinstance(key_levels_raw, list):
+        for kl in key_levels_raw:
+            if isinstance(kl, dict):
+                if kl.get("kind") == "pdh":
+                    pdh_obj = kl
+                elif kl.get("kind") == "pdl":
+                    pdl_obj = kl
 
     dist_to_pdh_atr = (
         round((current_close - pdh_obj["price"]) / atr_1h, 4)

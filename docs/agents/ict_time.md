@@ -5,10 +5,13 @@ Deterministic Python, no LLM. Timeframes: 5m, 15m, 1h, 2h (per symbol).
 
 ---
 
-## 0. No-look-ahead rule
+## 0. No-look-ahead rule & Warmup Requirement
 
 Every item carries `created_time` and `confirmed_at` (epoch ms UTC). As-of queries
 use only items with `confirmed_at <= T`. One code path for live and batch.
+
+**Warmup Requirement (`min_warmup_bars = 288`)**:
+The engine requires at least 288 closed 5-minute bars (1 full 24-hour day of candles) to establish initial Previous Day High (PDH), Previous Day Low (PDL), daily open baselines, and complete session boundary accumulators before emitting items. Items are strictly suppressed during the initial 288 bars.
 
 ---
 

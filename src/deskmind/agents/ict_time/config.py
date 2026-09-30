@@ -23,7 +23,7 @@ class IctTimeConfig:
     amd_accumulation_atr_max: float = 0.5
 
     # Housekeeping
-    min_warmup_bars: int = 2  # refuse cold-start emission on synthetic single bar
+    min_warmup_bars: int = 288  # justified: 1 full 24h day of 5m bars (24*12) for PDH/PDL baselines
     warmup_bars: int = 1500  # enough to cover several days of 5m bars
     bar_memory: int = 3000
     version: str = AGENT_VERSION

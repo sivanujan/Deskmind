@@ -15,7 +15,10 @@ from deskmind.agents.ict_time.models import as_of
 from deskmind.agents.ict_time.store import MemoryIctTimeStore
 from deskmind.agents.trend.models import Bar
 
+from dataclasses import replace
+
 _NY = ZoneInfo("America/New_York")
+TEST_CFG = replace(DEFAULT_CONFIG, min_warmup_bars=2)
 
 
 def _bar(open_dt: datetime, *, o=100.0, h=101.0, l=99.0, c=100.5, ms=300_000) -> Bar:
@@ -49,7 +52,7 @@ def _day_bars(date_ny: datetime, n: int = 48) -> list[Bar]:
 
 
 def test_session_created_on_first_candle() -> None:
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     # 20:00 NY = Asia session open
     w_dt = _ny_at(2026, 9, 28, 19, 0)
     dt = _ny_at(2026, 9, 28, 20, 0)
@@ -63,7 +66,7 @@ def test_session_created_on_first_candle() -> None:
 
 
 def test_session_closes_on_new_session() -> None:
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     # Asia session bar
     w_dt = _ny_at(2026, 9, 28, 19, 0)
     asia_dt = _ny_at(2026, 9, 28, 21, 0)
@@ -81,7 +84,7 @@ def test_session_closes_on_new_session() -> None:
 
 
 def test_ny_session_active_during_ny_hours() -> None:
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     w_dt = _ny_at(2026, 9, 29, 8, 30)
     ny_dt = _ny_at(2026, 9, 29, 9, 30)
     eng.on_candle(_bar(w_dt, ms=3_600_000))
@@ -95,7 +98,7 @@ def test_ny_session_active_during_ny_hours() -> None:
 
 def test_pdh_pdl_emitted_on_new_day() -> None:
     """PDH/PDL from day 1 confirmed at the first bar of day 2."""
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     # Feed 1 bar on day 1 (at 21:00 NY), then 1 bar on day 2 (at 01:00 NY next day)
     day1_bar0 = _bar(_ny_at(2026, 9, 28, 12, 0), h=105.0, l=95.0, c=100.0, ms=3_600_000)
     day1_bar = _bar(_ny_at(2026, 9, 28, 21, 0), h=105.0, l=95.0, c=100.0, ms=3_600_000)
@@ -110,7 +113,7 @@ def test_pdh_pdl_emitted_on_new_day() -> None:
 
 
 def test_key_level_state_sweep() -> None:
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     # Day 1: generate high=110
     d1_0 = _bar(_ny_at(2026, 9, 28, 12, 0), h=100.0, l=90.0, c=95.0, ms=3_600_000)
     d1 = _bar(_ny_at(2026, 9, 28, 21, 0), h=110.0, l=90.0, c=100.0, ms=3_600_000)
@@ -178,7 +181,7 @@ def test_truncation_no_lookahead() -> None:
 
 
 def test_amd_phase_accumulation_before_london() -> None:
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     # Asian session bars
     for i in range(8):
         dt = _ny_at(2026, 9, 29, 20, 0) + timedelta(hours=i)
@@ -193,7 +196,7 @@ def test_amd_phase_accumulation_before_london() -> None:
 @pytest.mark.asyncio
 async def test_memory_store_roundtrip() -> None:
     store = MemoryIctTimeStore()
-    agent = IctTimeAgent("BTCUSDT")
+    agent = IctTimeAgent("BTCUSDT", cfg=TEST_CFG)
     bars: list[Bar] = []
     start = _ny_at(2026, 9, 28, 20, 0)
     for i in range(96):
@@ -252,8 +255,8 @@ def test_not_in_silver_bullet_outside_window() -> None:
 
 def test_multi_symbol_isolation() -> None:
     """Two symbols run independently; changes for BTC don't affect ETH."""
-    btc = IctTimeEngine("BTC")
-    eth = IctTimeEngine("ETH")
+    btc = IctTimeEngine("BTC", cfg=TEST_CFG)
+    eth = IctTimeEngine("ETH", cfg=TEST_CFG)
     w_dt = _ny_at(2026, 9, 28, 19, 0)
     dt = _ny_at(2026, 9, 28, 21, 0)
     btc.on_candle(_bar(w_dt, h=200.0, l=180.0, c=190.0))
@@ -282,7 +285,7 @@ def test_multi_symbol_isolation() -> None:
 
 def test_dst_spring_and_fall_transitions() -> None:
     """Verify session / killzone detection across NY DST spring (March) & fall (Nov) switches."""
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     # Spring DST transition date (e.g. 2026-03-08 in US): 08:30 AM NY
     spring_dt = datetime(2026, 3, 8, 8, 30, tzinfo=_NY)
     bar_spring = _bar(spring_dt, ms=3_600_000)
@@ -300,7 +303,7 @@ def test_dst_spring_and_fall_transitions() -> None:
 
 def test_pdh_pdl_day_boundary_midnight_ny() -> None:
     """Day boundary is midnight America/New_York (00:00 NY). Verify PDH/PDL emitted when day rolls over at 00:00 NY."""
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     d1_bar0 = _bar(_ny_at(2026, 9, 28, 11, 0), h=110.0, l=90.0, c=100.0, ms=1_800_000)
     d1_bar1 = _bar(_ny_at(2026, 9, 28, 12, 0), h=120.0, l=80.0, c=100.0, ms=1_800_000)
     d1_bar2 = _bar(_ny_at(2026, 9, 28, 23, 30), h=110.0, l=90.0, c=100.0, ms=1_800_000)
@@ -321,7 +324,7 @@ def test_pdh_pdl_day_boundary_midnight_ny() -> None:
 
 def test_reconstruct_state_equals_live_engine() -> None:
     """reconstruct_state(T) from item log matches live engine state at random time T."""
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     bars = _day_bars(_ny_at(2026, 9, 28, 0, 0), n=48)
     all_items = []
     for b in bars:
@@ -329,7 +332,7 @@ def test_reconstruct_state_equals_live_engine() -> None:
 
     cut_bar = bars[24]
     cut_t = cut_bar.close_time
-    live_eng = IctTimeEngine("BTC")
+    live_eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     for b in bars[:25]:
         live_eng.on_candle(b)
 
@@ -341,7 +344,7 @@ def test_reconstruct_state_equals_live_engine() -> None:
 
 def test_unique_item_ids() -> None:
     """Each item type emitted has a unique deterministic ID format without collision across entities."""
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     bars = _day_bars(_ny_at(2026, 9, 28, 0, 0), n=48)
     items_by_id = {}
     for b in bars:
@@ -359,7 +362,7 @@ def test_dst_spring_skipped_hour_london_session() -> None:
     uses UTC epoch timestamps converted to America/New_York so that 07:00 UTC resolves to 03:00 EDT,
     opening the London session cleanly without error or missing events.
     """
-    eng = IctTimeEngine("BTC")
+    eng = IctTimeEngine("BTC", cfg=TEST_CFG)
     # 2026-03-08 07:00 UTC = 03:00 EDT (London session start)
     london_utc = datetime(2026, 3, 8, 7, 0, tzinfo=timezone.utc)
     bar1 = _bar(_ny_at(2026, 3, 7, 21, 0), ms=3_600_000)  # warmup bar 1
@@ -372,11 +375,13 @@ def test_dst_spring_skipped_hour_london_session() -> None:
 
 
 def test_ict_time_cold_start_warmup() -> None:
-    """Engine refuses to emit items on a single synthetic bar without warmup."""
+    """Engine refuses to emit items until 288 warmup bars (1 full 24h day of 5m candles) are met."""
     eng = IctTimeEngine("BTC")
-    bar = _bar(_ny_at(2026, 9, 28, 20, 0), ms=3_600_000)
-    changes = eng.on_candle(bar)
-    assert changes == [], "Expected no items emitted on cold start single candle"
+    dt = _ny_at(2026, 9, 28, 0, 0)
+    for i in range(287):
+        b = _bar(dt + timedelta(minutes=5 * i), ms=300_000)
+        assert eng.on_candle(b) == [], f"Expected no items emitted before 288 warmup bars on bar {i+1}"
+
 
 
 

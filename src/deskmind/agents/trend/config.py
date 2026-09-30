@@ -20,7 +20,7 @@ class TrendConfig:
     max_active_trendlines: int = 10
     trendline_max_idle_bars: int = 150  # no new touch for this many candles -> line expires
     range_after_bars: int = 100
-    min_warmup_bars: int = 2  # refuse cold-start emission on synthetic single bar
+    min_warmup_bars: int = 200  # justified: 14-period ATR + 100-bar timeout + 150-bar trendline lookback
     warmup_bars: int = 1000
     bar_memory: int = 5000  # candles kept in memory (trend-line close checks look back this far)
     version: str = AGENT_VERSION
