@@ -256,7 +256,7 @@ async def run_backtest(
             raise ValueError(f"Unknown split {split!r}. Available: {list(BACKTEST_SPLITS.keys())}")
         s_str, e_str = BACKTEST_SPLITS[split]
         start_dt = datetime.fromisoformat(s_str).replace(tzinfo=UTC)
-        end_dt = datetime.fromisoformat(e_str).replace(tzinfo=UTC)
+        end_dt = datetime.now(UTC) if e_str == "latest" else datetime.fromisoformat(e_str).replace(tzinfo=UTC)
 
     # Validate split access (Locked test set enforcement)
     validate_split_access(split, start_dt, end_dt, unlock_test, confirm_test_unlock)

@@ -43,6 +43,10 @@ universe_app = typer.Typer(
     help="Liquidity universe: daily recompute, symbol lifecycle, summary", no_args_is_help=True
 )
 app.add_typer(universe_app, name="universe")
+research_app = typer.Typer(
+    help="Research framework: hypotheses, event studies, gates", no_args_is_help=True
+)
+app.add_typer(research_app, name="research")
 
 SymbolOpt = typer.Option(None, "--symbol", "-s", help="One symbol from DATA_SYMBOLS")
 AllOpt = typer.Option(False, "--all", help="Every symbol in DATA_SYMBOLS")
@@ -1493,6 +1497,42 @@ def universe_status_cmd() -> None:
             _print_summary(runs[0])
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------- research
+
+
+@research_app.command("pilot")
+def research_pilot_cmd(
+    symbol: str | None = typer.Option(
+        None, "--symbol", "-s", help="Symbol for pilot run (e.g. BTCUSDT)"
+    ),
+    split: str = typer.Option("train", "--split", help="Data split: train, validation"),
+    start: str = typer.Option("2023-01-01", "--start", help="Start date (YYYY-MM-DD)"),
+    end: str = typer.Option("2023-03-31", "--end", help="End date (YYYY-MM-DD)"),
+    output_dir: str = typer.Option(
+        "data/features_pilot", "--output-dir", help="Feature store output directory"
+    ),
+) -> None:
+    """Run research pilot on the TRAIN split subset for pre-registered hypotheses."""
+    from deskmind.research.pilot import run_pilot_pipeline
+
+    settings = get_settings()
+    target_symbol = symbol or settings.data_symbols[0]
+
+    asyncio.run(
+        run_pilot_pipeline(
+            symbol=target_symbol,
+            split=split,
+            start_date=start,
+            end_date=end,
+            output_dir=output_dir,
+            data_dir=str(settings.data_dir),
+        )
+    )
+
+
+# ---------------------------------------------------------------- supervisor
 
 
 @app.command("supervisor")

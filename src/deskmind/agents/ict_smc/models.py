@@ -187,10 +187,16 @@ class FVG:
             "bottom": self.bottom,
             "ce": self.ce,
             "atr": self.atr,
+            # size_atr and displacement_backed are immutable metadata set at creation;
+            # they are included in summary() so the feature builder can read them without
+            # requiring item() (which is the full stored record).
+            "size_atr": self.size_atr,
+            "displacement_backed": self.displacement_backed,
             "state": self.state,
             "created_time": self.created_time,
             "confirmed_at": self.confirmed_at,
         }
+
 
 
 @dataclass

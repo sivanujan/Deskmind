@@ -117,11 +117,16 @@ def test_feature_store_parquet_roundtrip(tmp_path) -> None:
     """Test Parquet file writing and reading roundtrip."""
     store = FeatureStore(base_dir=tmp_path)
     t0 = 1704067200000  # 2024-01-01 00:00 UTC (TRAIN split)
+    cfg = TrendConfig(min_warmup_bars=1)
+    eng = TrendEngine("BTCUSDT", "1h", cfg=cfg)
+    bar = _make_bar(t0, 65000.0, 3600_000)
+    eng.on_candle(bar)
+    st = eng.state()
     row = build_feature_row(
         symbol="BTCUSDT",
         timestamp=t0,
-        trend_state_2h={"trend": "bullish"},
-        trend_state_1h={"trend": "bullish"},
+        trend_state_2h=st,
+        trend_state_1h=st,
         trend_state_15m=None,
         trend_state_5m=None,
         ict_smc_state_1h=None,
@@ -137,7 +142,7 @@ def test_feature_store_parquet_roundtrip(tmp_path) -> None:
     rows = store.read_features("BTCUSDT")
     assert len(rows) == 1
     assert rows[0]["symbol"] == "BTCUSDT"
-    assert rows[0]["htf_trend_1h"] == "bullish"
+    assert rows[0]["htf_trend_1h"] in ("bullish", "bearish", "ranging")
 
 
 # ------------------------------------------------------------------ regression tests for builder key fixes

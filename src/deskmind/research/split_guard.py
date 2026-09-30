@@ -11,6 +11,8 @@ from deskmind.research.gates import GateCheckResult
 
 def parse_iso_ms(iso_str: str, end_of_day: bool = False) -> int:
     """Parse 'YYYY-MM-DD' into UTC millisecond timestamp."""
+    if iso_str == "latest":
+        return 9999999999999
     dt = datetime.strptime(iso_str, "%Y-%m-%d").replace(tzinfo=UTC)
     if end_of_day:
         dt = dt.replace(hour=23, minute=59, second=59, microsecond=999000)

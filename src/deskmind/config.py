@@ -48,7 +48,7 @@ BACKTEST_ENGINE_VERSION = "1.0.0"
 BACKTEST_SPLITS: dict[str, tuple[str, str]] = {
     "train": ("2023-01-01", "2024-12-31"),
     "validation": ("2025-01-01", "2025-12-31"),
-    "test": ("2026-01-01", "2026-09-26"),
+    "test": ("2026-01-01", "latest"),
 }
 
 # Binance USDT-M VIP0 fee rates

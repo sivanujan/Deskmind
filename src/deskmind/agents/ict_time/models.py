@@ -117,6 +117,8 @@ class KeyLevel:
             "price": self.price,
             "state": self.state,
             "confirmed_at": self.confirmed_at,
+            "swept_at": self.swept_at,
+            "taken_at": self.taken_at,
             "swept_by": self.swept_by,
         }
 

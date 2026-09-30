@@ -34,8 +34,8 @@ PD_BASE_KEYS = ("low", "high", "from_bos_at", "equilibrium", "ote_low", "ote_hig
 SUMMARY_KEYS = {
     "pool": ("id", "level", "pool_type", "strength", "state", "created_time", "confirmed_at",
              "swept_at", "taken_at"),
-    "fvg": ("id", "direction", "top", "bottom", "ce", "atr", "state", "created_time",
-            "confirmed_at"),
+    "fvg": ("id", "direction", "top", "bottom", "ce", "atr", "size_atr", "displacement_backed",
+            "state", "created_time", "confirmed_at"),
     "ob": ("id", "direction", "top", "bottom", "mt", "atr", "state", "created_time",
            "confirmed_at"),
     "breaker": ("id", "direction", "is_mitigation", "top", "bottom", "atr", "state",

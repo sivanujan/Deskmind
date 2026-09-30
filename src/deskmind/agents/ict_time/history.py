@@ -77,6 +77,7 @@ def reconstruct_state(
                     "price": view.get("price"),
                     "state": view.get("state"),
                     "confirmed_at": view.get("confirmed_at"),
+                    "swept_at": view.get("swept_at"),
                     "swept_by": view.get("swept_by"),
                     "distance_atr": None,  # computed at render time
                 })
