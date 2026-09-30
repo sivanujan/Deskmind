@@ -410,3 +410,15 @@ def test_backfill_run_batch_without_reports_keeps_items_identical() -> None:
     b = run_batch(SymbolTrendAgent("TEST", ["1h"], CFG), bars, store_from=T0 + 400 * H,
                   reports=False)  # fmt: skip
     assert a.items == b.items and b.reports == [] and len(a.reports) == 1500
+
+
+def test_trend_cold_start_warmup() -> None:
+    """Engine refuses to emit items on a single synthetic bar without warmup."""
+    from deskmind.agents.trend.models import Bar
+    eng = TrendEngine("BTC", "1h")
+    bar = Bar(open_time=1000, close_time=3601000, open=100.0, high=101.0, low=99.0, close=100.5)
+    changes = eng.on_candle(bar)
+    assert changes == [], "Expected no items emitted on cold start single candle"
+
+
+

@@ -59,6 +59,8 @@ class TrendEngine:
         i = self.n
         self.bars.append(bar)
         self.n += 1
+        if len(self.bars) < self.cfg.min_warmup_bars:
+            return []
         tr = (
             bar.high - bar.low
             if prev_close is None

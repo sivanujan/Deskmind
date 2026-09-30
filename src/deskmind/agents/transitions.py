@@ -81,7 +81,8 @@ class TransitionRecorder:
         for tf, eng in agent.engines.items():
             self._emit(at, tf, STATE_BASELINE, STATE_BASELINE, {"value": None})
             for obj in self.objects(eng):
-                self.record(at, tf, obj.item())
+                item = obj.item() if hasattr(obj, "item") else obj
+                self.record(at, tf, item)
             self.record_states(at, tf, eng)
 
     def boundary(self, at: int, agent: Any, changes: list[tuple[str, dict]]) -> None:

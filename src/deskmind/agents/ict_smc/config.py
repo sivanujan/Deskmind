@@ -45,6 +45,7 @@ class IctSmcConfig:
 
     # Housekeeping & General
     zone_max_age_bars: int = 300
+    min_warmup_bars: int = 2  # refuse cold-start emission on synthetic single bar
     warmup_bars: int = 1000
     bar_memory: int = 2000
     version: str = AGENT_VERSION

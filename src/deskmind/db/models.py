@@ -379,7 +379,7 @@ class PriceActionItem(Base):
     symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
     timeframe: Mapped[str] = mapped_column(String(8), primary_key=True)
     agent_version: Mapped[str] = mapped_column(String(16), primary_key=True)
-    item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(256), primary_key=True)
     confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     kind: Mapped[str] = mapped_column(String(48), nullable=False)
     pivot_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

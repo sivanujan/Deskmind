@@ -685,3 +685,16 @@ def test_item_ids_are_unique_so_storage_never_merges_two_items() -> None:
         for objs in (eng.pools, eng.order_blocks, eng.breakers, eng.fvgs, eng.voids):
             ids = [o.id for o in objs]
             assert len(ids) == len(set(ids)), (seed, type(objs[0]).__name__ if objs else None)
+
+
+def test_ict_smc_cold_start_warmup() -> None:
+    """Engine refuses to emit items on a single synthetic bar without warmup."""
+    from deskmind.agents.ict_smc.engine import IctSmcEngine
+    from deskmind.agents.trend.models import Bar
+    eng = IctSmcEngine("BTC", "1h")
+    bar = Bar(open_time=1000, close_time=3601000, open=100.0, high=101.0, low=99.0, close=100.5)
+    changes = eng.on_candle(bar)
+    assert changes == [], "Expected no items emitted on cold start single candle"
+
+
+

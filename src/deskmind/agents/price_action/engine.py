@@ -46,7 +46,7 @@ def _round_step(symbol: str, cfg: PriceActionConfig) -> float:
 
 
 def _zone_id(side: str, pivot_times: list[int]) -> str:
-    joined = "_".join(str(t) for t in sorted(pivot_times))
+    joined = "_".join(str(t) for t in sorted(pivot_times)[:3])
     return f"sr_{side}_{joined}"
 
 
@@ -235,6 +235,8 @@ class PriceActionEngine:
             return []
         self._update_atr(bar)
         self.bars.append(bar)
+        if len(self.bars) < self.cfg.min_warmup_bars:
+            return []
         self.bar_index += 1
         atr = self._atr
         changes: list[dict[str, Any]] = []

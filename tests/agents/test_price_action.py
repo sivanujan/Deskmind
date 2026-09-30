@@ -430,3 +430,12 @@ def test_unique_item_ids() -> None:
     assert all("id" in v for v in items_by_id.values())
 
 
+def test_price_action_cold_start_warmup() -> None:
+    """Engine refuses to emit items on a single synthetic bar without warmup."""
+    eng = PriceActionEngine("BTC", "1h")
+    bar = _bar(1000, o=100.0, h=101.0, l=99.0, c=100.5, ms=3_600_000)
+    changes = eng.on_candle(bar)
+    assert changes == [], "Expected no items emitted on cold start single candle"
+
+
+

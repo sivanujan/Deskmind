@@ -255,6 +255,8 @@ class IctTimeEngine:
 
         self._update_atr(bar)
         self.bars.append(bar)
+        if len(self.bars) < self.cfg.min_warmup_bars:
+            return []
         changes: list[dict[str, Any]] = []
 
         close_ms = bar.close_time

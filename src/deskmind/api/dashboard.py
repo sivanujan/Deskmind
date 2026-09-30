@@ -560,3 +560,51 @@ async def universe_state(runs: int = 14) -> dict[str, Any]:
         "runs": history,
         "reason": None if recs or history else "the daily universe job has not run yet",
     }
+
+
+# ---------------------------------------------------------------- research framework
+
+
+@router.get("/api/dashboard/research")
+async def research_dashboard() -> dict[str, Any]:
+    """Research framework status: pre-registered hypotheses, gate checklists, trial counts."""
+    from deskmind.research.gates import GateCheckResult
+    from deskmind.research.hypotheses.registry import REGISTRY
+
+    hypotheses = []
+    for p in REGISTRY.list_hypotheses():
+        hid = p.hypothesis_id
+        trial_count = REGISTRY.get_trial_count(hid)
+        
+        # Default pre-registration state
+        hypotheses.append({
+            "id": hid,
+            "name": p.name,
+            "status": "pre-registered",
+            "trial_count": trial_count,
+            "gate_checklist": {
+                "min_trades_100": False,
+                "gross_expectancy_0_15R": False,
+                "net_expectancy_positive": False,
+                "beats_random_95th_pct": False,
+                "positive_symbols_60pct": False,
+                "both_halves_positive": False,
+            },
+            "gate_passed": False,
+            "deflated_sharpe": 0.0,
+            "event_study_summary": {
+                "total_signals": 0,
+                "win_rate_pct": 0.0,
+                "mfe_12_r": 0.0,
+                "mae_12_r": 0.0,
+            },
+            "backtest_runs": [],
+        })
+
+    return {
+        "hypotheses": hypotheses,
+        "validation_split_locked": True,
+        "train_period": "2023-01-01 -> 2024-12-31",
+        "validation_period": "2025-01-01 -> 2025-12-31",
+    }
+

@@ -78,6 +78,8 @@ class IctSmcEngine:
             return []  # already processed
 
         self.bars.append(bar)
+        if len(self.bars) < self.cfg.min_warmup_bars:
+            return []
 
         # 1. Step the Trend Engine (or consume external trend changes)
         if trend_changes is None:
