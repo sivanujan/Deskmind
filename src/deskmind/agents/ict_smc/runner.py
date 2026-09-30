@@ -21,10 +21,10 @@ from redis.asyncio import Redis
 from deskmind.agents.candles import load_bars, redis_bars
 from deskmind.agents.ict_smc.agent import SymbolIctSmcAgent, check_smt_divergence, run_batch
 from deskmind.agents.ict_smc.config import AGENT_NAME, DEFAULT_CONFIG, IctSmcConfig
-from deskmind.agents.ict_smc.models import Bar
 from deskmind.agents.ict_smc.store import IctSmcStore
 from deskmind.agents.trend.config import DEFAULT_CONFIG as DEFAULT_TREND_CONFIG
 from deskmind.agents.trend.config import TrendConfig
+from deskmind.agents.trend.models import Bar
 from deskmind.api.candles import RecentCandleSource
 from deskmind.config import Settings
 from deskmind.data.datasets import TIMEFRAME_MS
