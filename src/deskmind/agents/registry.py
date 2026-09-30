@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from deskmind.agents.ict_smc.config import AGENT_NAME as ICT_SMC_NAME
+from deskmind.agents.ict_smc.config import AGENT_VERSION as ICT_SMC_VERSION
+from deskmind.agents.ict_smc.config import DEFAULT_CONFIG as ICT_SMC_CONFIG
 from deskmind.agents.trend.config import AGENT_NAME as TREND_NAME
 from deskmind.agents.trend.config import AGENT_VERSION as TREND_VERSION
 from deskmind.agents.trend.config import DEFAULT_CONFIG as TREND_CONFIG
@@ -42,6 +45,17 @@ AGENTS: tuple[AgentInfo, ...] = (
             "Swings (HH/HL/LH/LL), BOS/CHoCH, sweeps and trend lines per timeframe; no look-ahead."
         ),
         params=TREND_CONFIG.as_dict(),
+    ),
+    AgentInfo(
+        name=ICT_SMC_NAME,
+        version=ICT_SMC_VERSION,
+        kind="deterministic",
+        spec="docs/agents/ict_smc.md",
+        summary=(
+            "Liquidity pools (BSL/SSL), FVGs, order blocks, breakers, voids, and PD range/OTE; "
+            "no look-ahead."
+        ),
+        params=ICT_SMC_CONFIG.as_dict(),
     ),
 )
 

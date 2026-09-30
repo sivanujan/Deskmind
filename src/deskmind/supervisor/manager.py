@@ -18,6 +18,7 @@ ServiceStatus = Literal["stopped", "running", "restarting", "crashed", "stopping
 SERVICE_COMMANDS: dict[str, list[str]] = {
     "live": [sys.executable, "-m", "deskmind.cli", "live", "run"],
     "trend": [sys.executable, "-m", "deskmind.cli", "agents", "run", "trend"],
+    "ict_smc": [sys.executable, "-m", "deskmind.cli", "agents", "run", "ict_smc"],
     "trade": [sys.executable, "-m", "deskmind.cli", "trade", "run"],
     # Daily liquidity-universe job at 00:01 UTC (not started automatically; start it from Control)
     "universe": [sys.executable, "-m", "deskmind.cli", "universe", "scheduler"],

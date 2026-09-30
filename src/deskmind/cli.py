@@ -222,7 +222,7 @@ def info(symbol: str | None = SymbolOpt, all_symbols: bool = AllOpt) -> None:
 
 agents_app = typer.Typer(help="Analyst agents (deterministic)", no_args_is_help=True)
 app.add_typer(agents_app, name="agents")
-AGENTS = ("trend",)
+AGENTS = ("trend", "ict_smc")
 
 
 def _check_agent(name: str) -> None:
@@ -232,19 +232,24 @@ def _check_agent(name: str) -> None:
 
 @agents_app.command("run")
 def agents_run(
-    agent: str = typer.Argument(..., help="Agent name (trend)"),
+    agent: str = typer.Argument(..., help="Agent name (trend, ict_smc)"),
     duration: float = typer.Option(0, help="Stop after N seconds (0 = until Ctrl+C)"),
 ) -> None:
     """Run an agent live: warm up, then process every deskmind:bar_close event."""
     _check_agent(agent)
-    from deskmind.agents.trend.runner import run_live
+    if agent == "trend":
+        from deskmind.agents.trend.runner import run_live
 
-    asyncio.run(run_live(get_settings(), duration or None))
+        asyncio.run(run_live(get_settings(), duration or None))
+    else:
+        from deskmind.agents.ict_smc.runner import run_live
+
+        asyncio.run(run_live(get_settings(), duration or None))
 
 
 @agents_app.command("backfill")
 def agents_backfill(
-    agent: str = typer.Argument(..., help="Agent name (trend)"),
+    agent: str = typer.Argument(..., help="Agent name (trend, ict_smc)"),
     symbol: str | None = SymbolOpt,
     all_symbols: bool = AllOpt,
     start: str = typer.Option(..., help="UTC start, e.g. 2026-06-28"),
@@ -255,8 +260,7 @@ def agents_backfill(
     import time
     from datetime import UTC, datetime
 
-    from deskmind.agents.trend.runner import backfill, parse_day
-    from deskmind.agents.trend.store import PostgresTrendStore
+    from deskmind.agents.trend.runner import parse_day
     from deskmind.api.candles import PostgresRecentCandles
     from deskmind.db.session import create_engine
 
@@ -270,25 +274,61 @@ def agents_backfill(
         try:
             for sym in symbols:
                 t0 = time.time()
-                r = await backfill(
-                    sym,
-                    list(settings.live_timeframes),
-                    start_ms,
-                    end_ms,
-                    data_dir=settings.data_dir,
-                    recent=PostgresRecentCandles(engine),
-                    store=PostgresTrendStore(engine),
-                )
+                if agent == "trend":
+                    from deskmind.agents.trend.runner import backfill as trend_backfill
+                    from deskmind.agents.trend.store import PostgresTrendStore
+
+                    r = await trend_backfill(
+                        sym,
+                        list(settings.live_timeframes),
+                        start_ms,
+                        end_ms,
+                        data_dir=settings.data_dir,
+                        recent=PostgresRecentCandles(engine),
+                        store=PostgresTrendStore(engine),
+                    )
+                    kinds = [
+                        "swing_high",
+                        "swing_low",
+                        "bos",
+                        "choch",
+                        "sweep",
+                        "trendline_support",
+                        "trendline_resistance",
+                    ]
+                else:
+                    from deskmind.agents.ict_smc.runner import backfill as ict_backfill
+                    from deskmind.agents.ict_smc.store import PostgresIctSmcStore
+
+                    r = await ict_backfill(
+                        sym,
+                        list(settings.live_timeframes),
+                        start_ms,
+                        end_ms,
+                        data_dir=settings.data_dir,
+                        recent=PostgresRecentCandles(engine),
+                        store=PostgresIctSmcStore(engine),
+                    )
+                    kinds = [
+                        "bsl",
+                        "ssl",
+                        "fvg_bullish",
+                        "fvg_bearish",
+                        "ob_bullish",
+                        "ob_bearish",
+                        "breaker_bullish",
+                        "breaker_bearish",
+                        "liquidity_void",
+                    ]
+
                 typer.echo(
                     f"\n== {sym}: {r['reports']} reports, {r['items']} items "
                     f"({time.time() - t0:.1f}s)"
                 )
-                kinds = ["swing_high", "swing_low", "bos", "choch", "sweep",
-                         "trendline_support", "trendline_resistance"]  # fmt: skip
-                typer.echo(f"{'tf':<5}" + "".join(f"{k:>22}" for k in kinds))
+                typer.echo(f"{'tf':<5}" + "".join(f"{k:>20}" for k in kinds))
                 for tf in settings.live_timeframes:
                     c = r["counts"].get(tf, {})
-                    typer.echo(f"{tf:<5}" + "".join(f"{c.get(k, 0):>22}" for k in kinds))
+                    typer.echo(f"{tf:<5}" + "".join(f"{c.get(k, 0):>20}" for k in kinds))
         finally:
             await engine.dispose()
 
@@ -297,7 +337,7 @@ def agents_backfill(
 
 @agents_app.command("check")
 def agents_check(
-    agent: str = typer.Argument(..., help="Agent name (trend)"),
+    agent: str = typer.Argument(..., help="Agent name (trend, ict_smc)"),
     symbol: str | None = SymbolOpt,
     all_symbols: bool = AllOpt,
     bars: int = typer.Option(4000, help="Most recent candles per symbol/timeframe"),
@@ -309,7 +349,11 @@ def agents_check(
     from datetime import UTC, datetime
 
     from deskmind.agents.candles import load_bars
-    from deskmind.agents.trend.checks import convergence_check, truncation_check
+
+    if agent == "trend":
+        from deskmind.agents.trend.checks import convergence_check, truncation_check
+    else:
+        from deskmind.agents.ict_smc.checks import convergence_check, truncation_check
 
     settings = get_settings()
     symbols = resolve_symbols(settings, symbol, all_symbols)

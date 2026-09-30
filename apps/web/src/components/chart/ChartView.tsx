@@ -34,6 +34,24 @@ const GROUPS: Record<string, string> = {
   trade_exit: "trades",
   trade_line: "trades",
   trade_sl: "trades",
+  // ICT / SMC concepts
+  bsl: "liquidity",
+  ssl: "liquidity",
+  pool_sweep: "liquidity",
+  fvg: "FVG",
+  fvg_bullish: "FVG",
+  fvg_bearish: "FVG",
+  ob_bullish: "OB",
+  ob_bearish: "OB",
+  breaker_bullish: "breakers",
+  breaker_bearish: "breakers",
+  mitigation_block_bullish: "breakers",
+  mitigation_block_bearish: "breakers",
+  liquidity_void: "voids",
+  smt_bullish: "SMT",
+  smt_bearish: "SMT",
+  pd_range: "PD range",
+  pd_ote: "PD range",
 };
 const groupOf = (o: Overlay) => GROUPS[o.kind] ?? "other";
 
@@ -241,8 +259,8 @@ export default function ChartView({
   );
   const agents = useMemo(() => [...new Set(allOverlays.map((o) => o.source_agent))].sort(), [allOverlays]);
   const groups = useMemo(
-    () => [...new Set(allOverlays.filter((o) => o.source_agent === "trend").map(groupOf))].sort(),
-    [allOverlays],
+    () => [...new Set(allOverlays.filter((o) => !hiddenAgents.has(o.source_agent)).map(groupOf))].sort(),
+    [allOverlays, hiddenAgents],
   );
   const visibleOverlays = useMemo(
     () => allOverlays.filter((o) => !hiddenAgents.has(o.source_agent) && !hiddenGroups.has(groupOf(o))),
@@ -293,11 +311,18 @@ export default function ChartView({
   const hoverOverlays = useMemo(() => {
     if (!hover) return [];
     const t = hover.candle.time;
-    return visibleOverlays.filter((o) => o.type === "marker" && o.time === t);
+    return visibleOverlays
+      .filter((o) => {
+        if (o.type === "marker") return o.time === t;
+        if (o.type === "line") return t >= o.start_time && t <= o.end_time;
+        if (o.type === "zone") return t >= o.start_time && t <= o.end_time;
+        return false;
+      })
+      .slice(0, 6);
   }, [hover, visibleOverlays]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const o of apiOverlays) if (o.type === "marker" || o.kind.startsWith("trendline")) m.set(groupOf(o), (m.get(groupOf(o)) ?? 0) + 1);
+    for (const o of apiOverlays) m.set(groupOf(o), (m.get(groupOf(o)) ?? 0) + 1);
     return m;
   }, [apiOverlays]);
 

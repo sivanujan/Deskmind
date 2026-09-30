@@ -61,17 +61,22 @@ def env(tmp_path: Path):
     )
     redis = fakeredis.FakeAsyncRedis(decode_responses=True)
     trend = MemoryTrendStore()
+    from deskmind.agents.ict_smc.store import MemoryIctSmcStore
+
+    ict_smc = MemoryIctSmcStore()
     universe = MemoryUniverseStore()
     app = create_app(
         settings,
         redis=redis,
         candles=CandleService(tmp_path, recent),
         trend_store=trend,
+        ict_smc_store=ict_smc,
         health_checks=False,
         universe_store=universe,
     )
     app.state.universe_seed = universe
     app.state.trend_seed = trend
+    app.state.ict_smc_seed = ict_smc
     return app, redis
 
 
@@ -373,3 +378,33 @@ def test_cors_only_for_web_origin(env) -> None:
         bad = c.get("/api/symbols", headers={"origin": "http://evil.example"})
     assert ok.headers.get("access-control-allow-origin") == "http://localhost:3010"
     assert "access-control-allow-origin" not in bad.headers
+
+
+def test_overlays_and_report_from_ict_smc(env) -> None:
+    import asyncio
+
+    from deskmind.agents.ict_smc.agent import SymbolIctSmcAgent, run_batch
+    from deskmind.agents.ict_smc.config import DEFAULT_CONFIG as ICT_CFG
+
+    app, _ = env
+    bars, _ = _seed_trend(app.state.trend_seed)
+    ict_agent = SymbolIctSmcAgent("BTCUSDT", ["1h"], ICT_CFG)
+    res = run_batch(ict_agent, {"1h": bars})
+    store = app.state.ict_smc_store
+    asyncio.run(
+        store.upsert_items(
+            "BTCUSDT", [(tf, it) for (tf, _), it in res.items.items()], ICT_CFG.version
+        )
+    )
+    asyncio.run(store.upsert_reports("BTCUSDT", res.reports))
+
+    end = bars[-1].close_time // 1000 + 3600
+    with TestClient(app) as c:
+        full = c.get("/api/overlays", params={"symbol": "BTCUSDT", "tf": "1h", "as_of": end}).json()
+        agents = {o["source_agent"] for o in full["overlays"]}
+        assert "ict_smc" in agents
+
+        rep = c.get("/api/agents/ict_smc/report", params={"symbol": "BTCUSDT", "as_of": end}).json()
+        assert rep["agent"] == "ict_smc"
+        assert rep["symbol"] == "BTCUSDT"
+        assert "1h" in rep["timeframes"]

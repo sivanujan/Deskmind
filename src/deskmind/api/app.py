@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
+from deskmind.agents.ict_smc.store import IctSmcStore
 from deskmind.agents.trend.config import AGENT_VERSION
 from deskmind.agents.trend.overlays import to_overlays
 from deskmind.agents.trend.store import TrendStore
@@ -45,6 +46,7 @@ def create_app(
     redis: Redis | None = None,
     candles: CandleService | None = None,
     trend_store: TrendStore | None = None,
+    ict_smc_store: IctSmcStore | None = None,
     health_checks: bool = True,
     universe_store: UniverseStore | None = None,
 ) -> FastAPI:
@@ -69,6 +71,21 @@ def create_app(
 
             engine = engine or create_engine(settings)
             app.state.trend_store = PostgresTrendStore(engine)
+        if getattr(app.state, "ict_smc_store", None) is None:
+            from deskmind.agents.trend.store import PostgresTrendStore
+
+            if getattr(app.state, "trend_store", None) is not None and not isinstance(
+                app.state.trend_store, PostgresTrendStore
+            ):
+                from deskmind.agents.ict_smc.store import MemoryIctSmcStore
+
+                app.state.ict_smc_store = MemoryIctSmcStore()
+            else:
+                from deskmind.agents.ict_smc.store import PostgresIctSmcStore
+                from deskmind.db.session import create_engine
+
+                engine = engine or create_engine(settings)
+                app.state.ict_smc_store = PostgresIctSmcStore(engine)
         yield
         if redis is None:
             await app.state.redis.aclose()
@@ -88,6 +105,15 @@ def create_app(
         app.state.candles = candles
     if trend_store is not None:
         app.state.trend_store = trend_store
+    if ict_smc_store is not None:
+        app.state.ict_smc_store = ict_smc_store
+    elif trend_store is not None:
+        from deskmind.agents.trend.store import PostgresTrendStore
+
+        if not isinstance(trend_store, PostgresTrendStore):
+            from deskmind.agents.ict_smc.store import MemoryIctSmcStore
+
+            app.state.ict_smc_store = MemoryIctSmcStore()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.web_origins),
@@ -196,7 +222,20 @@ def create_app(
                 min(end * 1000, view_end) if end is not None else view_end,
                 as_of * 1000 if as_of is not None else None,
             )
-            overlays = to_overlays(items, AGENT_VERSION, view_end)
+            overlays.extend(to_overlays(items, AGENT_VERSION, view_end))
+
+        if getattr(app.state, "ict_smc_store", None) is not None:
+            from deskmind.agents.ict_smc.config import AGENT_VERSION as ICT_SMC_VERSION
+            from deskmind.agents.ict_smc.overlays import to_overlays as to_ict_overlays
+
+            ict_items = await app.state.ict_smc_store.items(
+                sym,
+                tf,
+                start * 1000 if start is not None else None,
+                min(end * 1000, view_end) if end is not None else view_end,
+                as_of * 1000 if as_of is not None else None,
+            )
+            overlays.extend(to_ict_overlays(ict_items, ICT_SMC_VERSION, view_end))
 
         if run_id:
             from deskmind.api.overlays import load_backtest_overlays
@@ -243,6 +282,25 @@ def create_app(
         if report is None:
             raise HTTPException(404, "no trend report stored for this time (run the backfill)")
         return TrendReportResponse(**report)
+
+    @app.get("/api/agents/ict_smc/report")
+    async def get_ict_smc_report(
+        symbol: str,
+        as_of: Annotated[
+            int | None, Query(description="UNIX seconds; latest report at or before it")
+        ] = None,
+    ) -> dict[str, Any]:
+        sym = symbol.upper()
+        if sym not in [e["symbol"] for e in await symbol_entries()]:
+            raise HTTPException(404, f"unknown symbol {symbol}")
+        if getattr(app.state, "ict_smc_store", None) is None:
+            raise HTTPException(503, "ict_smc store not available")
+        report = await app.state.ict_smc_store.latest_report(
+            sym, as_of * 1000 if as_of is not None else None
+        )
+        if report is None:
+            raise HTTPException(404, "no ict_smc report stored for this time (run the backfill)")
+        return report
 
     @app.websocket("/ws/live")
     async def ws_live(websocket: WebSocket, symbol: str, tf: str) -> None:
