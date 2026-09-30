@@ -35,21 +35,27 @@ class H2SweepReversalPlugin(HypothesisPlugin):
         if atr <= 0:
             atr = current_close * 0.01
 
+        sym = str(r.get("symbol", "UNKNOWN"))
+        ts = int(r.get("timestamp", 0))
+        ev_confirmed = int(r.get("last_event_5m_confirmed_at") or ts)
+
         # Bullish: SSL swept + 5m CHoCH_up within 12 bars
         if sweep_side == "SSL" and 0 <= sweep_bars <= 12 and ev_5m == "CHoCH_up":
             entry = current_close
             stop = entry - 1.2 * atr
             target = entry + 2.4 * atr  # 2.0R target to opposite pool
+            setup_id = f"{sym}:H2:{ev_confirmed}:bullish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bullish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale=f"H2 Bullish: {kz} SSL sweep + 5m CHoCH_up",
+                setup_id=setup_id,
             )
 
         # Bearish: BSL swept + 5m CHoCH_down within 12 bars
@@ -57,16 +63,18 @@ class H2SweepReversalPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry + 1.2 * atr
             target = entry - 2.4 * atr
+            setup_id = f"{sym}:H2:{ev_confirmed}:bearish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bearish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale=f"H2 Bearish: {kz} BSL sweep + 5m CHoCH_down",
+                setup_id=setup_id,
             )
 
         return None

@@ -930,15 +930,14 @@ class BacktestEngine:
                                     intent_time_ms=t_close,
                                 )
                                 break
-                    # Count entry intents for other symbols that are silently discarded
-                    # because we already have an active position (Phase 1: max 1 position).
-                    other_entry_intents = [
+                    # Count entry intents that are discarded because we already have
+                    # an active position (Phase 1: max 1 open position).
+                    entry_intents_while_pos_open = [
                         it
                         for it in raw_intents
                         if it.action in ("open_long", "open_short")
-                        and it.symbol != self.active_position.symbol
                     ]
-                    self.position_open_skips += len(other_entry_intents)
+                    self.position_open_skips += len(entry_intents_while_pos_open)
                 elif self.pending_order is None:
                     entry_intents = [
                         it for it in raw_intents if it.action in ("open_long", "open_short")

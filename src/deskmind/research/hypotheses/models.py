@@ -17,6 +17,7 @@ class Signal:
     target_price: float
     r_multiple: float   # Target R distance ratio (target_dist / stop_dist)
     rationale: str
+    setup_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

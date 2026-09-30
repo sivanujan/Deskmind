@@ -29,10 +29,13 @@ class FeatureQualityError(Exception):
 # Features that are legitimately allowed to be null (not yet available on warm-up):
 #   dist_to_pdh_atr / dist_to_pdl_atr — only available after the first full trading day
 #   position_pct_1h — only available after the first BOS forms a PD range
+#   last_event_*_confirmed_at — only available after the first structure break
 _NULLABLE_FEATURES: frozenset[str] = frozenset({
     "dist_to_pdh_atr",
     "dist_to_pdl_atr",
     "position_pct_1h",
+    "last_event_15m_confirmed_at",
+    "last_event_5m_confirmed_at",
 })
 
 # Metadata / identifier columns — these may be constant by design (e.g. single symbol build)
@@ -110,6 +113,12 @@ def check_feature_quality(
         )
 
 
+def _sort_key(val: Any) -> tuple[int, float | str]:
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return (0, float(val))
+    return (1, str(val))
+
+
 def feature_quality_report(
     rows: Sequence[dict[str, Any]],
     *,
@@ -131,14 +140,19 @@ def feature_quality_report(
         values = [row.get(key) for row in rows]
         non_null = [v for v in values if v is not None]
         null_pct = round((n - len(non_null)) / n * 100, 1)
-        distinct = sorted({str(v) for v in non_null})[:5]
+        unique_vals = list({v for v in non_null})
+        unique_vals.sort(key=_sort_key)
+        sample_vals = [
+            round(v, 4) if isinstance(v, float) else v for v in unique_vals[:5]
+        ]
 
         report.append({
             "feature": key,
             "null_pct": null_pct,
-            "distinct_count": len(set(str(v) for v in non_null)),
-            "sample_values": distinct,
+            "distinct_count": len(unique_vals),
+            "sample_values": sample_vals,
             "allowed_null": key in allow_nullable,
         })
 
     return sorted(report, key=lambda r: (-r["null_pct"], r["feature"]))
+

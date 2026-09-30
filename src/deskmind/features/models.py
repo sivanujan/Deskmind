@@ -13,9 +13,12 @@ class FeatureRow:
     htf_trend_2h: str
     htf_trend_1h: str
     last_event_15m: str
+    last_event_15m_confirmed_at: int | None
     last_event_5m: str
+    last_event_5m_confirmed_at: int | None
     pd_zone_1h: str
     position_pct_1h: float | None
+    outside_range_1h: bool
     in_ote_1h: bool
     nearest_fvg_size_atr: float
     nearest_fvg_displacement: bool
@@ -36,9 +39,11 @@ class FeatureRow:
     pattern_recent_type: str
     pattern_recent_at_zone: bool
     pattern_recent_with_trend: str
+    pattern_recent_bars_ago: int
     weekend_flag: bool
     atr_pct: float
     universe_member: bool
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+

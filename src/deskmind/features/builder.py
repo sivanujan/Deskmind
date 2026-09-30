@@ -74,6 +74,9 @@ def build_feature_row(
         if isinstance(ev_15m, dict)
         else "none"
     )
+    ev_15m_confirmed_at: int | None = (
+        int(ev_15m["confirmed_at"]) if isinstance(ev_15m, dict) and ev_15m.get("confirmed_at") else None
+    )
 
     if trend_state_5m is not None:
         _t5 = validate_trend_state(trend_state_5m)
@@ -85,6 +88,9 @@ def build_feature_row(
         if isinstance(ev_5m, dict)
         else "none"
     )
+    ev_5m_confirmed_at: int | None = (
+        int(ev_5m["confirmed_at"]) if isinstance(ev_5m, dict) and ev_5m.get("confirmed_at") else None
+    )
 
     # ------------------------------------------------------------------ 3. Premium/Discount & OTE
     if ict_smc_state_1h is not None:
@@ -94,28 +100,36 @@ def build_feature_row(
 
     pd_range = (smc_1h or {}).get("pd_range") or {}
     pd_zone_1h: str = pd_range.get("zone", "none") or "none"
-    pos_pct: float | None = pd_range.get("position_pct")
+    raw_pos_pct: float | None = pd_range.get("position_pct")
+    if raw_pos_pct is not None:
+        outside_range_1h: bool = raw_pos_pct < 0.0 or raw_pos_pct > 100.0
+        pos_pct: float | None = round(max(0.0, min(100.0, float(raw_pos_pct))), 2)
+    else:
+        outside_range_1h = False
+        pos_pct = None
     in_ote_1h: bool = bool(pd_range.get("in_ote", False))
 
     # ------------------------------------------------------------------ 4. Nearest FVG
     # FVG summary() keys: id, direction, top, bottom, ce, atr, size_atr,
     #                     displacement_backed, state, created_time, confirmed_at
-    # Distance uses top/bottom (NOT high/low — FVGs have no high/low key).
+    # Distance in ATR: (boundary - close) / ATR (0.0 if inside FVG).
     fvgs_1h: list[dict[str, Any]] = (smc_1h or {}).get("fvgs") or []
 
     nearest_fvg: dict[str, Any] | None = None
     min_fvg_dist = float("inf")
     for fvg in fvgs_1h:
         if isinstance(fvg, dict) and fvg.get("state") in ("fresh", "partially_filled"):
-            d_top = abs(current_close - fvg["top"])
-            d_bot = abs(current_close - fvg["bottom"])
-            dist = min(d_top, d_bot)
+            top = fvg["top"]
+            bot = fvg["bottom"]
+            if bot <= current_close <= top:
+                dist = 0.0
+            else:
+                dist = min(abs(current_close - top), abs(current_close - bot))
             if dist < min_fvg_dist:
                 min_fvg_dist = dist
                 nearest_fvg = fvg
 
     if nearest_fvg:
-        # size_atr is pre-computed by the engine at FVG confirmation time.
         fvg_size_atr = nearest_fvg.get("size_atr")
         nearest_fvg_size_atr: float = float(fvg_size_atr) if fvg_size_atr is not None else round(
             abs(nearest_fvg["top"] - nearest_fvg["bottom"]) / atr_1h, 4
@@ -129,16 +143,19 @@ def build_feature_row(
 
     # ------------------------------------------------------------------ 5. Nearest Order Block
     # OB summary() keys: id, direction, top, bottom, mt, atr, state, created_time, confirmed_at
-    # Distance uses top/bottom (NOT high/low).
+    # Distance in ATR: (boundary - close) / ATR (0.0 if inside OB).
     obs_1h: list[dict[str, Any]] = (smc_1h or {}).get("order_blocks") or []
 
     nearest_ob: dict[str, Any] | None = None
     min_ob_dist = float("inf")
     for ob in obs_1h:
         if isinstance(ob, dict) and ob.get("state") in ("fresh", "tested"):
-            d_top = abs(current_close - ob["top"])
-            d_bot = abs(current_close - ob["bottom"])
-            dist = min(d_top, d_bot)
+            top = ob["top"]
+            bot = ob["bottom"]
+            if bot <= current_close <= top:
+                dist = 0.0
+            else:
+                dist = min(abs(current_close - top), abs(current_close - bot))
             if dist < min_ob_dist:
                 min_ob_dist = dist
                 nearest_ob = ob
@@ -152,6 +169,7 @@ def build_feature_row(
 
     # ------------------------------------------------------------------ 6. Strong Pool Swept Recent
     # last_sweep is inside state()['liquidity'], NOT at the state() root.
+    # Expiration window: 48 5m bars (4 hours).
     liq_1h: dict[str, Any] = (smc_1h or {}).get("liquidity") or {}
     last_sweep: dict[str, Any] = liq_1h.get("last_sweep") or {}
     sweep_time: int | None = last_sweep.get("confirmed_at") or last_sweep.get("created_time")
@@ -183,6 +201,7 @@ def build_feature_row(
     session: str = str((time_st or {}).get("current_session") or "off_hours")
 
     # PDH/PDL: key_levels list, each dict has "level_type" (not "kind") and "price".
+    # Distance in ATR must strictly be (level - close) / ATR of that timeframe.
     key_levels_raw: list[dict[str, Any]] = (time_st or {}).get("key_levels") or []
     pdh_obj: dict[str, Any] = {}
     pdl_obj: dict[str, Any] = {}
@@ -195,12 +214,12 @@ def build_feature_row(
                 pdl_obj = kl
 
     dist_to_pdh_atr: float | None = (
-        round((current_close - pdh_obj["price"]) / atr_1h, 4)
+        round((pdh_obj["price"] - current_close) / atr_1h, 4)
         if pdh_obj and "price" in pdh_obj
         else None
     )
     dist_to_pdl_atr: float | None = (
-        round((current_close - pdl_obj["price"]) / atr_1h, 4)
+        round((pdl_obj["price"] - current_close) / atr_1h, 4)
         if pdl_obj and "price" in pdl_obj
         else None
     )
@@ -222,10 +241,10 @@ def build_feature_row(
 
     # ------------------------------------------------------------------ 8. Price Action Features
     # PriceActionEngine.state() structure (validated by schema):
-    #   active_zones    -> list of dicts (NOT "zones"); each has "top"/"bottom"/"mid"/"touches"
-    #   recent_patterns -> list of dicts (NOT "last_pattern"); most recent is [-1]
-    #   Zone distance uses mid-price (not high/low).
-    #   Touch strength is len(touches) (not touch_count scalar).
+    #   active_zones    -> list of dicts; each has "top"/"bottom"/"mid"/"strength"/"touches"
+    #   recent_patterns -> list of dicts; most recent is [-1]
+    #   Zone distance is boundary distance in 1h ATR units (0.0 if inside zone).
+    #   Strength is 0-100 score from SRZone.compute_strength().
     if price_action_state_1h is not None:
         pa_1h = validate_price_action_state(price_action_state_1h)
     else:
@@ -236,32 +255,40 @@ def build_feature_row(
     min_sr_dist = float("inf")
     for z in active_zones:
         if isinstance(z, dict) and z.get("state") not in ("retired", None):
-            mid: float = z.get("mid", current_close)
-            dist = abs(current_close - mid)
+            top = z.get("top", current_close)
+            bot = z.get("bottom", current_close)
+            if bot <= current_close <= top:
+                dist = 0.0
+            else:
+                dist = min(abs(current_close - top), abs(current_close - bot))
             if dist < min_sr_dist:
                 min_sr_dist = dist
                 nearest_sr = z
 
     if nearest_sr:
-        # touches is a list (timestamps); its length is the touch count.
-        nearest_sr_strength: int = int(len(nearest_sr.get("touches") or []))
+        # Strength is on a 0-100 scale from SRZone.compute_strength()
+        nearest_sr_strength: int = max(0, min(100, int(nearest_sr.get("strength", 0))))
         nearest_sr_dist_atr: float = round(min_sr_dist / atr_1h, 4)
     else:
         nearest_sr_strength = 0
         nearest_sr_dist_atr = 999.0
 
-    # Most recent pattern is last element in recent_patterns list (NOT last_pattern key).
+    # Pattern staleness: 1h patterns expire after 12 5m bars (1 hour).
     recent_pats: list[dict[str, Any]] = (pa_1h or {}).get("recent_patterns") or []
     last_pat: dict[str, Any] = recent_pats[-1] if recent_pats else {}
-    pattern_recent_type: str = (
-        str(last_pat.get("pattern", "none")) if isinstance(last_pat, dict) else "none"
+    pat_confirmed_at = (
+        last_pat.get("confirmed_at") if isinstance(last_pat, dict) else None
     )
-    pattern_recent_at_zone: bool = (
-        bool(last_pat.get("at_zone")) if isinstance(last_pat, dict) else False
-    )
+    if pat_confirmed_at is not None:
+        pat_bars_ago = max(0, int((timestamp - pat_confirmed_at) / 300_000))
+    else:
+        pat_bars_ago = -1
 
-    if isinstance(last_pat, dict) and "pattern" in last_pat:
-        pat_name = last_pat["pattern"]
+    if 0 <= pat_bars_ago <= 12:
+        pattern_recent_type: str = str(last_pat.get("pattern", "none"))
+        pattern_recent_at_zone: bool = bool(last_pat.get("at_zone"))
+        pattern_recent_bars_ago: int = pat_bars_ago
+        pat_name = last_pat.get("pattern", "")
         if "bull" in pat_name or pat_name == "hammer":
             pattern_recent_with_trend: str = "aligned" if t_1h == "bullish" else "counter"
         elif "bear" in pat_name or pat_name == "shooting_star":
@@ -269,7 +296,10 @@ def build_feature_row(
         else:
             pattern_recent_with_trend = "none"
     else:
+        pattern_recent_type = "none"
+        pattern_recent_at_zone = False
         pattern_recent_with_trend = "none"
+        pattern_recent_bars_ago = -1
 
     # ------------------------------------------------------------------ 9. System & Volatility
     dt_utc = datetime.fromtimestamp(timestamp / 1000, tz=UTC)
@@ -282,9 +312,12 @@ def build_feature_row(
         htf_trend_2h=t_2h,
         htf_trend_1h=t_1h,
         last_event_15m=ev_15m_str,
+        last_event_15m_confirmed_at=ev_15m_confirmed_at,
         last_event_5m=ev_5m_str,
+        last_event_5m_confirmed_at=ev_5m_confirmed_at,
         pd_zone_1h=pd_zone_1h,
         position_pct_1h=pos_pct,
+        outside_range_1h=outside_range_1h,
         in_ote_1h=in_ote_1h,
         nearest_fvg_size_atr=nearest_fvg_size_atr,
         nearest_fvg_displacement=nearest_fvg_displacement,
@@ -305,7 +338,9 @@ def build_feature_row(
         pattern_recent_type=pattern_recent_type,
         pattern_recent_at_zone=pattern_recent_at_zone,
         pattern_recent_with_trend=pattern_recent_with_trend,
+        pattern_recent_bars_ago=pattern_recent_bars_ago,
         weekend_flag=weekend_flag,
         atr_pct=atr_pct,
         universe_member=is_universe_member,
     )
+

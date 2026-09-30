@@ -39,36 +39,45 @@ class H3SilverBulletPlugin(HypothesisPlugin):
         if atr <= 0:
             atr = current_close * 0.01
 
+        sym = str(r.get("symbol", "UNKNOWN"))
+        ts = int(r.get("timestamp", 0))
+        # 1-hour Silver Bullet window bucket
+        window_bucket = ts // 3_600_000
+
         if t_1h == "bullish":
             entry = current_close
             stop = entry - 1.0 * atr
             target = entry + 2.0 * atr  # 2.0R target
+            setup_id = f"{sym}:H3:{window_bucket}:bullish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bullish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale="H3 Bullish: Silver Bullet window displacement FVG in 1h uptrend",
+                setup_id=setup_id,
             )
 
         if t_1h == "bearish":
             entry = current_close
             stop = entry + 1.0 * atr
             target = entry - 2.0 * atr
+            setup_id = f"{sym}:H3:{window_bucket}:bearish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bearish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale="H3 Bearish: Silver Bullet window displacement FVG in 1h downtrend",
+                setup_id=setup_id,
             )
 
         return None

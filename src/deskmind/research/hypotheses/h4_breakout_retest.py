@@ -36,36 +36,45 @@ class H4BreakoutRetestPlugin(HypothesisPlugin):
         if atr <= 0:
             atr = current_close * 0.01
 
+        sym = str(r.get("symbol", "UNKNOWN"))
+        ts = int(r.get("timestamp", 0))
+        pat_bars_ago = int(r.get("pattern_recent_bars_ago", 0))
+        pat_confirmed = ts - (pat_bars_ago * 300_000)
+
         if t_1h == "bullish":
             entry = current_close
             stop = entry - 1.2 * atr
             target = entry + 2.4 * atr  # Fixed 2.0R target
+            setup_id = f"{sym}:H4:{pat_confirmed}:bullish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bullish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale=f"H4 Bullish: S/R strength {sr_strength} breakout retest holding in 1h trend",
+                setup_id=setup_id,
             )
 
         if t_1h == "bearish":
             entry = current_close
             stop = entry + 1.2 * atr
             target = entry - 2.4 * atr
+            setup_id = f"{sym}:H4:{pat_confirmed}:bearish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bearish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale=f"H4 Bearish: S/R strength {sr_strength} breakout retest holding in 1h trend",
+                setup_id=setup_id,
             )
 
         return None

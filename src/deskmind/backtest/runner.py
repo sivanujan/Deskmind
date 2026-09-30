@@ -39,6 +39,7 @@ from deskmind.risk.breakers import CircuitBreakerTracker
 from deskmind.risk.config import RiskConfig
 from deskmind.risk.sizer import RiskManagerSizer
 from deskmind.strategies.base import BaseStrategy
+from deskmind.strategies.h1_discount_ob import H1DiscountOBStrategy
 from deskmind.strategies.trend_follow_v1 import TrendFollowV1
 from deskmind.universe.history import MembershipHistory
 
@@ -46,6 +47,7 @@ logger = logging.getLogger("deskmind.backtest.runner")
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     "trend_follow_v1": TrendFollowV1,
+    "h1_discount_ob": H1DiscountOBStrategy,
 }
 
 
@@ -347,13 +349,24 @@ async def run_backtest(
     )
     _save_overlays(run_output_dir / "overlays.json", overlays)
 
+    # Sanitize strategy_params to ensure JSON serializability in registry
+    safe_params = {}
+    for pk, pv in (strategy_params or {}).items():
+        if isinstance(pv, (int, float, str, bool)) or pv is None:
+            safe_params[pk] = pv
+        elif isinstance(pv, (list, tuple)) and len(pv) <= 50 and all(isinstance(x, (int, float, str, bool)) for x in pv):
+            safe_params[pk] = list(pv)
+        else:
+            safe_params[pk] = f"<{type(pv).__name__} len={len(pv) if hasattr(pv, '__len__') else '?'}>"
+
     # Register run record
     run_record: dict[str, Any] = {
         "run_id": run_id,
         "created_at": datetime.now(UTC).isoformat(),
         "strategy_name": strategy.name,
         "strategy_version": strategy.version,
-        "params": strategy_params or {},
+        "params": safe_params,
+
         "agent_versions": {"trend": AGENT_VERSION},
         "symbols": syms,
         "split": split,
@@ -390,4 +403,5 @@ async def run_backtest(
         "bnh": bnh,
         "reports_dir": str(run_output_dir),
         "trades_count": len(result.trades),
+        "result": result,
     }

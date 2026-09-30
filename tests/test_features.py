@@ -34,6 +34,52 @@ def _make_bar(ts_ms: int, c: float, tf_ms: int = 300_000) -> Bar:
     )
 
 
+def _mock_smc_state(**kwargs) -> dict:
+    base = {
+        "pd_range": None,
+        "liquidity": {"bsl": [], "ssl": [], "last_sweep": None},
+        "fvgs": [],
+        "order_blocks": [],
+        "breakers": [],
+        "pd_arrays_in_zone": [],
+        "displacement": None,
+        "smt": None,
+    }
+    base.update(kwargs)
+    return base
+
+
+def _mock_pa_state(**kwargs) -> dict:
+    base = {
+        "active_zones": [],
+        "recent_patterns": [],
+        "nearest_support": None,
+        "nearest_resistance": None,
+        "active_range": None,
+        "recent_breakouts": [],
+        "round_numbers": [],
+        "atr": 1.0,
+    }
+    base.update(kwargs)
+    return base
+
+
+def _mock_time_state(**kwargs) -> dict:
+    base = {
+        "sessions": {},
+        "current_session": "london",
+        "killzone": {"current": None, "minutes_to_next": None},
+        "silver_bullet": {"active": None, "fvg_in_windows": []},
+        "key_levels": [],
+        "weekend_flag": False,
+        "amd": {},
+    }
+    base.update(kwargs)
+    return base
+
+
+
+
 def _build_row(ict_time_state=None, ict_smc_state_1h=None, price_action_state_1h=None,
                ts_ms: int = 1704067200000) -> dict:
     """Helper: build a feature row from given agent states."""
@@ -53,6 +99,7 @@ def _build_row(ict_time_state=None, ict_smc_state_1h=None, price_action_state_1h
         current_close=65000.0,
     )
     return row.as_dict()
+
 
 
 def test_feature_row_truncation_point_in_time(tmp_path) -> None:
@@ -289,19 +336,170 @@ def test_builder_pattern_reads_recent_patterns_not_last_pattern() -> None:
     assert row["pattern_recent_type"] == "none"  # no patterns yet with 0 bars
 
     # Inject a state with a pattern
-    pa_st_with_pat = {
-        "active_zones": [],
-        "recent_patterns": [{"pattern": "hammer", "at_zone": True, "bullish": True}],
-        "nearest_support": None,
-        "nearest_resistance": None,
-        "active_range": None,
-        "recent_breakouts": [],
-        "round_numbers": [],
-        "atr": 1.0,
-    }
+    pa_st_with_pat = _mock_pa_state(
+        recent_patterns=[{"pattern": "hammer", "at_zone": True, "bullish": True, "confirmed_at": 1704067200000}]
+    )
     row2 = _build_row(price_action_state_1h=pa_st_with_pat)
     assert row2["pattern_recent_type"] == "hammer", (
         f"Expected 'hammer' from recent_patterns[-1], got {row2['pattern_recent_type']!r}"
     )
     assert row2["pattern_recent_at_zone"] is True
+
+
+def test_distance_in_atr_known_value() -> None:
+    """Item 1: Distance in ATR must strictly be (level - close) / ATR.
+
+    With level = 100.0, current_close = 90.0, and 1h ATR = 4.0:
+    Expected value = (100.0 - 90.0) / 4.0 = 2.5 ATR.
+    """
+    ts = 1704067200000
+    t1_state = {
+        "as_of": ts,
+        "trend": "bullish",
+        "reason": "BOS up",
+        "last_swing_high": {"price": 100.0},
+        "last_swing_low": {"price": 80.0},
+        "last_event": None,
+        "active_trendline": None,
+        "atr": 4.0,  # Known ATR = 4.0
+    }
+    time_state = _mock_time_state(
+        key_levels=[
+            {"level_type": "pdh", "price": 100.0, "state": "active"},  # Level = 100.0
+        ],
+    )
+    pa_state = _mock_pa_state(
+        active_zones=[
+            {
+                "id": "sr_1",
+                "side": "resistance",
+                "top": 102.0,
+                "bottom": 100.0,  # Bottom boundary = 100.0
+                "mid": 101.0,
+                "state": "active",
+                "strength": 40,
+                "touches": [ts - 1000],
+            }
+        ],
+        atr=4.0,
+    )
+    smc_state = _mock_smc_state(
+        pd_range={"zone": "discount", "position_pct": 25.0, "in_ote": False},
+        order_blocks=[
+            {
+                "id": "ob_1",
+                "direction": "bullish",
+                "top": 102.0,
+                "bottom": 100.0,  # Bottom boundary = 100.0
+                "mt": 101.0,
+                "atr": 4.0,
+                "state": "fresh",
+                "created_time": ts - 2000,
+                "confirmed_at": ts - 1000,
+            }
+        ],
+    )
+
+    row = build_feature_row(
+        symbol="BTCUSDT",
+        timestamp=ts,
+        trend_state_2h=None,
+        trend_state_1h=t1_state,
+        trend_state_15m=None,
+        trend_state_5m=None,
+        ict_smc_state_1h=smc_state,
+        ict_smc_state_15m=None,
+        ict_smc_state_5m=None,
+        ict_time_state=time_state,
+        price_action_state_1h=pa_state,
+        price_action_state_5m=None,
+        current_close=90.0,  # Close = 90.0
+    )
+
+    # Level (100.0) - Close (90.0) = 10.0; 10.0 / ATR (4.0) = 2.5
+    assert row.dist_to_pdh_atr == 2.5, f"Expected 2.5, got {row.dist_to_pdh_atr}"
+    assert row.nearest_sr_dist_atr == 2.5, f"Expected 2.5, got {row.nearest_sr_dist_atr}"
+    assert row.nearest_ob_dist_atr == 2.5, f"Expected 2.5, got {row.nearest_ob_dist_atr}"
+
+
+def test_feature_staleness_and_expiration() -> None:
+    """Item 4: pattern_recent_* expires after 12 bars (1 hour on 5m)."""
+    ts = 1704067200000  # Bar timestamp T
+
+    # Case A: Pattern confirmed 5 bars ago (25 minutes ago) -> Fresh / within window
+    t_fresh = ts - 5 * 300_000
+    pa_state_fresh = _mock_pa_state(
+        recent_patterns=[
+            {"pattern": "hammer", "at_zone": True, "bullish": True, "confirmed_at": t_fresh}
+        ]
+    )
+    row_fresh = _build_row(price_action_state_1h=pa_state_fresh, ts_ms=ts)
+    assert row_fresh["pattern_recent_type"] == "hammer"
+    assert row_fresh["pattern_recent_at_zone"] is True
+    assert row_fresh["pattern_recent_bars_ago"] == 5
+
+    # Case B: Pattern confirmed 15 bars ago (75 minutes ago) -> Stale (> 12 bars)
+    t_stale = ts - 15 * 300_000
+    pa_state_stale = _mock_pa_state(
+        recent_patterns=[
+            {"pattern": "hammer", "at_zone": True, "bullish": True, "confirmed_at": t_stale}
+        ]
+    )
+    row_stale = _build_row(price_action_state_1h=pa_state_stale, ts_ms=ts)
+    assert row_stale["pattern_recent_type"] == "none", "Pattern older than 12 bars must expire to 'none'"
+    assert row_stale["pattern_recent_at_zone"] is False
+    assert row_stale["pattern_recent_bars_ago"] == -1
+
+
+def test_position_pct_clamped_and_outside_range_flag() -> None:
+    """Item 6: position_pct_1h must clamp to [0.0, 100.0] and set outside_range_1h."""
+    ts = 1704067200000
+
+    # Negative raw position (-0.93)
+    smc_below = _mock_smc_state(
+        pd_range={"zone": "discount", "position_pct": -0.93, "in_ote": False}
+    )
+    row_below = _build_row(ict_smc_state_1h=smc_below, ts_ms=ts)
+    assert row_below["position_pct_1h"] == 0.0, f"Expected clamped 0.0, got {row_below['position_pct_1h']}"
+    assert row_below["outside_range_1h"] is True
+
+    # Over 100 raw position (105.5)
+    smc_above = _mock_smc_state(
+        pd_range={"zone": "premium", "position_pct": 105.5, "in_ote": False}
+    )
+    row_above = _build_row(ict_smc_state_1h=smc_above, ts_ms=ts)
+    assert row_above["position_pct_1h"] == 100.0, f"Expected clamped 100.0, got {row_above['position_pct_1h']}"
+    assert row_above["outside_range_1h"] is True
+
+    # Inside range (45.0)
+    smc_inside = _mock_smc_state(
+        pd_range={"zone": "discount", "position_pct": 45.0, "in_ote": False}
+    )
+    row_inside = _build_row(ict_smc_state_1h=smc_inside, ts_ms=ts)
+    assert row_inside["position_pct_1h"] == 45.0
+    assert row_inside["outside_range_1h"] is False
+
+
+def test_nearest_sr_strength_scale() -> None:
+    """Item 5: nearest_sr_strength must be on a 0-100 scale from SRZone.compute_strength()."""
+    ts = 1704067200000
+    pa_state = _mock_pa_state(
+        active_zones=[
+            {
+                "id": "sr_1",
+                "side": "resistance",
+                "top": 105.0,
+                "bottom": 103.0,
+                "mid": 104.0,
+                "state": "active",
+                "strength": 45,  # 0-100 score
+                "touches": [ts - 5000, ts - 2000],
+            }
+        ]
+    )
+    row = _build_row(price_action_state_1h=pa_state, ts_ms=ts)
+    assert row["nearest_sr_strength"] == 45, f"Expected 45, got {row['nearest_sr_strength']}"
+    assert 0 <= row["nearest_sr_strength"] <= 100
+
+
 

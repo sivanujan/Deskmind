@@ -36,6 +36,10 @@ class H1DiscountOBPlugin(HypothesisPlugin):
             atr = current_close * 0.01
 
         # Bullish setup
+        sym = str(r.get("symbol", "UNKNOWN"))
+        ts = int(r.get("timestamp", 0))
+        ev_confirmed = int(r.get("last_event_5m_confirmed_at") or ts)
+
         if (
             t_1h == "bullish"
             and pd_zone == "discount"
@@ -45,16 +49,18 @@ class H1DiscountOBPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry - 1.5 * atr
             target = entry + 3.0 * atr  # 2.0R target
+            setup_id = f"{sym}:H1:{ev_confirmed}:bullish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bullish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale="H1 Bullish: 1h discount + fresh 15m POI + 5m CHoCH_up",
+                setup_id=setup_id,
             )
 
         # Bearish setup
@@ -67,16 +73,19 @@ class H1DiscountOBPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry + 1.5 * atr
             target = entry - 3.0 * atr  # 2.0R target
+            setup_id = f"{sym}:H1:{ev_confirmed}:bearish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bearish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale="H1 Bearish: 1h premium + fresh 15m POI + 5m CHoCH_down",
+                setup_id=setup_id,
             )
 
         return None
+

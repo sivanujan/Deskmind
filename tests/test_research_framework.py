@@ -8,6 +8,7 @@ from deskmind.agents.trend.models import Bar
 from deskmind.research.event_study import calculate_event_study, generate_matched_random_baseline
 from deskmind.research.gates import calculate_deflated_sharpe, evaluate_research_gates
 from deskmind.research.hypotheses.models import Signal
+from deskmind.research.split_guard import SplitGuard
 
 
 def test_event_study_calculation() -> None:
@@ -98,6 +99,44 @@ def test_validation_split_without_passing_gates_refused() -> None:
     # Without gate result
     with pytest.raises(PermissionError, match="refused"):
         SplitGuard.validate_split_request(split="validation", hypothesis_id="H1_v1.0.0", gate_result=None)
+
+
+@pytest.mark.asyncio
+async def test_research_backtest_uses_real_engine(tmp_path) -> None:
+    """Item 3: Research backtest must route through the actual BacktestEngine.
+
+    Fails if research backtest results are produced without BacktestEngine.
+    """
+    from deskmind.backtest.engine import BacktestResult
+    from deskmind.backtest.runner import STRATEGY_REGISTRY, run_backtest
+
+    # 1. H1 strategy must be registered in the backtest engine runner
+    assert "h1_discount_ob" in STRATEGY_REGISTRY, "H1 strategy must be in STRATEGY_REGISTRY"
+
+    # 2. Executing research strategy without the real engine must fail
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        await run_backtest(strategy_name="synthetic_toy_research_bypass", split="train")
+
+    # 3. Running through run_backtest produces a genuine BacktestResult with fills, fees, slippage
+    # using the real BacktestEngine
+    bt_res = await run_backtest(
+        strategy_name="h1_discount_ob",
+        split="train",
+        symbols=["BTCUSDT"],
+        start_date="2023-01-01",
+        end_date="2023-01-05",
+        warmup_days=1,
+        reports_dir=tmp_path / "reports",
+    )
+    assert "result" in bt_res, "Research backtest must return real BacktestResult"
+    engine_result = bt_res["result"]
+    assert isinstance(engine_result, BacktestResult), "Must be an instance of BacktestEngine's BacktestResult"
+    assert hasattr(engine_result, "trades")
+    assert hasattr(engine_result, "rejected_intents")
+    assert hasattr(engine_result, "total_fees_paid")
+    assert hasattr(engine_result, "total_slippage_paid")
+    assert hasattr(engine_result, "total_funding_paid")
+
 
     # Test split permanently locked
     with pytest.raises(PermissionError, match="locked"):

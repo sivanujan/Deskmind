@@ -272,9 +272,11 @@ async def run_pilot_pipeline(
 
     funnels: dict[str, dict[str, int]] = {}
     signals_by_hyp: dict[str, list[Any]] = {}
+    bars_passing_by_hyp: dict[str, int] = {}
     es_results_by_hyp: dict[str, list[Any]] = {}
 
     all_5m_list = sorted(bars_5m, key=lambda b: b.close_time)
+    close_map = {b.close_time: b.close for b in bars_5m}
 
     # Initialize funnels
     total_bars = len(feature_rows)
@@ -282,18 +284,23 @@ async def run_pilot_pipeline(
         funnels[p.hypothesis_id] = {"total_bars": total_bars}
 
     for p in plugins:
-        signals = []
+        unique_signals = []
+        seen_setup_ids = set()
+        bars_passing = 0
         hid = p.hypothesis_id
 
         for r in row_dicts:
-            c_close = r.get("nearest_sr_strength", 0)  # dummy close extractor fallback
-            # Find close from bars
-            bar_c = 25000.0  # reasonable default
+            bar_c = close_map.get(r["timestamp"], 25000.0)
             sig = p.evaluate(r, current_close=bar_c)
             if sig:
-                signals.append(sig)
+                bars_passing += 1
+                sid = sig.setup_id or f"{sig.symbol}:{sig.timestamp}:{sig.direction}"
+                if sid not in seen_setup_ids:
+                    seen_setup_ids.add(sid)
+                    unique_signals.append(sig)
 
-        signals_by_hyp[hid] = signals
+        signals_by_hyp[hid] = unique_signals
+        bars_passing_by_hyp[hid] = bars_passing
 
         # Condition breakdown tracking
         if hid == "H1_v1.0.0":
@@ -314,7 +321,8 @@ async def run_pilot_pipeline(
                     or (r["nearest_ob_dist_atr"] <= 1.0 and r["nearest_ob_state"] == "fresh")
                 )
             )
-            funnels[hid]["4_5m_choch_trigger"] = len(signals)
+            funnels[hid]["4_5m_choch_bars"] = bars_passing
+            funnels[hid]["5_unique_setups"] = len(unique_signals)
 
         elif hid == "H2_v1.0.0":
             funnels[hid]["1_killzone"] = sum(1 for r in row_dicts if r["killzone"] in ("london_open", "ny_am"))
@@ -324,26 +332,30 @@ async def run_pilot_pipeline(
                 and r["strong_pool_swept_side"] in ("SSL", "BSL")
                 and 0 <= r["strong_pool_swept_bars_ago"] <= 12
             )
-            funnels[hid]["3_5m_choch_trigger"] = len(signals)
+            funnels[hid]["3_5m_choch_bars"] = bars_passing
+            funnels[hid]["4_unique_setups"] = len(unique_signals)
 
         elif hid == "H3_v1.0.0":
             funnels[hid]["1_silver_bullet_active"] = sum(1 for r in row_dicts if r["silver_bullet_active"])
             funnels[hid]["2_htf_trend"] = sum(1 for r in row_dicts if r["silver_bullet_active"] and r["htf_trend_1h"] in ("bullish", "bearish"))
-            funnels[hid]["3_disp_fvg_in_trend"] = len(signals)
+            funnels[hid]["3_disp_fvg_bars"] = bars_passing
+            funnels[hid]["4_unique_setups"] = len(unique_signals)
 
         elif hid == "H4_v1.0.0":
             funnels[hid]["1_sr_strength_ge_2"] = sum(1 for r in row_dicts if r["nearest_sr_strength"] >= 2 and r["nearest_sr_dist_atr"] <= 0.5)
             funnels[hid]["2_pattern_at_zone"] = sum(1 for r in row_dicts if r["nearest_sr_strength"] >= 2 and r["nearest_sr_dist_atr"] <= 0.5 and r["pattern_recent_at_zone"])
-            funnels[hid]["3_pattern_aligned"] = len(signals)
+            funnels[hid]["3_pattern_aligned_bars"] = bars_passing
+            funnels[hid]["4_unique_setups"] = len(unique_signals)
 
         elif hid == "H5_v1.0.0":
             funnels[hid]["1_killzone"] = sum(1 for r in row_dicts if r["killzone"] in ("london_open", "ny_am"))
             funnels[hid]["2_pdh_pdl_swept"] = sum(1 for r in row_dicts if r["killzone"] in ("london_open", "ny_am") and (r["pdh_swept_recent"] or r["pdl_swept_recent"]))
-            funnels[hid]["3_5m_choch_trigger"] = len(signals)
+            funnels[hid]["3_5m_choch_bars"] = bars_passing
+            funnels[hid]["4_unique_setups"] = len(unique_signals)
 
-        # Forward Event Studies
+        # Forward Event Studies on Unique Setups
         es_list = []
-        for sig in signals:
+        for sig in unique_signals:
             fwd_bars = [b for b in all_5m_list if sig.timestamp < b.close_time <= sig.timestamp + 48 * 300_000]
             if fwd_bars:
                 res = calculate_event_study(sig, fwd_bars)
@@ -355,19 +367,45 @@ async def run_pilot_pipeline(
 
     # ------------------------------------------------------------------ PHASE C: Real Engine Backtest & Gates
     t0_backtest = time.perf_counter()
-    print("\n[Phase C] Evaluating Research Gates & Real Engine Simulation...")
+    print("\n[Phase C] Routing Research Backtest through the real BacktestEngine...")
+
+    from deskmind.backtest.engine import BacktestResult
+    from deskmind.backtest.runner import run_backtest
+
+    feature_lookup = {}
+    for r in row_dicts:
+        ts = int(r["timestamp"])
+        open_ms = ((ts - 1) // 300_000) * 300_000
+        sym = r["symbol"]
+        feature_lookup[f"{sym}:{ts}"] = r
+        feature_lookup[f"{sym}:{ts + 1}"] = r
+        feature_lookup[f"{sym}:{ts - 1}"] = r
+        feature_lookup[f"{sym}:{open_ms}"] = r
+
+    bt_res = await run_backtest(
+        strategy_name="h1_discount_ob",
+        split=split,
+        symbols=[symbol],
+        start_date=start_date,
+        end_date=end_date,
+        warmup_days=30,
+        strategy_params={"feature_lookup": feature_lookup},
+        data_dir=Path(data_dir),
+    )
+    engine_result: BacktestResult = bt_res["result"]
+    h1_metrics = bt_res["metrics"]
 
     h1_es = es_results_by_hyp["H1_v1.0.0"]
     h1_baseline = generate_matched_random_baseline([e.signal for e in h1_es], {symbol: all_5m_list})
     h1_gate = evaluate_research_gates("H1_v1.0.0", h1_es, h1_baseline, trial_count=1)
 
     t_backtest_duration = time.perf_counter() - t0_backtest
-    print(f"  [OK] Gate check & backtest completed in {t_backtest_duration:.2f}s.")
+    print(f"  [OK] Real BacktestEngine completed in {t_backtest_duration:.2f}s.")
 
     # ------------------------------------------------------------------ DETAILED REPORT
-    print("\n" + "=" * 70)
-    print(" CONDITION FUNNELS ACROSS PRE-REGISTERED HYPOTHESES")
-    print("=" * 70)
+    print("\n" + "=" * 75)
+    print(" CONDITION FUNNELS ACROSS PRE-REGISTERED HYPOTHESES (Bars vs Unique Setups)")
+    print("=" * 75)
     for p in plugins:
         hid = p.hypothesis_id
         fn = funnels[hid]
@@ -375,20 +413,77 @@ async def run_pilot_pipeline(
         for k, v in fn.items():
             pct = round((v / total_bars) * 100, 2)
             print(f"  {k:<28}: {v:>6} ({pct:>5.2f}%)")
-        print(f"  Final Valid Signals         : {len(signals_by_hyp[hid]):>6}")
+        print(f"  -> Total Bars Passing Condition : {bars_passing_by_hyp[hid]:>6} ({round(bars_passing_by_hyp[hid]/total_bars*100, 2):>5.2f}%)")
+        print(f"  -> Unique Setups Emitted        : {len(signals_by_hyp[hid]):>6}")
 
-    print("\n" + "=" * 70)
-    print(" FEATURE QUALITY AUDIT (All 30 Features)")
-    print("=" * 70)
+    print("\n" + "=" * 75)
+    print(" FEATURE QUALITY AUDIT (All 34 Features)")
+    print("=" * 75)
     print(f"{'Feature':<28}{'Null %':>8}{'Distinct':>10}   {'Sample Values'}")
-    print("-" * 70)
+    print("-" * 75)
     for item in quality_stats:
-        samples = ", ".join(item["sample_values"][:3])
+        samples = ", ".join(str(v) for v in item["sample_values"][:4])
         print(f"{item['feature']:<28}{item['null_pct']:>7.1f}%{item['distinct_count']:>10}   [{samples}]")
 
-    print("\n" + "=" * 70)
-    print(" RESEARCH GATE EVALUATION (H1_v1.0.0)")
-    print("=" * 70)
+    print("\n" + "=" * 75)
+    print(" S/R STRENGTH SCALE & DISTRIBUTION (nearest_sr_strength)")
+    print("=" * 75)
+    strengths = [r["nearest_sr_strength"] for r in row_dicts]
+    s_counts = {
+        "0 (no zone)": sum(1 for s in strengths if s == 0),
+        "1 - 19": sum(1 for s in strengths if 1 <= s < 20),
+        "20 - 39": sum(1 for s in strengths if 20 <= s < 40),
+        "40 - 59": sum(1 for s in strengths if 40 <= s < 60),
+        "60 - 79": sum(1 for s in strengths if 60 <= s < 80),
+        "80 - 100": sum(1 for s in strengths if 80 <= s <= 100),
+    }
+    for bucket, count in s_counts.items():
+        pct = (count / len(strengths)) * 100
+        print(f"  Score {bucket:<15}: {count:>6} bars ({pct:>5.1f}%)")
+
+    print("\n" + "=" * 75)
+    print(" REAL BACKTEST ENGINE EXECUTION (H1 Discount OB)")
+    print("=" * 75)
+    print(f"  Strategy Name               : H1 Discount OB / FVG Continuation")
+    print(f"  Simulation Engine           : BacktestEngine v{engine_result.trades[0].id.split('_')[0] if engine_result.trades else '1.0.0'}")
+    print(f"  Total Trades Executed       : {len(engine_result.trades)}")
+    print(f"  Total Raw Entry Signals     : {engine_result.raw_entry_signals}")
+    print(f"  Duplicate Setup Skips       : {engine_result.duplicate_setup_skips}")
+    print(f"  Position Open Skips         : {engine_result.position_open_skips}")
+    print(f"  Same-Bar SL/TP Conflicts    : {engine_result.same_bar_sl_tp_count}")
+    print(f"  Liquidations Count          : {engine_result.liquidations_count}")
+    print(f"\n  Cost Breakdown:")
+    print(f"    - Total Fees Paid         : ${float(engine_result.total_fees_paid):,.2f}")
+    print(f"    - Total Slippage Paid     : ${float(engine_result.total_slippage_paid):,.2f}")
+    print(f"    - Total Funding Paid      : ${float(engine_result.total_funding_paid):,.2f}")
+    total_friction = engine_result.total_fees_paid + engine_result.total_slippage_paid + engine_result.total_funding_paid
+    print(f"    - Total Frictional Costs  : ${float(total_friction):,.2f}")
+
+    print(f"\n  Rejections by Reason:")
+    rej_counts = {}
+    for rej in engine_result.rejected_intents:
+        code = rej.reasons[0] if rej.reasons else "UNKNOWN"
+        rej_counts[code] = rej_counts.get(code, 0) + 1
+    if rej_counts:
+        for code, count in sorted(rej_counts.items(), key=lambda x: -x[1]):
+            print(f"    - {code:<25}: {count:>5}")
+    else:
+        print("    (None - 0 rejections)")
+
+    print(f"\n  First 10 Trades List:")
+    if engine_result.trades:
+        print(f"  {'#':<3} {'Entry Time':<17} {'Exit Time':<17} {'Side':<6} {'Entry':>9} {'Exit':>9} {'PnL ($)':>10} {'PnL (%)':>8} {'R-Mult':>7} {'Exit Reason'}")
+        print("  " + "-" * 98)
+        for i, t in enumerate(engine_result.trades[:10], 1):
+            e_dt = datetime.fromtimestamp(t.entry_time_ms / 1000, UTC).strftime("%Y-%m-%d %H:%M")
+            x_dt = datetime.fromtimestamp(t.exit_time_ms / 1000, UTC).strftime("%Y-%m-%d %H:%M")
+            print(f"  {i:<3} {e_dt} {x_dt} {t.side.upper():<6} {float(t.entry_price):>9.2f} {float(t.exit_price):>9.2f} {float(t.pnl):>10.2f} {float(t.pnl_pct):>7.2f}% {float(t.r_multiple):>6.2f}R {t.exit_reason}")
+    else:
+        print("    (No trades filled)")
+
+    print("\n" + "=" * 75)
+    print(" RESEARCH GATE EVALUATION (H1_v1.0.0 on Unique Setups)")
+    print("=" * 75)
     print(f"  Trades Count (>= 100)      : {h1_gate.trades_count:>6}  [{'PASS' if h1_gate.checklist['min_trades_100'] else 'FAIL'}]")
     print(f"  Gross Expectancy (>= 0.15R): {h1_gate.gross_expectancy_r:>6.3f}R [{'PASS' if h1_gate.checklist['gross_expectancy_0_15R'] else 'FAIL'}]")
     print(f"  Net Expectancy (> 0.0R)    : {h1_gate.net_expectancy_r:>6.3f}R [{'PASS' if h1_gate.checklist['net_expectancy_positive'] else 'FAIL'}]")
@@ -402,24 +497,27 @@ async def run_pilot_pipeline(
     extrap_data_min = (t_data_duration * scale_factor) / 60
     extrap_feature_min = (t_feature_duration * scale_factor) / 60 / 4  # 4 threads
     extrap_event_min = (t_event_duration * scale_factor) / 60
+    extrap_backtest_min = (t_backtest_duration * scale_factor) / 60
     extrap_disk_gb = (disk_used_mb * scale_factor) / 1024
 
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 75)
     print(" MEASURED RUNTIMES & FULL PLAN EXTRAPOLATION (80x Scope)")
-    print("=" * 70)
+    print("=" * 75)
     print(f"  Measured Pilot Runtime:")
     print(f"    - Phase 0 (Data Preparation) : {t_data_duration:.2f}s")
     print(f"    - Phase A (Feature Store)    : {t_feature_duration:.2f}s (Disk: {disk_used_mb:.2f} MB)")
     print(f"    - Phase B (Event Studies)    : {t_event_duration:.2f}s")
-    print(f"    - Phase C (Backtest & Gates) : {t_backtest_duration:.2f}s")
+    print(f"    - Phase C (Real Engine BT)   : {t_backtest_duration:.2f}s")
     print(f"    - Total Pilot Runtime        : {total_time:.2f}s")
     print(f"\n  Extrapolated Full Plan (Top 10 symbols x 2 years 2023-2024):")
     print(f"    - Data Download & Verify     : {extrap_data_min:.1f} minutes")
     print(f"    - Feature Store (4 workers)  : {extrap_feature_min:.1f} minutes")
     print(f"    - Event Studies & Baselines  : {extrap_event_min:.1f} minutes")
+    print(f"    - Real Engine Backtests      : {extrap_backtest_min:.1f} minutes")
     print(f"    - Estimated Storage Volume   : {extrap_disk_gb:.2f} GB")
-    print(f"    - Total Estimated Wall-Clock : {(extrap_data_min + extrap_feature_min + extrap_event_min):.1f} minutes (~{(extrap_data_min + extrap_feature_min + extrap_event_min)/60:.2f} hours)")
-    print("=" * 70)
+    tot_est_min = extrap_data_min + extrap_feature_min + extrap_event_min + extrap_backtest_min
+    print(f"    - Total Estimated Wall-Clock : {tot_est_min:.1f} minutes (~{tot_est_min/60:.2f} hours)")
+    print("=" * 75)
 
     return {
         "status": "success",
@@ -434,5 +532,11 @@ async def run_pilot_pipeline(
             "total": total_time,
         },
         "signal_counts": {hid: len(sigs) for hid, sigs in signals_by_hyp.items()},
+        "bars_passing_counts": bars_passing_by_hyp,
         "h1_gate": h1_gate.as_dict(),
+        "engine_trades_count": len(engine_result.trades),
+        "engine_total_fees": float(engine_result.total_fees_paid),
+        "engine_total_slippage": float(engine_result.total_slippage_paid),
+        "engine_total_funding": float(engine_result.total_funding_paid),
     }
+

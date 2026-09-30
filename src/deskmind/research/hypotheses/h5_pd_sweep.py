@@ -38,21 +38,27 @@ class H5PDSweepPlugin(HypothesisPlugin):
         if atr <= 0:
             atr = current_close * 0.01
 
+        sym = str(r.get("symbol", "UNKNOWN"))
+        ts = int(r.get("timestamp", 0))
+        ev_confirmed = int(r.get("last_event_5m_confirmed_at") or ts)
+
         # PDL swept -> 5m CHoCH_up (Bullish reversal)
         if pdl_sw and ev_5m == "CHoCH_up":
             entry = current_close
             stop = entry - 1.0 * atr
             target = entry + 2.0 * atr
+            setup_id = f"{sym}:H5:{ev_confirmed}:bullish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bullish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale=f"H5 Bullish: {kz} PDL sweep + 5m CHoCH_up",
+                setup_id=setup_id,
             )
 
         # PDH swept -> 5m CHoCH_down (Bearish reversal)
@@ -60,16 +66,18 @@ class H5PDSweepPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry + 1.0 * atr
             target = entry - 2.0 * atr
+            setup_id = f"{sym}:H5:{ev_confirmed}:bearish"
             return Signal(
                 hypothesis_id=self.hypothesis_id,
-                symbol=str(r.get("symbol", "UNKNOWN")),
-                timestamp=int(r.get("timestamp", 0)),
+                symbol=sym,
+                timestamp=ts,
                 direction="bearish",
                 entry_price=entry,
                 stop_price=stop,
                 target_price=target,
                 r_multiple=2.0,
                 rationale=f"H5 Bearish: {kz} PDH sweep + 5m CHoCH_down",
+                setup_id=setup_id,
             )
 
         return None
