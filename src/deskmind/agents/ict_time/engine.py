@@ -174,9 +174,12 @@ class IctTimeEngine:
 
         # Active sessions: one per session name (replaces on new date)
         self.sessions: dict[str, SessionItem] = {}
+        self.latest_sessions: dict[str, SessionItem] = {}
+        self.active_session: SessionItem | None = None
 
         # Key levels: keyed by id
         self.key_levels: dict[str, KeyLevel] = {}
+        self.active_key_levels: dict[str, KeyLevel] = {}
 
         # Period tracking (NY midnight calendar)
         self._last_ny_day: date | None = None
@@ -347,11 +350,11 @@ class IctTimeEngine:
         sess = self._session_window_at(bar.open_time)
         if sess is None:
             # Between sessions; close open sessions if needed
-            for s in list(self.sessions.values()):
-                if s.state == "active":
-                    s.state = "closed"
-                    s.closed_at = bar.close_time
-                    changes.append(s.item())
+            if self.active_session is not None and self.active_session.state == "active":
+                self.active_session.state = "closed"
+                self.active_session.closed_at = bar.close_time
+                changes.append(self.active_session.item())
+                self.active_session = None
             return changes
 
         # Key: session + NY calendar date for the *start* of the session
@@ -384,14 +387,15 @@ class IctTimeEngine:
         else:
             s = self.sessions[sess_id]
 
+        self.latest_sessions[s.name] = s
+
         # Close sessions that ended before this bar
-        for sid, os in list(self.sessions.items()):
-            if sid == sess_id:
-                continue
-            if os.state == "active":
-                os.state = "closed"
-                os.closed_at = bar.open_time
-                changes.append(os.item())
+        if self.active_session is not None and self.active_session is not s and self.active_session.state == "active":
+            self.active_session.state = "closed"
+            self.active_session.closed_at = bar.open_time
+            changes.append(self.active_session.item())
+
+        self.active_session = s
 
         # Update active session extremes
         if s.state == "active":
@@ -432,6 +436,7 @@ class IctTimeEngine:
                 confirmed_at=conf,
             )
             self.key_levels[lv.id] = lv
+            self.active_key_levels[lv.id] = lv
             changes.append(lv.item())
 
         # Asian range high/low: derived from the Asia session for this day
@@ -454,6 +459,7 @@ class IctTimeEngine:
                     confirmed_at=conf,
                 )
                 self.key_levels[lv.id] = lv
+                self.active_key_levels[lv.id] = lv
                 changes.append(lv.item())
 
     def _confirm_week_levels(self, bar: Bar, changes: list[dict[str, Any]]) -> None:
@@ -476,6 +482,7 @@ class IctTimeEngine:
                 confirmed_at=conf,
             )
             self.key_levels[lv.id] = lv
+            self.active_key_levels[lv.id] = lv
             changes.append(lv.item())
 
     def _confirm_month_levels(self, bar: Bar, changes: list[dict[str, Any]]) -> None:
@@ -498,15 +505,15 @@ class IctTimeEngine:
                 confirmed_at=conf,
             )
             self.key_levels[lv.id] = lv
+            self.active_key_levels[lv.id] = lv
             changes.append(lv.item())
 
     # ---------------------------------------------------------------- sweep detection
 
     def _check_level_sweeps(self, bar: Bar) -> list[dict[str, Any]]:
         changes: list[dict[str, Any]] = []
-        for lv in self.key_levels.values():
-            if lv.state == "taken":
-                continue
+        taken_ids: list[str] = []
+        for lv_id, lv in self.active_key_levels.items():
             price = lv.price
             # Swept: wick through (high > level for resistance, low < for support)
             # Taken: close beyond level
@@ -523,6 +530,7 @@ class IctTimeEngine:
                     lv.state = "taken"
                     lv.taken_at = bar.close_time
                     changes.append(lv.item())
+                    taken_ids.append(lv_id)
             else:
                 # Support levels (pdl, pwl, pml, asian_range_low)
                 if bar.low < price and bar.close >= price:
@@ -534,6 +542,9 @@ class IctTimeEngine:
                     lv.state = "taken"
                     lv.taken_at = bar.close_time
                     changes.append(lv.item())
+                    taken_ids.append(lv_id)
+        for tid in taken_ids:
+            self.active_key_levels.pop(tid, None)
         return changes
 
     # ---------------------------------------------------------------- AMD heuristic
@@ -585,16 +596,16 @@ class IctTimeEngine:
         atr = self._atr
 
         sessions_out: dict[str, Any] = {}
-        for s in self.sessions.values():
+        for s in self.latest_sessions.values():
             sessions_out[s.name] = s.summary()
 
+        close_price = self.bars[-1].close if self.bars else 0.0
+        inv_atr = (1.0 / atr) if (atr and atr > 0) else None
+
         levels_out = []
-        for lv in sorted(self.key_levels.values(), key=lambda l: l.confirmed_at):
-            if lv.state == "taken":
-                continue  # don't report taken levels
-            d: dict[str, Any] = lv.summary()
+        for lv in self.active_key_levels.values():
+            d = lv.summary()
             if atr and atr > 0:
-                close_price = list(self.bars)[-1].close if self.bars else 0.0
                 d["distance_atr"] = round((lv.price - close_price) / atr, 3)
             else:
                 d["distance_atr"] = None
@@ -631,7 +642,6 @@ class IctTimeEngine:
     def _current_session_name(self, ms: int) -> str | None:
         if not ms:
             return None
-        for s in self.sessions.values():
-            if s.state == "active":
-                return s.name
+        if self.active_session is not None and self.active_session.state == "active":
+            return self.active_session.name
         return None

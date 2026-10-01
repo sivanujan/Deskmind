@@ -725,29 +725,31 @@ class IctSmcEngine:
 
     def state(self) -> dict[str, Any]:
         """Current state for the timeframe, formatted for the agent report."""
-        # Select the newest N first, then summarise only those: self.pools / self.breakers are
-        # never pruned, so summarising all of them per call made replays quadratic.
+        def _last_n(items: list[Any], pred: Any, n: int) -> list[Any]:
+            out: list[Any] = []
+            for item in reversed(items):
+                if pred(item):
+                    out.append(item)
+                    if len(out) == n:
+                        break
+            out.reverse()
+            return out
+
         bsl_pools = [
             p.summary()
-            for p in [p for p in self.pools if p.side == "high"][-self.cfg.max_active_pools :]
+            for p in _last_n(self.pools, lambda p: p.side == "high", self.cfg.max_active_pools)
         ]
         ssl_pools = [
             p.summary()
-            for p in [p for p in self.pools if p.side == "low"][-self.cfg.max_active_pools :]
+            for p in _last_n(self.pools, lambda p: p.side == "low", self.cfg.max_active_pools)
         ]
-        active_fvgs_objs = [f for f in self.fvgs if f.state != "filled"][
-            -self.cfg.max_active_fvgs :
-        ]
-        active_obs_objs = [ob for ob in self.order_blocks if ob.state != "invalidated"][
-            -self.cfg.max_active_obs :
-        ]
+        active_fvgs_objs = _last_n(self.fvgs, lambda f: f.state != "filled", self.cfg.max_active_fvgs)
+        active_obs_objs = _last_n(self.order_blocks, lambda ob: ob.state != "invalidated", self.cfg.max_active_obs)
         active_fvgs = [f.summary() for f in active_fvgs_objs]
         active_obs = [ob.summary() for ob in active_obs_objs]
         active_breakers = [
             b.summary()
-            for b in [b for b in self.breakers if b.state != "invalidated"][
-                -self.cfg.max_active_breakers :
-            ]
+            for b in _last_n(self.breakers, lambda b: b.state != "invalidated", self.cfg.max_active_breakers)
         ]
 
         # PD arrays inside the actionable zone

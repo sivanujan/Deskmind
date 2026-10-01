@@ -204,7 +204,9 @@ class PriceActionEngine:
         self.swing_lows: deque[tuple[float, int]] = deque(maxlen=50)
 
         self.zones: dict[str, SRZone] = {}
+        self.active_zones: dict[str, SRZone] = {}
         self.breakouts: list[Breakout] = []
+        self.active_breakouts: list[Breakout] = []
         self.active_range: PriceRange | None = None
         self.range_buf: deque[Bar] = deque(maxlen=cfg.range_max_bars)
         self.patterns: deque[dict[str, Any]] = deque(maxlen=200)
@@ -301,6 +303,7 @@ class PriceActionEngine:
                 zone.touches = list(times)
                 zone.strength = zone.compute_strength(atr, self.bar_index)
                 self.zones[zone_id] = zone
+                self.active_zones[zone_id] = zone
                 changes.append(zone.item())
         return changes
 
@@ -308,8 +311,10 @@ class PriceActionEngine:
 
     def _update_zone_states(self, bar: Bar, atr: float) -> list[dict[str, Any]]:
         changes: list[dict[str, Any]] = []
-        for zone in list(self.zones.values()):
+        retired_ids: list[str] = []
+        for zone in list(self.active_zones.values()):
             if zone.state in ("retired",):
+                retired_ids.append(zone.id)
                 continue
 
             price_in_zone = zone.bottom <= bar.low <= zone.top or zone.bottom <= bar.high <= zone.top
@@ -336,6 +341,7 @@ class PriceActionEngine:
                         created_time=bar.open_time,
                     )
                     self.breakouts.append(bo)
+                    self.active_breakouts.append(bo)
                     changes.append(bo.item())
                 elif zone.side == "support" and bar.close < zone.bottom - self.cfg.bo_min_atr * atr:
                     zone.state = "broken"
@@ -350,6 +356,7 @@ class PriceActionEngine:
                         created_time=bar.open_time,
                     )
                     self.breakouts.append(bo)
+                    self.active_breakouts.append(bo)
                     changes.append(bo.item())
 
             # Flip check (broken zone re-tested from other side)
@@ -368,13 +375,19 @@ class PriceActionEngine:
                 zone.state = "retired"
                 zone.retired_at = bar.close_time
                 changes.append(zone.item())
+                retired_ids.append(zone.id)
+
+        for rid in retired_ids:
+            self.active_zones.pop(rid, None)
+
         return changes
 
     # ---------------------------------------------------------------- breakouts
 
     def _update_breakouts(self, bar: Bar, atr: float) -> list[dict[str, Any]]:
         changes: list[dict[str, Any]] = []
-        for bo in self.breakouts:
+        still_active: list[Breakout] = []
+        for bo in self.active_breakouts:
             if bo.outcome is not None:
                 continue
             bo.bars_since += 1
@@ -384,9 +397,11 @@ class PriceActionEngine:
                 continue
             zone = self.zones.get(bo.zone_id)
             if zone is None:
+                still_active.append(bo)
                 continue
             in_zone = zone.bottom <= bar.low <= zone.top or zone.bottom <= bar.high <= zone.top
             if not in_zone:
+                still_active.append(bo)
                 continue
             # Retest detected
             bo.retest_time = bar.close_time
@@ -397,6 +412,7 @@ class PriceActionEngine:
             else:
                 bo.outcome = "failed"
             changes.append(bo.item())
+        self.active_breakouts = [bo for bo in self.active_breakouts if bo.outcome is None]
         return changes
 
     # ---------------------------------------------------------------- candle patterns
@@ -581,15 +597,15 @@ class PriceActionEngine:
 
     def state(self) -> dict[str, Any]:
         atr = self._atr
-        active_zones = [z.item() for z in self.zones.values() if z.state != "retired"]
+        active_zones = [z.item() for z in self.active_zones.values() if z.state != "retired"]
         recent_pats = list(self.patterns)[-10:]
-        recent_bos = [bo.item() for bo in self.breakouts if bo.outcome is None]
+        recent_bos = [bo.item() for bo in self.active_breakouts if bo.outcome is None]
         active_rng = self.active_range.item() if self.active_range else None
 
         # Nearest support / resistance
-        close = list(self.bars)[-1].close if self.bars else 0.0
+        close = self.bars[-1].close if self.bars else 0.0
         nearest_sup = nearest_res = None
-        for zone in sorted(self.zones.values(), key=lambda z: z.mid):
+        for zone in sorted(self.active_zones.values(), key=lambda z: z.mid):
             if zone.state == "retired":
                 continue
             if zone.side == "support" and zone.top <= close:
@@ -598,11 +614,11 @@ class PriceActionEngine:
                 nearest_res = zone.item()
         if nearest_sup is None:
             # Fallback: closest support below
-            sups = [z for z in self.zones.values() if z.side == "support" and z.state != "retired"]
+            sups = [z for z in self.active_zones.values() if z.side == "support" and z.state != "retired"]
             if sups:
                 nearest_sup = min(sups, key=lambda z: abs(z.mid - close)).item()
         if nearest_res is None:
-            ress = [z for z in self.zones.values() if z.side == "resistance" and z.state != "retired"]
+            ress = [z for z in self.active_zones.values() if z.side == "resistance" and z.state != "retired"]
             if ress:
                 nearest_res = min(ress, key=lambda z: abs(z.mid - close)).item()
 

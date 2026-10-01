@@ -221,8 +221,8 @@ def validate_ict_time_state(raw: dict[str, Any]) -> dict[str, Any]:
 
     for i, kl in enumerate(raw.get("key_levels") or []):
         if isinstance(kl, dict):
-            missing_kl = ICT_TIME_KEY_LEVEL_REQUIRED_KEYS - kl.keys()
-            if missing_kl:
+            if not ("level_type" in kl and "price" in kl and "state" in kl):
+                missing_kl = ICT_TIME_KEY_LEVEL_REQUIRED_KEYS - kl.keys()
                 raise KeyError(
                     f"key_level[{i}] missing keys: {sorted(missing_kl)}. "
                     "Use 'level_type' (not 'kind') to identify PDH/PDL."
