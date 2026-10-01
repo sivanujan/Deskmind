@@ -90,9 +90,9 @@ class BaseHypothesisStrategy(BaseStrategy):
             self._emitted_setup_ids.add(sid)
 
             action = "open_long" if sig.direction == "bullish" else "open_short"
-            stop_val = Decimal(str(round(sig.stop_price, 2)))
+            stop_val = Decimal(str(sig.stop_price))
             target_val = (
-                Decimal(str(round(sig.target_price, 2))) if sig.target_price else None
+                Decimal(str(sig.target_price)) if sig.target_price else None
             )
 
             if stop_val <= Decimal("0"):

@@ -639,44 +639,73 @@ async def run_full_train_pipeline(
     for p in plugins:
         hid = p.hypothesis_id
         strat_name = strategy_names[hid]
-        _log_msg(f"\n--- Running BacktestEngine for {hid} ({strat_name}) ---", log_file)
+        _log_msg(f"\n--- Running BacktestEngine for {hid} ({strat_name}) [SHADOW & ENFORCED] ---", log_file)
 
-        bt_res = await run_backtest(
+        # 1. SHADOW Run: circuit breakers observational, strategy evaluated over full TRAIN period
+        _log_msg(f"  [{hid}] Running SHADOW backtest (circuit breakers disabled)...", log_file)
+        bt_shadow = await run_backtest(
             strategy_name=strat_name,
             split=split,
             symbols=pit_symbols,
             start_date=start_date,
             end_date=end_date,
             warmup_days=30,
+            disable_circuit_breakers=True,
             strategy_params={"feature_lookup": feature_lookup},
             data_dir=Path(data_dir),
         )
-        engine_res: BacktestResult = bt_res["result"]
-        metrics = bt_res["metrics"]
+        eng_shadow: BacktestResult = bt_shadow["result"]
+        metrics_shadow = bt_shadow["metrics"]
 
-        # Gate Evaluation
+        # 2. ENFORCED Run: circuit breakers active, live-like risk behavior
+        _log_msg(f"  [{hid}] Running ENFORCED backtest (circuit breakers active)...", log_file)
+        bt_enforced = await run_backtest(
+            strategy_name=strat_name,
+            split=split,
+            symbols=pit_symbols,
+            start_date=start_date,
+            end_date=end_date,
+            warmup_days=30,
+            disable_circuit_breakers=False,
+            strategy_params={"feature_lookup": feature_lookup},
+            data_dir=Path(data_dir),
+        )
+        eng_enforced: BacktestResult = bt_enforced["result"]
+        metrics_enforced = bt_enforced["metrics"]
+
+        # Gate Evaluation on SHADOW result (to assess un-truncated strategy alpha quality)
         es = es_by_hyp[hid]
         base = baseline_by_hyp[hid]
-        gate = evaluate_research_gates(
-            hid, es, base, trial_count=trial_counts[hid], backtest_result=engine_res
+        gate_shadow = evaluate_research_gates(
+            hid, es, base, trial_count=trial_counts[hid], backtest_result=eng_shadow
+        )
+        gate_enforced = evaluate_research_gates(
+            hid, es, base, trial_count=trial_counts[hid], backtest_result=eng_enforced
         )
 
         results_by_hyp[hid] = {
             "plugin": p,
-            "engine_result": engine_res,
-            "metrics": metrics,
-            "gate": gate,
+            "engine_shadow": eng_shadow,
+            "metrics_shadow": metrics_shadow,
+            "gate_shadow": gate_shadow,
+            "engine_enforced": eng_enforced,
+            "metrics_enforced": metrics_enforced,
+            "gate_enforced": gate_enforced,
             "es_results": es,
             "baseline": base,
         }
         phase_c_cp["hypotheses_completed"][hid] = {
-            "trades": len(engine_res.trades),
-            "raw_signals": engine_res.raw_entry_signals,
-            "gate_verdict": gate.verdict,
-            "deflated_sharpe": float(gate.deflated_sharpe),
+            "shadow_trades": len(eng_shadow.trades),
+            "enforced_trades": len(eng_enforced.trades),
+            "raw_signals": eng_shadow.raw_entry_signals,
+            "gate_verdict": gate_shadow.verdict,
+            "deflated_sharpe": float(gate_shadow.deflated_sharpe),
         }
         _save_checkpoint(checkpoint, checkpoint_file)
-        _log_msg(f"  {hid} Engine: {len(engine_res.trades)} trades, raw signals: {engine_res.raw_entry_signals}, Gate: {gate.verdict} [Checkpoint saved]", log_file)
+        _log_msg(
+            f"  {hid} Engine: Shadow {len(eng_shadow.trades)} trades, Enforced {len(eng_enforced.trades)} trades, Gate: {gate_shadow.verdict} [Checkpoint saved]",
+            log_file,
+        )
 
     phase_c_cp["status"] = "COMPLETED"
     phase_c_cp["completed_at"] = datetime.now(UTC).isoformat()
@@ -692,22 +721,25 @@ async def run_full_train_pipeline(
 
     # 1. Funnel Table
     _log_msg("\n### 1. Condition Funnels & Setup Deduplication (All Symbols)", log_file)
-    _log_msg(f"{'Hypothesis':<12} {'Bars Passing':>14} {'% Bars':>10} {'Unique Setups':>15} {'Trades (Max 1 Pos)':>20}", log_file)
-    _log_msg("-" * 75, log_file)
+    _log_msg(f"{'Hypothesis':<12} {'Bars Passing':>14} {'% Bars':>10} {'Unique Setups':>15} {'Shadow Trades':>15} {'Enforced Trades':>17}", log_file)
+    _log_msg("-" * 88, log_file)
     for p in plugins:
         hid = p.hypothesis_id
         b_pass = bars_passing_by_hyp[hid]
         setups = len(setups_by_hyp[hid])
-        trades = len(results_by_hyp[hid]["engine_result"].trades)
+        sh_trades = len(results_by_hyp[hid]["engine_shadow"].trades)
+        enf_trades = len(results_by_hyp[hid]["engine_enforced"].trades)
         pct_bars = (b_pass / len(all_feature_rows)) * 100
-        _log_msg(f"{hid:<12} {b_pass:>14,} {pct_bars:>9.2f}% {setups:>15,} {trades:>20,}", log_file)
+        _log_msg(f"{hid:<12} {b_pass:>14,} {pct_bars:>9.2f}% {setups:>15,} {sh_trades:>15,} {enf_trades:>17,}", log_file)
 
     # 2. Performance & Gates per Hypothesis
     for p in plugins:
         hid = p.hypothesis_id
         res = results_by_hyp[hid]
-        eng: BacktestResult = res["engine_result"]
-        gate = res["gate"]
+        eng_sh: BacktestResult = res["engine_shadow"]
+        eng_enf: BacktestResult = res["engine_enforced"]
+        gate_sh = res["gate_shadow"]
+        gate_enf = res["gate_enforced"]
         es = res["es_results"]
         base = res["baseline"]
 
@@ -715,54 +747,78 @@ async def run_full_train_pipeline(
         _log_msg(f" HYPOTHESIS: {hid} — {p.name}", log_file)
         _log_msg("=" * 90, log_file)
 
-        # Overview Table
-        trades_count = len(eng.trades)
-        wins = [t for t in eng.trades if t.pnl > Decimal("0")]
-        win_rate = (len(wins) / trades_count * 100) if trades_count > 0 else 0.0
+        # Helper to compute decomposed metrics
+        def _calc_stats(eng: BacktestResult) -> dict[str, Any]:
+            tc = len(eng.trades)
+            w = [t for t in eng.trades if t.pnl > Decimal("0")]
+            wr = (len(w) / tc * 100) if tc > 0 else 0.0
+            r_vals = [float(t.r_multiple) for t in eng.trades]
+            f_r = [
+                float(t.fees_paid + t.slippage_paid + t.funding_paid) / (float(t.initial_risk) if float(t.initial_risk) > 0 else 100.0)
+                for t in eng.trades
+            ]
+            c_r = (sum(f_r) / len(f_r)) if f_r else 0.0
+            n_r = (sum(r_vals) / len(r_vals)) if r_vals else 0.0
+            g_r = n_r + c_r
+            return {
+                "trades": tc,
+                "win_rate": wr,
+                "gross_exp": g_r,
+                "cost_r": c_r,
+                "net_exp": n_r,
+            }
 
-        r_mults = [float(t.r_multiple) for t in eng.trades]
-        gross_exp = (sum(r_mults) / len(r_mults)) if r_mults else 0.0
-        tot_friction = float(eng.total_fees_paid + eng.total_slippage_paid + eng.total_funding_paid)
-        cost_per_trade_r = (tot_friction / trades_count / 100.0) if trades_count > 0 else 0.0
-        net_exp = gross_exp - cost_per_trade_r
+        st_sh = _calc_stats(eng_sh)
+        st_enf = _calc_stats(eng_enf)
 
         _log_msg(f"  Trial Count in Registry     : {trial_counts[hid]}", log_file)
         _log_msg(f"  Unique Setups Emitted       : {len(setups_by_hyp[hid]):,}", log_file)
-        _log_msg(f"  Real Engine Trades Executed : {trades_count:,}", log_file)
-        _log_msg(f"  Win Rate                    : {win_rate:.1f}% ({len(wins)} / {trades_count})", log_file)
-        _log_msg(f"  Gross Expectancy            : {gross_exp:.3f}R", log_file)
-        _log_msg(f"  Frictional Cost per Trade   : {cost_per_trade_r:.3f}R", log_file)
-        _log_msg(f"  Net Expectancy              : {net_exp:.3f}R", log_file)
-        _log_msg(f"  Max Drawdown                : {float(gate.max_drawdown_pct):.2f}%", log_file)
-        _log_msg(f"  Deflated Sharpe Ratio (DSR) : {float(gate.deflated_sharpe):.3f}", log_file)
-        _log_msg(f"  Random Baseline Percentile  : {float(gate.random_baseline_pct):.1f}%", log_file)
+        _log_msg(f"  Random Baseline Percentile  : {float(gate_sh.random_baseline_pct):.1f}%", log_file)
+        _log_msg(f"  Deflated Sharpe Ratio (DSR) : {float(gate_sh.deflated_sharpe):.4f}", log_file)
 
-        # Train Halves Consistency
+        _log_msg("\n  [A] SHADOW VIEW (Strategy Quality — Full 2023-2024 Evaluation, Breakers Observational):", log_file)
+        _log_msg(f"    Trades Executed           : {st_sh['trades']:,}", log_file)
+        _log_msg(f"    Win Rate                  : {st_sh['win_rate']:.1f}%", log_file)
+        _log_msg(f"    Gross Expectancy          : {st_sh['gross_exp']:+.3f}R", log_file)
+        _log_msg(f"    Frictional Cost per Trade : {st_sh['cost_r']:.3f}R", log_file)
+        _log_msg(f"    Net Expectancy            : {st_sh['net_exp']:+.3f}R", log_file)
+        _log_msg(f"    Max Drawdown              : {float(gate_sh.max_drawdown_pct):.2f}%", log_file)
+
+        _log_msg("\n  [B] ENFORCED VIEW (Live-like Risk — Circuit Breakers Active):", log_file)
+        _log_msg(f"    Trades Executed           : {st_enf['trades']:,}", log_file)
+        _log_msg(f"    Win Rate                  : {st_enf['win_rate']:.1f}%", log_file)
+        _log_msg(f"    Gross Expectancy          : {st_enf['gross_exp']:+.3f}R", log_file)
+        _log_msg(f"    Frictional Cost per Trade : {st_enf['cost_r']:.3f}R", log_file)
+        _log_msg(f"    Net Expectancy            : {st_enf['net_exp']:+.3f}R", log_file)
+        _log_msg(f"    Max Drawdown              : {float(gate_enf.max_drawdown_pct):.2f}%", log_file)
+
+        # Train Halves Consistency (Shadow)
         mid_ms = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
-        h1_trades = [t for t in eng.trades if t.entry_time_ms < mid_ms]
-        h2_trades = [t for t in eng.trades if t.entry_time_ms >= mid_ms]
+        h1_trades = [t for t in eng_sh.trades if t.entry_time_ms < mid_ms]
+        h2_trades = [t for t in eng_sh.trades if t.entry_time_ms >= mid_ms]
         h1_r = sum(float(t.r_multiple) for t in h1_trades) / len(h1_trades) if h1_trades else 0.0
         h2_r = sum(float(t.r_multiple) for t in h2_trades) / len(h2_trades) if h2_trades else 0.0
-        _log_msg(f"  Train Half 1 (2023)         : {len(h1_trades)} trades, {h1_r:+.3f}R avg", log_file)
-        _log_msg(f"  Train Half 2 (2024)         : {len(h2_trades)} trades, {h2_r:+.3f}R avg", log_file)
+        _log_msg("\n  Train Halves Consistency (Shadow):", log_file)
+        _log_msg(f"    Train Half 1 (2023)       : {len(h1_trades)} trades, {h1_r:+.3f}R avg", log_file)
+        _log_msg(f"    Train Half 2 (2024)       : {len(h2_trades)} trades, {h2_r:+.3f}R avg", log_file)
 
-        # Rejections by Reason
+        # Rejections by Reason (Enforced)
         rej_counts = {}
-        for rej in eng.rejected_intents:
+        for rej in eng_enf.rejected_intents:
             code = rej.reasons[0] if rej.reasons else "UNKNOWN"
             rej_counts[code] = rej_counts.get(code, 0) + 1
-        _log_msg("\n  Risk Manager Rejections:", log_file)
+        _log_msg("\n  Risk Manager Rejections (Enforced):", log_file)
         if rej_counts:
             for code, cnt in sorted(rej_counts.items(), key=lambda x: -x[1]):
                 _log_msg(f"    - {code:<25}: {cnt:>5}", log_file)
         else:
             _log_msg("    (None)", log_file)
 
-        # Per-Symbol Results (symbols with >= 10 trades)
+        # Per-Symbol Results (symbols with >= 10 trades, Shadow)
         sym_trades: dict[str, list[Any]] = {}
-        for t in eng.trades:
+        for t in eng_sh.trades:
             sym_trades.setdefault(t.symbol, []).append(t)
-        _log_msg("\n  Per-Symbol Performance (>= 10 Trades):", log_file)
+        _log_msg("\n  Per-Symbol Performance (Shadow, >= 10 Trades):", log_file)
         qualified_symbols = {s: tr for s, tr in sym_trades.items() if len(tr) >= 10}
         if qualified_symbols:
             _log_msg(f"    {'Symbol':<10} {'Trades':>8} {'Win Rate':>10} {'Gross PnL ($)':>14} {'Avg R':>8}", log_file)
@@ -774,10 +830,10 @@ async def run_full_train_pipeline(
                 avg_r = sum(float(t.r_multiple) for t in trs) / len(trs)
                 _log_msg(f"    {s:<10} {len(trs):>8} {wr:>9.1f}% {tot_pnl:>14.2f} {avg_r:>8.2f}R", log_file)
         else:
-            _log_msg("    (No single symbol had >= 10 trades; positions rotated across universe)", log_file)
+            _log_msg("    (No single symbol had >= 10 trades)", log_file)
 
         # Event Study Forward Horizon Table vs Matched Random
-        _log_msg("\n  Event Study MFE/MAE Horizons vs Random Baseline:", log_file)
+        _log_msg("\n  Event Study MFE/MAE Horizons vs Matched Random Baseline:", log_file)
         _log_msg(f"    {'Horizon':<10} {'Hypothesis MFE':>16} {'Random MFE':>14} {'Hypothesis MAE':>16} {'Random MAE':>14}", log_file)
         _log_msg("    " + "-" * 74, log_file)
         for h in (1, 4, 12, 48):
@@ -785,14 +841,14 @@ async def run_full_train_pipeline(
             hyp_mae = sum(e.mae_r.get(h, 0.0) for e in es) / len(es) if es else 0.0
             rnd_mfe = sum(b.mfe_r.get(h, 0.0) for b in base) / len(base) if base else 0.0
             rnd_mae = sum(b.mae_r.get(h, 0.0) for b in base) / len(base) if base else 0.0
-            _log_msg(f"    {h:<3} bars   {hyp_mfe:>15.2f}% {rnd_mfe:>13.2f}% {hyp_mae:>15.2f}% {rnd_mae:>13.2f}%", log_file)
+            _log_msg(f"    {h:<3} bars   {hyp_mfe:>15.2f}R {rnd_mfe:>13.2f}R {hyp_mae:>15.2f}R {rnd_mae:>13.2f}R", log_file)
 
-        # Gate Checklist
-        _log_msg("\n  Gate Checklist (TRAIN -> VALIDATION):", log_file)
-        for crit, passed in gate.checklist.items():
+        # Gate Checklist (Evaluated on SHADOW strategy quality)
+        _log_msg("\n  Gate Checklist (TRAIN -> VALIDATION, Shadow):", log_file)
+        for crit, passed in gate_sh.checklist.items():
             status = "PASS" if passed else "FAIL"
             _log_msg(f"    [{status:<4}] {crit}", log_file)
-        _log_msg(f"\n  >>> FINAL GATE VERDICT: {gate.verdict.upper()} <<<", log_file)
+        _log_msg(f"\n  >>> FINAL GATE VERDICT: {gate_sh.verdict.upper()} <<<", log_file)
 
     _log_msg("\n" + "=" * 90, log_file)
     _log_msg(f"=== FULL TRAIN RUN COMPLETED SUCCESSFULLY IN {time.perf_counter() - t0_phase0:.2f}s ===", log_file)

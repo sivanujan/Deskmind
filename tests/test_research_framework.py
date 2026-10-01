@@ -67,6 +67,142 @@ def test_deflated_sharpe_calculation() -> None:
     returns = [0.5, 1.2, -0.8, 1.5, 0.4, 0.9, -0.2, 1.1, 0.7, -0.5]
     dsr = calculate_deflated_sharpe(returns, total_trials=3)
     assert isinstance(dsr, float)
+    assert 0.0 <= dsr <= 1.0, f"DSR must be a probability in [0, 1], got {dsr}"
+
+
+def test_deflated_sharpe_multiple_trials_monotonicity() -> None:
+    """Increasing trial count strictly penalizes / deflates Sharpe ratio."""
+    returns = [1.2, 0.8, 1.5, 0.4, 0.9, 0.2, 1.1, 0.7, 0.5, 0.6] * 5
+    dsr_1 = calculate_deflated_sharpe(returns, total_trials=1)
+    dsr_5 = calculate_deflated_sharpe(returns, total_trials=5)
+    dsr_20 = calculate_deflated_sharpe(returns, total_trials=20)
+
+    assert 0.0 <= dsr_1 <= 1.0
+    assert 0.0 <= dsr_5 <= 1.0
+    assert 0.0 <= dsr_20 <= 1.0
+    assert dsr_1 >= dsr_5 >= dsr_20, f"Expected monotonic deflation: {dsr_1} >= {dsr_5} >= {dsr_20}"
+
+
+def test_gate_criteria_exact_failing_numbers() -> None:
+    """Exact criterion tests requested:
+    - H3 (25 trades) and H5 (28 trades) must FAIL min_trades_100.
+    - H3 (net -1.662R) and H4 (net -0.270R) must FAIL net_expectancy_positive.
+    - H3 and H4 having 0 trades in 2024 must FAIL both_halves_positive.
+    """
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+    from deskmind.backtest.engine import BacktestResult, Trade
+
+    # 1. H3: 25 trades in 2023, 0 in 2024, net expectancy -1.662R
+    # 2023 timestamp: 1680000000000 (mid 2023)
+    h3_trades = [
+        Trade(
+            id=f"t_{i}",
+            symbol="SOLUSDT",
+            side="long",
+            entry_time_ms=1680000000000 + i * 3600000,
+            entry_price=Decimal("20.0"),
+            exit_time_ms=1680000000000 + (i + 1) * 3600000,
+            exit_price=Decimal("19.0"),
+            qty=Decimal("10.0"),
+            pnl=Decimal("-166.2"),
+            pnl_pct=Decimal("-8.31"),
+            r_multiple=Decimal("-1.662"),
+            exit_reason="stop_loss",
+            fees_paid=Decimal("0.5"),
+            funding_paid=Decimal("0.0"),
+            slippage_paid=Decimal("0.5"),
+            holding_time_minutes=60,
+            spanned_gap=False,
+            initial_risk=Decimal("100.0"),
+        )
+        for i in range(25)
+    ]
+    h3_bt = MagicMock(spec=BacktestResult)
+    h3_bt.trades = h3_trades
+    h3_bt.initial_cash = Decimal("10000.0")
+    h3_bt.equity_curve = []
+    h3_bt.max_drawdown_pct = 22.47
+
+    gate_h3 = evaluate_research_gates("H3_v1.0.0", [], [], trial_count=1, backtest_result=h3_bt)
+    assert gate_h3.trades_count == 25
+    assert gate_h3.checklist["min_trades_100"] is False, "H3 with 25 trades must FAIL min_trades_100"
+    assert gate_h3.net_expectancy_r == -1.662
+    assert gate_h3.checklist["net_expectancy_positive"] is False, "H3 with -1.662R must FAIL net_expectancy_positive"
+    assert gate_h3.checklist["both_halves_positive"] is False, "H3 with 0 trades in 2024 must FAIL both_halves_positive"
+    assert gate_h3.verdict == "FAIL"
+
+    # 2. H5: 28 trades (must FAIL min_trades_100)
+    h5_trades = [
+        Trade(
+            id=f"t_{i}",
+            symbol="BTCUSDT",
+            side="long",
+            entry_time_ms=1680000000000 + i * 3600000,
+            entry_price=Decimal("30000.0"),
+            exit_time_ms=1680000000000 + (i + 1) * 3600000,
+            exit_price=Decimal("30100.0"),
+            qty=Decimal("0.1"),
+            pnl=Decimal("10.0"),
+            pnl_pct=Decimal("0.33"),
+            r_multiple=Decimal("0.1"),
+            exit_reason="take_profit",
+            fees_paid=Decimal("0.1"),
+            funding_paid=Decimal("0.0"),
+            slippage_paid=Decimal("0.1"),
+            holding_time_minutes=60,
+            spanned_gap=False,
+            initial_risk=Decimal("100.0"),
+        )
+        for i in range(28)
+    ]
+    h5_bt = MagicMock(spec=BacktestResult)
+    h5_bt.trades = h5_trades
+    h5_bt.initial_cash = Decimal("10000.0")
+    h5_bt.equity_curve = []
+    h5_bt.max_drawdown_pct = 16.38
+
+    gate_h5 = evaluate_research_gates("H5_v1.0.0", [], [], trial_count=1, backtest_result=h5_bt)
+    assert gate_h5.trades_count == 28
+    assert gate_h5.checklist["min_trades_100"] is False, "H5 with 28 trades must FAIL min_trades_100"
+
+    # 3. H4: 137 trades in 2023, 0 in 2024, net expectancy -0.270R
+    h4_trades = [
+        Trade(
+            id=f"t_{i}",
+            symbol="ETHUSDT",
+            side="long",
+            entry_time_ms=1680000000000 + i * 3600000,
+            entry_price=Decimal("2000.0"),
+            exit_time_ms=1680000000000 + (i + 1) * 3600000,
+            exit_price=Decimal("1980.0"),
+            qty=Decimal("1.0"),
+            pnl=Decimal("-27.0"),
+            pnl_pct=Decimal("-1.0"),
+            r_multiple=Decimal("-0.270"),
+            exit_reason="stop_loss",
+            fees_paid=Decimal("0.2"),
+            funding_paid=Decimal("0.0"),
+            slippage_paid=Decimal("0.2"),
+            holding_time_minutes=60,
+            spanned_gap=False,
+            initial_risk=Decimal("100.0"),
+        )
+        for i in range(137)
+    ]
+    h4_bt = MagicMock(spec=BacktestResult)
+    h4_bt.trades = h4_trades
+    h4_bt.initial_cash = Decimal("10000.0")
+    h4_bt.equity_curve = []
+    h4_bt.max_drawdown_pct = 17.45
+
+    gate_h4 = evaluate_research_gates("H4_v1.1.0", [], [], trial_count=2, backtest_result=h4_bt)
+    assert gate_h4.trades_count == 137
+    assert gate_h4.checklist["min_trades_100"] is True
+    assert gate_h4.net_expectancy_r == -0.270
+    assert gate_h4.checklist["net_expectancy_positive"] is False, "H4 with -0.270R must FAIL net_expectancy_positive"
+    assert gate_h4.checklist["both_halves_positive"] is False, "H4 with 0 trades in 2024 must FAIL both_halves_positive"
+    assert gate_h4.verdict == "FAIL"
 
 
 def test_event_study_train_split_never_reads_2025_row(tmp_path) -> None:
@@ -299,5 +435,46 @@ def test_checkpoint_commit_guard_refuses_different_commit(tmp_path) -> None:
                 resume=True,
             )
         )
+
+
+def test_matched_random_baseline_properties() -> None:
+    """Verify matched random baseline preserves symbol, direction, time-of-day, and relative risk scale."""
+    sig = Signal(
+        hypothesis_id="H1_v1.0.0",
+        symbol="BTCUSDT",
+        timestamp=1672531200000,  # 2023-01-01 00:00:00 UTC
+        direction="bullish",
+        entry_price=20000.0,
+        stop_price=19800.0,  # 1% stop
+        target_price=20400.0,  # 2% target (2.0R)
+        r_multiple=2.0,
+        rationale="Test signal",
+    )
+    # 2 days of 5m bars
+    bars = [
+        Bar(
+            open_time=1672531200000 + i * 300_000,
+            close_time=1672531200000 + (i + 1) * 300_000,
+            open=20000.0 + (i % 10),
+            high=20050.0 + (i % 10),
+            low=19950.0 + (i % 10),
+            close=20010.0 + (i % 10),
+        )
+        for i in range(576)
+    ]
+    all_bars = {"BTCUSDT": bars}
+
+    baseline = generate_matched_random_baseline([sig], all_bars, samples=10)
+    assert len(baseline) == 10
+    for b in baseline:
+        assert b.symbol == "BTCUSDT"
+        assert b.signal.direction == "bullish"
+        # Relative stop distance must match original 1% stop scale
+        rel_stop = abs(b.signal.entry_price - b.signal.stop_price) / b.signal.entry_price
+        assert abs(rel_stop - 0.01) < 1e-4, f"Expected ~1% risk, got {rel_stop}"
+        # Time-of-day match: modulo 86,400,000 must match original timestamp
+        tod_original = sig.timestamp % 86_400_000
+        tod_candidate = (b.signal.timestamp - 300_000) % 86_400_000
+        assert tod_candidate == tod_original
 
 

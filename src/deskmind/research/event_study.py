@@ -155,7 +155,15 @@ def generate_matched_random_baseline(
     samples: int | None = None,
     holding_bars: Sequence[int] = (1, 4, 12, 48),
 ) -> list[EventStudyResult]:
-    """Generate matched random baseline (same symbol, time-of-day distribution, direction mix)."""
+    """Generate matched random baseline (same symbol, time-of-day, direction, and risk scale).
+
+    Matches:
+      1. Symbol: exact symbol match.
+      2. Time-of-day: matches the 5m bar time-of-day (modulo 86,400,000 ms).
+      3. Direction: exact direction (bullish / bearish).
+      4. Risk scale: exact relative stop distance % and target distance % of the signal,
+         ensuring units and risk-reward geometry are identical to the hypothesis.
+    """
     random_results: list[EventStudyResult] = []
     rng = random.Random(42)  # Deterministic seed
 
@@ -168,29 +176,62 @@ def generate_matched_random_baseline(
 
     max_holding = max(holding_bars) if holding_bars else 48
 
+    # Index bars by symbol and time-of-day (ms into UTC day)
+    tod_indices: dict[str, dict[int, list[int]]] = {}
+    for sym, sym_bars in all_bars_by_symbol.items():
+        sym_tod: dict[int, list[int]] = {}
+        limit = len(sym_bars) - max_holding - 1
+        for idx in range(limit):
+            tod_ms = sym_bars[idx].open_time % 86_400_000
+            sym_tod.setdefault(tod_ms, []).append(idx)
+        tod_indices[sym] = sym_tod
+
     for sig in target_signals:
         sym_bars = all_bars_by_symbol.get(sig.symbol, [])
-        if len(sym_bars) < max_holding + 2:
+        limit = len(sym_bars) - max_holding - 1
+        if limit <= 0:
             continue
 
-        rand_idx = rng.randint(0, len(sym_bars) - max_holding - 2)
+        sig_entry = sig.entry_price if sig.entry_price > 0 else 1.0
+        risk_ratio = abs(sig_entry - sig.stop_price) / sig_entry
+        if risk_ratio <= 1e-6:
+            risk_ratio = 0.01  # fallback 1%
+        target_ratio = (
+            abs(sig.target_price - sig_entry) / sig_entry
+            if sig.target_price and sig.target_price > 0
+            else 2.0 * risk_ratio
+        )
+
+        # Match time-of-day candidate bars
+        sig_tod = sig.timestamp % 86_400_000
+        sym_tod = tod_indices.get(sig.symbol, {})
+        candidates = sym_tod.get(sig_tod)
+
+        if candidates:
+            rand_idx = rng.choice(candidates)
+        else:
+            rand_idx = rng.randint(0, limit)
+
         start_bar = sym_bars[rand_idx]
         forward_bars = sym_bars[rand_idx + 1 : rand_idx + 1 + max_holding]
+        entry_ref = start_bar.close
 
-        atr = abs(start_bar.high - start_bar.low) or 1.0
+        if sig.direction == "bullish":
+            stop_ref = entry_ref * (1.0 - risk_ratio)
+            target_ref = entry_ref * (1.0 + target_ratio)
+        else:
+            stop_ref = entry_ref * (1.0 + risk_ratio)
+            target_ref = entry_ref * (1.0 - target_ratio)
+
         rand_sig = Signal(
             hypothesis_id="BASELINE_RANDOM",
             symbol=sig.symbol,
             timestamp=start_bar.close_time,
             direction=sig.direction,
-            entry_price=start_bar.close,
-            stop_price=(
-                start_bar.close - 1.5 * atr if sig.direction == "bullish" else start_bar.close + 1.5 * atr
-            ),
-            target_price=(
-                start_bar.close + 3.0 * atr if sig.direction == "bullish" else start_bar.close - 3.0 * atr
-            ),
-            r_multiple=2.0,
+            entry_price=entry_ref,
+            stop_price=stop_ref,
+            target_price=target_ref,
+            r_multiple=sig.r_multiple,
             rationale="Matched random baseline",
         )
         res = _calculate_single_event_study(rand_sig, forward_bars, holding_bars=holding_bars)
