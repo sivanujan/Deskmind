@@ -48,9 +48,14 @@ class IctSmcEngine:
         self.bars: deque[Bar] = deque(maxlen=cfg.bar_memory)
         self.displacements: deque[Displacement] = deque(maxlen=50)
         self.pools: list[LiquidityPool] = []
+        self.active_pools: list[LiquidityPool] = []
         self.fvgs: list[FVG] = []
+        self.active_fvgs: list[FVG] = []
         self.order_blocks: list[OrderBlock] = []
+        self.active_order_blocks: list[OrderBlock] = []
+        self._ob_ids: set[str] = set()
         self.breakers: list[BreakerBlock] = []
+        self.active_breakers: list[BreakerBlock] = []
         self.voids: list[LiquidityVoid] = []
         self.pd_range: PDRange | None = None
         self.last_sweep: dict[str, Any] | None = None
@@ -191,6 +196,7 @@ class IctSmcEngine:
                         displacement_backed=backed,
                     )
                     self.fvgs.append(fvg)
+                    self.active_fvgs.append(fvg)
                     changes.append(fvg.item())
 
             # Bearish FVG: c1.low > c3.high
@@ -209,10 +215,11 @@ class IctSmcEngine:
                         displacement_backed=backed,
                     )
                     self.fvgs.append(fvg)
+                    self.active_fvgs.append(fvg)
                     changes.append(fvg.item())
 
         # Update existing active FVGs
-        for fvg in self.fvgs:
+        for fvg in self.active_fvgs:
             if fvg.confirmed_at >= bar.close_time:
                 continue  # newly created on this candle
             if fvg.state in ("filled", "inversion") or fvg.expired_at is not None:
@@ -246,6 +253,11 @@ class IctSmcEngine:
                         fvg.state = "partially_filled"
                         fvg.partially_filled_at = bar.close_time
                         changes.append(fvg.item())
+
+        self.active_fvgs = [
+            f for f in self.active_fvgs
+            if f.state not in ("filled", "inversion") and f.expired_at is None
+        ]
 
     # ------------------------------------------------------------ §2 Liquidity Pools
 
@@ -306,12 +318,13 @@ class IctSmcEngine:
                 )
 
             self.pools.append(pool)
+            self.active_pools.append(pool)
             changes.append(pool.item())
 
     def _update_pools(
         self, bar: Bar, sweeps_at_bar: list[dict[str, Any]], changes: list[dict[str, Any]]
     ) -> None:
-        for pool in self.pools:
+        for pool in self.active_pools:
             if (
                 pool.confirmed_at >= bar.close_time
                 or pool.state == "taken"
@@ -347,6 +360,11 @@ class IctSmcEngine:
                                 if s.get("direction") == "down":
                                     pool.swept_by = s.get("id")
                             changes.append(pool.item())
+
+        self.active_pools = [
+            p for p in self.active_pools
+            if p.state != "taken" and p.expired_at is None
+        ]
 
     # ------------------------------------------------------------ §5 Order Blocks & PD Range
 
@@ -393,8 +411,10 @@ class IctSmcEngine:
                 atr=atr,
             )
             # an identical OB (same candles, same bar) from a second BOS change is not a new OB
-            if all(o.id != ob.id for o in self.order_blocks):
+            if ob.id not in self._ob_ids:
+                self._ob_ids.add(ob.id)
                 self.order_blocks.append(ob)
+                self.active_order_blocks.append(ob)
                 changes.append(ob.item())
 
         # Update Dealing Range / PD Range
@@ -453,7 +473,7 @@ class IctSmcEngine:
             )
 
     def _update_order_blocks(self, bar: Bar, changes: list[dict[str, Any]]) -> None:
-        for ob in self.order_blocks:
+        for ob in self.active_order_blocks:
             if (
                 ob.confirmed_at >= bar.close_time
                 or ob.state == "invalidated"
@@ -473,7 +493,7 @@ class IctSmcEngine:
                             p.state == "swept"
                             and p.swept_at is not None
                             and ob.created_time <= p.swept_at <= bar.close_time
-                            for p in self.pools
+                            for p in self.active_pools
                             if p.side == "high"
                         )
                         breaker = BreakerBlock(
@@ -490,6 +510,7 @@ class IctSmcEngine:
                             atr=ob.atr or self.atr,
                         )
                         self.breakers.append(breaker)
+                        self.active_breakers.append(breaker)
                         changes.append(breaker.item())
                     elif bar.low <= ob.mt:
                         if ob.state != "mitigated":
@@ -511,7 +532,7 @@ class IctSmcEngine:
                             p.state == "swept"
                             and p.swept_at is not None
                             and ob.created_time <= p.swept_at <= bar.close_time
-                            for p in self.pools
+                            for p in self.active_pools
                             if p.side == "low"
                         )
                         breaker = BreakerBlock(
@@ -528,6 +549,7 @@ class IctSmcEngine:
                             atr=ob.atr or self.atr,
                         )
                         self.breakers.append(breaker)
+                        self.active_breakers.append(breaker)
                         changes.append(breaker.item())
                     elif bar.high >= ob.mt:
                         if ob.state != "mitigated":
@@ -539,10 +561,15 @@ class IctSmcEngine:
                         ob.tested_at = bar.close_time
                         changes.append(ob.item())
 
+        self.active_order_blocks = [
+            ob for ob in self.active_order_blocks
+            if ob.state != "invalidated" and ob.expired_at is None
+        ]
+
     # ------------------------------------------------------------ Breakers
 
     def _update_breakers(self, bar: Bar, changes: list[dict[str, Any]]) -> None:
-        for b in self.breakers:
+        for b in self.active_breakers:
             if (
                 b.confirmed_at >= bar.close_time
                 or b.state == "invalidated"
@@ -569,6 +596,11 @@ class IctSmcEngine:
                         b.state = "mitigated"
                         b.mitigated_at = bar.close_time
                         changes.append(b.item())
+
+        self.active_breakers = [
+            b for b in self.active_breakers
+            if b.state != "invalidated" and b.expired_at is None
+        ]
 
     # ------------------------------------------------------------ §6 Liquidity Voids
 
@@ -652,7 +684,7 @@ class IctSmcEngine:
         cfg = self.cfg
         # Expire older active items beyond zone_max_age_bars
         current_time = bar.close_time
-        for pool in self.pools:
+        for pool in self.active_pools:
             if (
                 pool.state == "active"
                 and pool.expired_at is None
@@ -663,7 +695,7 @@ class IctSmcEngine:
                     pool.expired_at = current_time
                     changes.append(pool.item())
 
-        for fvg in self.fvgs:
+        for fvg in self.active_fvgs:
             if (
                 fvg.state in ("fresh", "partially_filled")
                 and fvg.expired_at is None
@@ -674,7 +706,7 @@ class IctSmcEngine:
                     fvg.expired_at = current_time
                     changes.append(fvg.item())
 
-        for ob in self.order_blocks:
+        for ob in self.active_order_blocks:
             if (
                 ob.state in ("fresh", "tested")
                 and ob.expired_at is None
@@ -684,6 +716,10 @@ class IctSmcEngine:
                 if ob.created_time < first_kept:
                     ob.expired_at = current_time
                     changes.append(ob.item())
+
+        self.active_pools = [p for p in self.active_pools if p.expired_at is None and p.state != "taken"]
+        self.active_fvgs = [f for f in self.active_fvgs if f.expired_at is None and f.state not in ("filled", "inversion")]
+        self.active_order_blocks = [o for o in self.active_order_blocks if o.expired_at is None and o.state != "invalidated"]
 
     # ------------------------------------------------------------ State report
 

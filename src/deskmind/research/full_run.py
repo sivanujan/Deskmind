@@ -449,8 +449,21 @@ async def run_full_train_pipeline(
         sym_bars_2h = {b.close_time: b for b in all_bars_by_symbol[sym]["2h"]}
 
         sym_feature_rows = []
+        total_sym_bars = len(sym_bars_5m)
+        t_sym_start = time.perf_counter()
 
-        for b5 in sym_bars_5m:
+        for bar_idx, b5 in enumerate(sym_bars_5m, 1):
+            if bar_idx % 25000 == 0 or bar_idx == total_sym_bars:
+                elapsed = time.perf_counter() - t_sym_start
+                bars_sec = bar_idx / elapsed if elapsed > 0 else 0
+                pct = (bar_idx / total_sym_bars) * 100
+                rem_bars = total_sym_bars - bar_idx
+                eta_min = (rem_bars / bars_sec / 60) if bars_sec > 0 else 0
+                _log_msg(
+                    f"    [{sym}] {bar_idx:,}/{total_sym_bars:,} bars ({pct:.1f}%) — {bars_sec:,.0f} bars/s — ETA {eta_min:.1f}m",
+                    log_file,
+                )
+
             ct = b5.close_time
 
             swings_1h: list[dict[str, Any]] = []
