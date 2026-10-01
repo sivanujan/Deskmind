@@ -781,10 +781,10 @@ async def run_full_train_pipeline(
         _log_msg(f"    {'Horizon':<10} {'Hypothesis MFE':>16} {'Random MFE':>14} {'Hypothesis MAE':>16} {'Random MAE':>14}", log_file)
         _log_msg("    " + "-" * 74, log_file)
         for h in (1, 4, 12, 48):
-            hyp_mfe = sum(e.mfe.get(h, 0.0) for e in es) / len(es) if es else 0.0
-            hyp_mae = sum(e.mae.get(h, 0.0) for e in es) / len(es) if es else 0.0
-            rnd_mfe = sum(b.mfe.get(h, 0.0) for b in base) / len(base) if base else 0.0
-            rnd_mae = sum(b.mae.get(h, 0.0) for b in base) / len(base) if base else 0.0
+            hyp_mfe = sum(e.mfe_r.get(h, 0.0) for e in es) / len(es) if es else 0.0
+            hyp_mae = sum(e.mae_r.get(h, 0.0) for e in es) / len(es) if es else 0.0
+            rnd_mfe = sum(b.mfe_r.get(h, 0.0) for b in base) / len(base) if base else 0.0
+            rnd_mae = sum(b.mae_r.get(h, 0.0) for b in base) / len(base) if base else 0.0
             _log_msg(f"    {h:<3} bars   {hyp_mfe:>15.2f}% {rnd_mfe:>13.2f}% {hyp_mae:>15.2f}% {rnd_mae:>13.2f}%", log_file)
 
         # Gate Checklist

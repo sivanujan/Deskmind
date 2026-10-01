@@ -28,10 +28,50 @@ class EventStudyResult:
 
 
 def calculate_event_study(
-    signal: Signal, forward_bars: Sequence[Bar]
+    signal: Signal | Sequence[Signal],
+    forward_bars: Sequence[Bar] | dict[str, Sequence[Bar]],
+    holding_bars: Sequence[int] = (1, 4, 12, 48),
+) -> Any:
+    """Calculate forward MFE, MAE in R at 1, 4, 12, 48 bars and outcome.
+
+    Supports:
+      - (signal, forward_bars) -> EventStudyResult
+      - (signals, all_bars_by_symbol, holding_bars=...) -> list[EventStudyResult]
+    """
+    if isinstance(signal, Signal):
+        return _calculate_single_event_study(signal, forward_bars, holding_bars)  # type: ignore[arg-type]
+
+    from bisect import bisect_right
+
+    signals = signal
+    bars_by_symbol: dict[str, Sequence[Bar]] = forward_bars  # type: ignore[assignment]
+    results: list[EventStudyResult] = []
+
+    open_times = {
+        sym: [b.open_time for b in bars] for sym, bars in bars_by_symbol.items()
+    }
+    max_holding = max(holding_bars) if holding_bars else 48
+
+    for sig in signals:
+        sym_bars = bars_by_symbol.get(sig.symbol, [])
+        if not sym_bars:
+            continue
+        op_list = open_times.get(sig.symbol, [])
+        idx = bisect_right(op_list, sig.timestamp)
+        fwd = sym_bars[idx : idx + max_holding]
+        if fwd:
+            res = _calculate_single_event_study(sig, fwd, holding_bars)
+            results.append(res)
+
+    return results
+
+
+def _calculate_single_event_study(
+    signal: Signal,
+    forward_bars: Sequence[Bar],
+    holding_bars: Sequence[int] = (1, 4, 12, 48),
 ) -> EventStudyResult:
-    """Calculate forward MFE, MAE in R at 1, 4, 12, 48 bars and outcome."""
-    horizons = (1, 4, 12, 48)
+    horizons = tuple(holding_bars)
     mfe_r: dict[int, float] = {}
     mae_r: dict[int, float] = {}
 
@@ -83,18 +123,19 @@ def calculate_event_study(
             mfe_r[idx] = round(max_fav / risk_per_unit, 4)
             mae_r[idx] = round(max_adv / risk_per_unit, 4)
 
-    # Fill any missing horizons if total bars < 48
+    # Fill any missing horizons if total bars < max(horizons)
     for h in horizons:
         if h not in mfe_r:
             mfe_r[h] = round(max_fav / risk_per_unit, 4)
             mae_r[h] = round(max_adv / risk_per_unit, 4)
 
+    max_h = max(horizons) if horizons else 48
     if target_or_stop_first == "target":
         final_r = signal.r_multiple
     elif target_or_stop_first == "stop":
         final_r = -1.0
     else:
-        final_r = mfe_r[48] - mae_r[48]
+        final_r = mfe_r.get(max_h, 0.0) - mae_r.get(max_h, 0.0)
 
     return EventStudyResult(
         signal=signal,
@@ -109,21 +150,32 @@ def calculate_event_study(
 
 
 def generate_matched_random_baseline(
-    signals: Sequence[Signal], all_bars_by_symbol: dict[str, Sequence[Bar]]
+    signals: Sequence[Signal],
+    all_bars_by_symbol: dict[str, Sequence[Bar]],
+    samples: int | None = None,
+    holding_bars: Sequence[int] = (1, 4, 12, 48),
 ) -> list[EventStudyResult]:
     """Generate matched random baseline (same symbol, time-of-day distribution, direction mix)."""
     random_results: list[EventStudyResult] = []
     rng = random.Random(42)  # Deterministic seed
 
-    for sig in signals:
+    if not signals:
+        return []
+
+    target_signals = (
+        [rng.choice(signals) for _ in range(samples)] if samples is not None else signals
+    )
+
+    max_holding = max(holding_bars) if holding_bars else 48
+
+    for sig in target_signals:
         sym_bars = all_bars_by_symbol.get(sig.symbol, [])
-        if len(sym_bars) < 50:
+        if len(sym_bars) < max_holding + 2:
             continue
 
-        # Pick a random bar index in sym_bars
-        rand_idx = rng.randint(0, len(sym_bars) - 50)
+        rand_idx = rng.randint(0, len(sym_bars) - max_holding - 2)
         start_bar = sym_bars[rand_idx]
-        forward_bars = sym_bars[rand_idx + 1 : rand_idx + 49]
+        forward_bars = sym_bars[rand_idx + 1 : rand_idx + 1 + max_holding]
 
         atr = abs(start_bar.high - start_bar.low) or 1.0
         rand_sig = Signal(
@@ -141,7 +193,7 @@ def generate_matched_random_baseline(
             r_multiple=2.0,
             rationale="Matched random baseline",
         )
-        res = calculate_event_study(rand_sig, forward_bars)
+        res = _calculate_single_event_study(rand_sig, forward_bars, holding_bars=holding_bars)
         random_results.append(res)
 
     return random_results
