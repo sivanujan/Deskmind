@@ -22,9 +22,21 @@ class GateCheckResult:
     positive_in_both_halves: bool  # True required
     deflated_sharpe: float
     checklist: dict[str, bool]
+    max_drawdown_pct: float = 0.0
+
+    @property
+    def verdict(self) -> str:
+        return "PASS" if self.passed else "FAIL"
+
+    @property
+    def random_baseline_pct(self) -> float:
+        return self.baseline_percentile
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["verdict"] = self.verdict
+        d["random_baseline_pct"] = self.random_baseline_pct
+        return d
 
 
 def calculate_deflated_sharpe(returns: Sequence[float], total_trials: int = 1) -> float:
@@ -60,8 +72,24 @@ def evaluate_research_gates(
     baseline_results: Sequence[EventStudyResult],
     trial_count: int = 1,
     cost_per_trade_r: float = 0.05,
+    backtest_result: Any | None = None,
 ) -> GateCheckResult:
     """Evaluate encoded research gates for TRAIN -> VALIDATION qualification."""
+    max_dd_pct = 0.0
+    if backtest_result is not None:
+        if hasattr(backtest_result, "equity_curve") and backtest_result.equity_curve:
+            peak = float(backtest_result.initial_cash)
+            for pt in backtest_result.equity_curve:
+                eq = float(pt.equity)
+                if eq > peak:
+                    peak = eq
+                elif peak > 0:
+                    dd_pct = ((peak - eq) / peak) * 100.0
+                    if dd_pct > max_dd_pct:
+                        max_dd_pct = dd_pct
+        elif hasattr(backtest_result, "max_drawdown_pct"):
+            max_dd_pct = float(backtest_result.max_drawdown_pct)
+
     trades_count = len(results)
     if trades_count == 0:
         return GateCheckResult(
@@ -82,6 +110,7 @@ def evaluate_research_gates(
                 "positive_symbols_60pct": False,
                 "both_halves_positive": False,
             },
+            max_drawdown_pct=round(max_dd_pct, 2),
         )
 
     r_multiples = [res.final_r for res in results]
@@ -140,4 +169,5 @@ def evaluate_research_gates(
         positive_in_both_halves=both_halves_pos,
         deflated_sharpe=dsr,
         checklist=checklist,
+        max_drawdown_pct=round(max_dd_pct, 2),
     )
