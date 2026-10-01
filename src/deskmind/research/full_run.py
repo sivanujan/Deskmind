@@ -799,3 +799,36 @@ async def run_full_train_pipeline(
     _log_msg("=" * 90 + "\n", log_file)
 
     return results_by_hyp
+
+
+if __name__ == "__main__":
+    import argparse
+    from deskmind.config import get_settings
+
+    parser = argparse.ArgumentParser(description="Run full research training pipeline.")
+    parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
+    parser.add_argument("--split", default="train", help="Data split: train only")
+    parser.add_argument("--start", default="2023-01-01", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end", default="2024-12-31", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--top-n", type=int, default=10, help="Top N universe symbols")
+    parser.add_argument("--output-dir", default="data/features", help="Feature store output directory")
+    parser.add_argument("--log-file", default="reports/research/train_run.log", help="Progress log file")
+    parser.add_argument("--checkpoint", default="reports/research/train_checkpoint.json", help="Checkpoint file path")
+
+    args = parser.parse_args()
+    settings = get_settings()
+
+    asyncio.run(
+        run_full_train_pipeline(
+            split=args.split,
+            start_date=args.start,
+            end_date=args.end,
+            top_n=args.top_n,
+            output_dir=args.output_dir,
+            log_file_path=args.log_file,
+            checkpoint_path=args.checkpoint,
+            data_dir=str(settings.data_dir),
+            resume=args.resume,
+        )
+    )
+
