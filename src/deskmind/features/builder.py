@@ -268,9 +268,12 @@ def build_feature_row(
     if nearest_sr:
         # Strength is on a 0-100 scale from SRZone.compute_strength()
         nearest_sr_strength: int = max(0, min(100, int(nearest_sr.get("strength", 0))))
+        touches_val = nearest_sr.get("touches", [])
+        nearest_sr_touches: int = len(touches_val) if isinstance(touches_val, list) else int(touches_val or 0)
         nearest_sr_dist_atr: float = round(min_sr_dist / atr_1h, 4)
     else:
         nearest_sr_strength = 0
+        nearest_sr_touches = 0
         nearest_sr_dist_atr = 999.0
 
     # Pattern staleness: 1h patterns expire after 12 5m bars (1 hour).
@@ -334,6 +337,7 @@ def build_feature_row(
         pdh_swept_recent=pdh_swept_recent,
         pdl_swept_recent=pdl_swept_recent,
         nearest_sr_strength=nearest_sr_strength,
+        nearest_sr_touches=nearest_sr_touches,
         nearest_sr_dist_atr=nearest_sr_dist_atr,
         pattern_recent_type=pattern_recent_type,
         pattern_recent_at_zone=pattern_recent_at_zone,

@@ -6,7 +6,7 @@ from typing import Any
 
 from deskmind.features.models import FeatureRow
 from deskmind.research.hypotheses.base import HypothesisPlugin
-from deskmind.research.hypotheses.models import Signal
+from deskmind.research.hypotheses.models import Signal, make_setup_id
 
 
 class H1DiscountOBPlugin(HypothesisPlugin):
@@ -49,7 +49,7 @@ class H1DiscountOBPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry - 1.5 * atr
             target = entry + 3.0 * atr  # 2.0R target
-            setup_id = f"{sym}:H1:{ev_confirmed}:bullish"
+            setup_id = make_setup_id("H1", sym, ev_confirmed, "bullish")
             return Signal(
                 hypothesis_id=self.hypothesis_id,
                 symbol=sym,
@@ -73,7 +73,7 @@ class H1DiscountOBPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry + 1.5 * atr
             target = entry - 3.0 * atr  # 2.0R target
-            setup_id = f"{sym}:H1:{ev_confirmed}:bearish"
+            setup_id = make_setup_id("H1", sym, ev_confirmed, "bearish")
             return Signal(
                 hypothesis_id=self.hypothesis_id,
                 symbol=sym,

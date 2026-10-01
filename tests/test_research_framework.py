@@ -142,3 +142,162 @@ async def test_research_backtest_uses_real_engine(tmp_path) -> None:
     with pytest.raises(PermissionError, match="locked"):
         SplitGuard.validate_split_request(split="test", hypothesis_id="H1_v1.0.0")
 
+
+def test_engine_raw_signals_equals_funnel_unique_setups_all_hypotheses() -> None:
+    """Item 1: Engine raw signals must equal funnel unique setups for every hypothesis.
+
+    Repeated bars of the same setup must be ignored by the strategy plugin, ensuring
+    one intent per setup_id using the exact shared setup_id implementation.
+    """
+    from decimal import Decimal
+    from deskmind.research.hypotheses.h1_discount_ob import H1DiscountOBPlugin
+    from deskmind.research.hypotheses.h2_sweep_reversal import H2SweepReversalPlugin
+    from deskmind.research.hypotheses.h3_silver_bullet import H3SilverBulletPlugin
+    from deskmind.research.hypotheses.h4_breakout_retest import H4BreakoutRetestPlugin
+    from deskmind.research.hypotheses.h5_pd_sweep import H5PDSweepPlugin
+    from deskmind.strategies.base import BarSnapshot, StrategyContext
+    from deskmind.strategies.hypothesis_base import (
+        H1DiscountOBStrategy,
+        H2SweepReversalStrategy,
+        H3SilverBulletStrategy,
+        H4BreakoutRetestStrategy,
+        H5PDSweepStrategy,
+    )
+
+    hyp_pairs = [
+        (H1DiscountOBPlugin(), H1DiscountOBStrategy),
+        (H2SweepReversalPlugin(), H2SweepReversalStrategy),
+        (H3SilverBulletPlugin(), H3SilverBulletStrategy),
+        (H4BreakoutRetestPlugin(), H4BreakoutRetestStrategy),
+        (H5PDSweepPlugin(), H5PDSweepStrategy),
+    ]
+
+    # Generate a series of 24 consecutive bars across 2 distinct hour windows:
+    # Setup A on bars 0..11 (hour 0), Setup B on bars 12..23 (hour 1)
+    base_ts = 1672531200000
+    rows: list[dict[str, Any]] = []
+
+    for i in range(24):
+        t_open = base_ts + i * 300_000
+        t_close = t_open + 299_999
+        # Bars 0..11: Setup A (confirmed at base_ts, bars_ago = i)
+        # Bars 12..23: Setup B (confirmed at base_ts + 12 * 300_000, bars_ago = i - 12)
+        if i < 12:
+            conf_time = base_ts
+            bars_ago = i
+        else:
+            conf_time = base_ts + 12 * 300_000
+            bars_ago = i - 12
+
+        r = {
+            "symbol": "BTCUSDT",
+            "timestamp": t_close,
+            "htf_trend_1h": "bullish",
+            "pd_zone_1h": "discount",
+            "nearest_fvg_dist_atr": 0.5,
+            "nearest_fvg_size_atr": 1.0,
+            "nearest_fvg_displacement": True,
+            "nearest_ob_dist_atr": 0.5,
+            "nearest_ob_state": "fresh",
+            "last_event_5m": "CHoCH_up",
+            "last_event_5m_confirmed_at": conf_time,
+            "killzone": "london_open",
+            "strong_pool_swept_side": "SSL",
+            "strong_pool_swept_bars_ago": 2,
+            "silver_bullet_active": True,
+            "nearest_sr_touches": 3,
+            "nearest_sr_strength": 50,
+            "nearest_sr_dist_atr": 0.2,
+            "pattern_recent_at_zone": True,
+            "pattern_recent_with_trend": "aligned",
+            "pattern_recent_bars_ago": bars_ago,
+            "pdl_swept_recent": True,
+            "pdh_swept_recent": False,
+            "atr_pct": 0.01,
+        }
+        rows.append(r)
+
+    for plugin, strat_cls in hyp_pairs:
+        # 1. Funnel unique setups
+        unique_setups = set()
+        for r in rows:
+            sig = plugin.evaluate(r, current_close=25000.0)
+            if sig:
+                unique_setups.add(sig.setup_id)
+
+        # 2. Strategy on_bar intents
+        strat = strat_cls(params={"feature_lookup": {f"BTCUSDT:{r['timestamp']}": r for r in rows}})
+        emitted_intents = []
+        for r in rows:
+            t_close = r["timestamp"]
+            t_open = ((t_close - 1) // 300_000) * 300_000
+            ctx = StrategyContext(
+                symbol="BTCUSDT",
+                as_of_ms=t_close,
+                current_bar=BarSnapshot(
+                    open_time=t_open,
+                    close_time=t_close,
+                    open=Decimal("25000"),
+                    high=Decimal("25100"),
+                    low=Decimal("24900"),
+                    close=Decimal("25000"),
+                    volume=Decimal("100"),
+                ),
+                agent_report=None,
+                account=None,
+            )
+            intents = strat.on_bar({"BTCUSDT": ctx})
+            emitted_intents.extend([it for it in intents if it.action in ("open_long", "open_short")])
+
+        # Assert engine raw signals == funnel unique setups
+        assert len(emitted_intents) == len(unique_setups), (
+            f"Strategy {strat.name} emitted {len(emitted_intents)} intents but funnel found "
+            f"{len(unique_setups)} unique setups!"
+        )
+        assert len(emitted_intents) == 2, f"Expected exactly 2 unique setups, got {len(emitted_intents)}"
+
+
+def test_get_current_git_commit() -> None:
+    from deskmind.research.full_run import get_current_git_commit
+
+    commit = get_current_git_commit()
+    assert isinstance(commit, str)
+    assert len(commit) == 40
+    assert all(c in "0123456789abcdefABCDEF" for c in commit)
+
+
+def test_checkpoint_commit_guard_refuses_different_commit(tmp_path) -> None:
+    from deskmind.research.full_run import _load_checkpoint, _save_checkpoint, run_full_train_pipeline
+
+    cp_file = tmp_path / "checkpoint.json"
+    fake_checkpoint = {
+        "git_commit": "0000000000000000000000000000000000000000",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "split": "train",
+        "start_date": "2023-01-01",
+        "end_date": "2024-12-31",
+        "top_n": 10,
+        "phases": {},
+    }
+    _save_checkpoint(fake_checkpoint, cp_file)
+
+    loaded = _load_checkpoint(cp_file)
+    assert loaded is not None
+    assert loaded["git_commit"] == "0000000000000000000000000000000000000000"
+
+    with pytest.raises(RuntimeError, match="Refusing to resume train run across different code versions"):
+        import asyncio
+        asyncio.run(
+            run_full_train_pipeline(
+                split="train",
+                start_date="2023-01-01",
+                end_date="2024-12-31",
+                top_n=10,
+                checkpoint_path=str(cp_file),
+                log_file_path=str(tmp_path / "run.log"),
+                resume=True,
+            )
+        )
+
+

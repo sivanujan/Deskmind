@@ -37,6 +37,7 @@ All feature calculations use strictly historical or current $T$ closed bar data 
 | `pdh_swept_recent` | ICT Time | `bool` | True if PDH was swept within the last 12 5m bars |
 | `pdl_swept_recent` | ICT Time | `bool` | True if PDL was swept within the last 12 5m bars |
 | `nearest_sr_strength` | Price Action | `int32` | Strength score of nearest S/R zone (0 to 100 scale from `SRZone.compute_strength()`) |
+| `nearest_sr_touches` | Price Action | `int32` | Distinct touch candles count on the nearest active S/R zone (0 if none) |
 | `nearest_sr_dist_atr` | Price Action | `float64` | Distance to nearest S/R zone boundary in 1h ATR units: `min(|close - top|, |close - bot|) / atr` (0.0 if inside) |
 | `pattern_recent_type` | Price Action | `string` | Recent candle pattern (`hammer`, `shooting_star`, `engulfing_bull`, etc.). Expired after 12 bars (1h) |
 | `pattern_recent_at_zone` | Price Action | `bool` | True if recent unexpired pattern occurred at an active S/R zone |
@@ -45,6 +46,13 @@ All feature calculations use strictly historical or current $T$ closed bar data 
 | `weekend_flag` | System | `bool` | True if UTC bar close falls on Saturday or Sunday |
 | `atr_pct` | System | `float64` | 1h ATR divided by current close price (volatility percentage) |
 | `universe_member` | System | `bool` | True if symbol was an active universe constituent at timestamp $T$ |
+
+---
+
+## Known Limitations
+
+1. **`nearest_sr_strength` Spread**: In the current implementation of `SRZone.compute_strength()`, approximately 99.3% of active zones fall into the narrow range 40–59 (2–3 touches with typical recency), providing almost no discriminatory power. A comprehensive redesign of the composite strength model is required in a future release. For structural zone filtering, use `nearest_sr_touches` instead.
+2. **HTF Trend "Ranging" Transition**: `htf_trend_1h` only transitions to `"ranging"` after `max_break_idle_bars = 100` consecutive 1h bars without a structural break. During tight consolidation or whipsaws with frequent counter-swings under 100 bars, it maintains the prior directional bias and does not capture immediate market chop.
 
 ---
 

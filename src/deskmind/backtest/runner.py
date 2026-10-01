@@ -39,7 +39,13 @@ from deskmind.risk.breakers import CircuitBreakerTracker
 from deskmind.risk.config import RiskConfig
 from deskmind.risk.sizer import RiskManagerSizer
 from deskmind.strategies.base import BaseStrategy
-from deskmind.strategies.h1_discount_ob import H1DiscountOBStrategy
+from deskmind.strategies.hypothesis_base import (
+    H1DiscountOBStrategy,
+    H2SweepReversalStrategy,
+    H3SilverBulletStrategy,
+    H4BreakoutRetestStrategy,
+    H5PDSweepStrategy,
+)
 from deskmind.strategies.trend_follow_v1 import TrendFollowV1
 from deskmind.universe.history import MembershipHistory
 
@@ -48,6 +54,10 @@ logger = logging.getLogger("deskmind.backtest.runner")
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     "trend_follow_v1": TrendFollowV1,
     "h1_discount_ob": H1DiscountOBStrategy,
+    "h2_sweep_reversal": H2SweepReversalStrategy,
+    "h3_silver_bullet": H3SilverBulletStrategy,
+    "h4_breakout_retest": H4BreakoutRetestStrategy,
+    "h5_pd_sweep": H5PDSweepStrategy,
 }
 
 

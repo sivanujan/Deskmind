@@ -6,7 +6,7 @@ from typing import Any
 
 from deskmind.features.models import FeatureRow
 from deskmind.research.hypotheses.base import HypothesisPlugin
-from deskmind.research.hypotheses.models import Signal
+from deskmind.research.hypotheses.models import Signal, make_setup_id
 
 
 class H5PDSweepPlugin(HypothesisPlugin):
@@ -47,7 +47,7 @@ class H5PDSweepPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry - 1.0 * atr
             target = entry + 2.0 * atr
-            setup_id = f"{sym}:H5:{ev_confirmed}:bullish"
+            setup_id = make_setup_id("H5", sym, ev_confirmed, "bullish")
             return Signal(
                 hypothesis_id=self.hypothesis_id,
                 symbol=sym,
@@ -66,7 +66,7 @@ class H5PDSweepPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry + 1.0 * atr
             target = entry - 2.0 * atr
-            setup_id = f"{sym}:H5:{ev_confirmed}:bearish"
+            setup_id = make_setup_id("H5", sym, ev_confirmed, "bearish")
             return Signal(
                 hypothesis_id=self.hypothesis_id,
                 symbol=sym,

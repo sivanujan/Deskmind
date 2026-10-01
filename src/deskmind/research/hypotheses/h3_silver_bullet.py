@@ -6,7 +6,7 @@ from typing import Any
 
 from deskmind.features.models import FeatureRow
 from deskmind.research.hypotheses.base import HypothesisPlugin
-from deskmind.research.hypotheses.models import Signal
+from deskmind.research.hypotheses.models import Signal, make_setup_id
 
 
 class H3SilverBulletPlugin(HypothesisPlugin):
@@ -48,7 +48,7 @@ class H3SilverBulletPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry - 1.0 * atr
             target = entry + 2.0 * atr  # 2.0R target
-            setup_id = f"{sym}:H3:{window_bucket}:bullish"
+            setup_id = make_setup_id("H3", sym, window_bucket, "bullish")
             return Signal(
                 hypothesis_id=self.hypothesis_id,
                 symbol=sym,
@@ -66,7 +66,7 @@ class H3SilverBulletPlugin(HypothesisPlugin):
             entry = current_close
             stop = entry + 1.0 * atr
             target = entry - 2.0 * atr
-            setup_id = f"{sym}:H3:{window_bucket}:bearish"
+            setup_id = make_setup_id("H3", sym, window_bucket, "bearish")
             return Signal(
                 hypothesis_id=self.hypothesis_id,
                 symbol=sym,

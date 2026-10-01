@@ -21,3 +21,12 @@ class Signal:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def make_setup_id(hypothesis_code: str, symbol: str, anchor_id_or_time: Any, direction: str) -> str:
+    """Canonical setup_id formula shared by all hypotheses and backtest strategies:
+
+    {symbol}:{hypothesis_code}:{anchor_id_or_time}:{direction}
+    Ensures exact 1-to-1 setup-level deduplication between research funnel and backtest engine.
+    """
+    return f"{symbol}:{hypothesis_code}:{anchor_id_or_time}:{direction}"

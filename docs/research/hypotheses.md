@@ -49,16 +49,34 @@
 
 ---
 
-### H4: Support/Resistance Breakout-Retest
+### H4: Support/Resistance Breakout-Retest (v1.0.0 - VOID)
 * **Id**: `H4_v1.0.0`
-* **Version**: `1.0.0`
+* **Status**: **VOID (Spec/Scale Mismatch)**
+* **Audit Note**: Originally specified `strength >= 2` assuming a touch counter, but `nearest_sr_strength` in Price Action engine is a composite 0–100 score (`SRZone.compute_strength()`) where 99.3% of zones score 40–59. This made the filter trivially true for all zones. Counted as Trial #1 for H4 in Research Registry.
+* **Logic**: Breakout of strength $\ge 2$ S/R zone in direction of 1h trend followed by retest holding zone boundary.
+
+---
+
+### H4: Support/Resistance Breakout-Retest (v1.1.0 - Pre-registered)
+* **Id**: `H4_v1.1.0`
+* **Version**: `1.1.0`
+* **Status**: **ACTIVE / PRE-REGISTERED** (Trial #2 for H4)
 * **Timeframe**: 1h S/R zone -> 5m retest close
 * **Logic**:
-  * Price Action breakout of strength $\ge 2$ S/R zone in direction of 1h trend (`bo_min_atr >= 1.0`), followed by a successful retest that holds the zone boundary.
+  * Price Action breakout of a confirmed horizontal S/R zone with **`nearest_sr_touches >= 3`** (at least 3 distinct touch candles on the 1h timeframe).
+  * Breakout occurs in the direction of the 1h trend.
+  * Price retests the broken S/R zone boundary (`nearest_sr_dist_atr <= 0.5`) and prints an aligned candlestick pattern (`pattern_recent_at_zone == True` and `pattern_recent_with_trend == "aligned"` within 12 bars).
 * **Entry**: Retest confirmation candle close.
 * **Stop**: Beyond broken S/R zone edge $+ 0.2 \times \text{ATR}_{1h}$.
 * **Target**: Fixed $2.0 R$.
-* **Rationale**: Multi-touch horizontal support/resistance zones converted to opposite polarity offer reliable retest support during trending regimes.
+* **Rationale**: S/R zones with 3+ distinct touches demonstrate proven institutional memory; retests of these boundaries during trending conditions offer asymmetric continuation entries.
+
+---
+
+## Known Research Limitations
+
+1. **`nearest_sr_strength` Scale & Spread**: The composite strength metric `nearest_sr_strength` clusters tightly between 40 and 59 (99.3% of bars) and lacks discriminative power. It is scheduled for an architectural overhaul in Phase 11. Hypotheses must use structural discrete touches (`nearest_sr_touches`) rather than composite strength.
+2. **HTF Trend "Ranging" Transition**: `htf_trend_1h` only transitions to `"ranging"` after `max_break_idle_bars = 100` consecutive 1h bars without a structural swing break. During tight consolidation or chop under 100 bars, it retains the directional bias of the previous swing break.
 
 ---
 

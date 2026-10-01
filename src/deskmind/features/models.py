@@ -35,6 +35,7 @@ class FeatureRow:
     pdh_swept_recent: bool
     pdl_swept_recent: bool
     nearest_sr_strength: int
+    nearest_sr_touches: int
     nearest_sr_dist_atr: float
     pattern_recent_type: str
     pattern_recent_at_zone: bool

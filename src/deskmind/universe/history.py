@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import statistics
 from collections.abc import Iterable
@@ -218,10 +219,21 @@ async def build_history(
     # Far enough back to know the listing age at `start` (watch_only vs tradeable).
     fetch_from = start - timedelta(days=cfg.min_listing_age_days + cfg.lookback_days + 1)
     volumes: dict[str, dict[date, float]] = {}
-    for i, sym in enumerate(symbols):
-        volumes[sym] = await fetch_daily_volumes(vision, sym, fetch_from, end)
-        if i % 50 == 0:
-            log.info("universe_history_progress", done=i, total=len(symbols))
+    sem = asyncio.Semaphore(16)
+    done_count = 0
+
+    async def _fetch_one(s: str) -> tuple[str, dict[date, float]]:
+        nonlocal done_count
+        async with sem:
+            v = await fetch_daily_volumes(vision, s, fetch_from, end)
+            done_count += 1
+            if done_count % 50 == 0 or done_count == len(symbols):
+                log.info("universe_history_progress", done=done_count, total=len(symbols))
+            return s, v
+
+    batch_results = await asyncio.gather(*[_fetch_one(s) for s in symbols])
+    for s, v in batch_results:
+        volumes[s] = v
     info = await fapi.get_json("/fapi/v1/exchangeInfo", weight=1)
     trading = {
         s["symbol"]

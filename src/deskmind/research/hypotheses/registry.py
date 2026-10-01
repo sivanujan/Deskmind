@@ -12,16 +12,28 @@ from deskmind.research.hypotheses.h4_breakout_retest import H4BreakoutRetestPlug
 from deskmind.research.hypotheses.h5_pd_sweep import H5PDSweepPlugin
 
 
+VOID_HYPOTHESES: dict[str, str] = {
+    "H4_v1.0.0": "VOID (Spec/Scale Mismatch): nearest_sr_strength >= 2 was trivially true (99.3% of zones score 40-59). Counted as Trial #1; superseded by pre-registered H4_v1.1.0 (nearest_sr_touches >= 3).",
+}
+
+
 class HypothesisRegistry:
     def __init__(self) -> None:
         self._plugins: dict[str, HypothesisPlugin] = {
             "H1_v1.0.0": H1DiscountOBPlugin(),
             "H2_v1.0.0": H2SweepReversalPlugin(),
             "H3_v1.0.0": H3SilverBulletPlugin(),
-            "H4_v1.0.0": H4BreakoutRetestPlugin(),
+            "H4_v1.1.0": H4BreakoutRetestPlugin(),
             "H5_v1.0.0": H5PDSweepPlugin(),
         }
-        self._trial_counts: dict[str, int] = {hid: 0 for hid in self._plugins}
+        self._trial_counts: dict[str, int] = {
+            "H1_v1.0.0": 1,
+            "H2_v1.0.0": 1,
+            "H3_v1.0.0": 1,
+            "H4_v1.0.0": 1,  # Trial #1 (VOID)
+            "H4_v1.1.0": 1,  # Trial #2 (ACTIVE / PRE-REGISTERED)
+            "H5_v1.0.0": 1,
+        }
 
     def list_hypotheses(self) -> Sequence[HypothesisPlugin]:
         return list(self._plugins.values())

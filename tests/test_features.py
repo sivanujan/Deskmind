@@ -81,7 +81,7 @@ def _mock_time_state(**kwargs) -> dict:
 
 
 def _build_row(ict_time_state=None, ict_smc_state_1h=None, price_action_state_1h=None,
-               ts_ms: int = 1704067200000) -> dict:
+               ts_ms: int = 1704067200000, current_close: float = 65000.0) -> dict:
     """Helper: build a feature row from given agent states."""
     row = build_feature_row(
         symbol="BTC",
@@ -96,7 +96,7 @@ def _build_row(ict_time_state=None, ict_smc_state_1h=None, price_action_state_1h
         ict_time_state=ict_time_state,
         price_action_state_1h=price_action_state_1h,
         price_action_state_5m=None,
-        current_close=65000.0,
+        current_close=current_close,
     )
     return row.as_dict()
 
@@ -500,6 +500,32 @@ def test_nearest_sr_strength_scale() -> None:
     row = _build_row(price_action_state_1h=pa_state, ts_ms=ts)
     assert row["nearest_sr_strength"] == 45, f"Expected 45, got {row['nearest_sr_strength']}"
     assert 0 <= row["nearest_sr_strength"] <= 100
+
+
+def test_nearest_sr_touches_feature() -> None:
+    """Item 2: nearest_sr_touches must record the distinct touch count of the nearest S/R zone."""
+    ts = 1704067200000
+    pa_state = _mock_pa_state(
+        active_zones=[
+            {
+                "id": "sr_3touches",
+                "side": "support",
+                "top": 98.0,
+                "bottom": 96.0,
+                "mid": 97.0,
+                "state": "active",
+                "strength": 50,
+                "touches": [ts - 15000, ts - 10000, ts - 5000],
+            }
+        ]
+    )
+    row = _build_row(price_action_state_1h=pa_state, ts_ms=ts, current_close=99.0)
+    assert row["nearest_sr_touches"] == 3, f"Expected 3 touches, got {row['nearest_sr_touches']}"
+
+    # No active zones -> 0 touches
+    empty_pa = _mock_pa_state(active_zones=[])
+    row_empty = _build_row(price_action_state_1h=empty_pa, ts_ms=ts, current_close=99.0)
+    assert row_empty["nearest_sr_touches"] == 0
 
 
 

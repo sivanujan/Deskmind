@@ -34,6 +34,11 @@ ALLOWED_BINANCE_FUTURES_HOSTS: tuple[str, ...] = (
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash"
 # The only place symbols are listed; everything else takes `symbol` as a parameter.
 DEFAULT_DATA_SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
+# Top candidates considered during multi-year point-in-time liquidity universe ranking
+UNIVERSE_HISTORICAL_CANDIDATES = (
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "MATICUSDT", "LTCUSDT", "LINKUSDT",
+)
 # Symbols the trade service may open NEW positions on (also needs universe state `tradeable`).
 DEFAULT_TRADE_SYMBOLS = ("BTCUSDT",)
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,20}USDT$")

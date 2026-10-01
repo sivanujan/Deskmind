@@ -1462,7 +1462,7 @@ def universe_backfill_history_cmd(
     last = date.fromisoformat(end) if end else datetime.now(UTC).date() - timedelta(days=1)
 
     async def go() -> None:
-        vision = RateLimitedClient(VISION_BASE_URL, weight_limit=None, max_concurrency=4)
+        vision = RateLimitedClient(VISION_BASE_URL, weight_limit=None, max_concurrency=16)
         fapi = RateLimitedClient(settings.binance_market_data_url, max_concurrency=2)
         async with vision, fapi:
             rows, delisted = await build_history(vision, fapi, first, last, cfg)
@@ -1528,6 +1528,45 @@ def research_pilot_cmd(
             end_date=end,
             output_dir=output_dir,
             data_dir=str(settings.data_dir),
+        )
+    )
+
+
+@research_app.command("train-run")
+def research_train_run_cmd(
+    top_n: int = typer.Option(10, "--top-n", help="Top N point-in-time universe symbols"),
+    split: str = typer.Option("train", "--split", help="Data split: train only"),
+    start: str = typer.Option("2023-01-01", "--start", help="Start date (YYYY-MM-DD)"),
+    end: str = typer.Option("2024-12-31", "--end", help="End date (YYYY-MM-DD)"),
+    output_dir: str = typer.Option(
+        "data/features", "--output-dir", help="Feature store output directory"
+    ),
+    log_file: str = typer.Option(
+        "reports/research/train_run.log", "--log-file", help="Progress log file"
+    ),
+    checkpoint_file: str = typer.Option(
+        "reports/research/train_checkpoint.json", "--checkpoint", help="Checkpoint file path"
+    ),
+    resume: bool = typer.Option(
+        False, "--resume", help="Resume from last checkpoint if git commit matches, skipping verified completed work"
+    ),
+) -> None:
+    """Run full research training pipeline on TRAIN split across point-in-time universe."""
+    from deskmind.research.full_run import run_full_train_pipeline
+
+    settings = get_settings()
+
+    asyncio.run(
+        run_full_train_pipeline(
+            split=split,
+            start_date=start,
+            end_date=end,
+            top_n=top_n,
+            output_dir=output_dir,
+            log_file_path=log_file,
+            checkpoint_path=checkpoint_file,
+            data_dir=str(settings.data_dir),
+            resume=resume,
         )
     )
 
