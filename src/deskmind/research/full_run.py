@@ -13,6 +13,7 @@ from decimal import Decimal
 import json
 import logging
 from pathlib import Path
+import pickle
 import subprocess
 import time
 from typing import Any
@@ -639,6 +640,18 @@ async def run_full_train_pipeline(
     for p in plugins:
         hid = p.hypothesis_id
         strat_name = strategy_names[hid]
+        cache_file = Path("reports/research") / f"cache_{hid}.pkl"
+        if resume and cache_file.exists():
+            try:
+                with open(cache_file, "rb") as f:
+                    cached_data = pickle.load(f)
+                cached_data["plugin"] = p
+                results_by_hyp[hid] = cached_data
+                _log_msg(f"\n  [{hid}] Loaded cached backtest results from {cache_file} -> SKIPPED.", log_file)
+                continue
+            except Exception as e:
+                _log_msg(f"  [{hid}] Could not load cache ({e}), re-running...", log_file)
+
         _log_msg(f"\n--- Running BacktestEngine for {hid} ({strat_name}) [SHADOW & ENFORCED] ---", log_file)
 
         # 1. SHADOW Run: circuit breakers observational, strategy evaluated over full TRAIN period
@@ -702,6 +715,13 @@ async def run_full_train_pipeline(
             "deflated_sharpe": float(gate_shadow.deflated_sharpe),
         }
         _save_checkpoint(checkpoint, checkpoint_file)
+        try:
+            dump_data = {k: v for k, v in results_by_hyp[hid].items() if k != "plugin"}
+            with open(cache_file, "wb") as f:
+                pickle.dump(dump_data, f)
+        except Exception as e:
+            logger.warning("Could not cache backtest results for %s: %s", hid, e)
+
         _log_msg(
             f"  {hid} Engine: Shadow {len(eng_shadow.trades)} trades, Enforced {len(eng_enforced.trades)} trades, Gate: {gate_shadow.verdict} [Checkpoint saved]",
             log_file,
@@ -877,13 +897,14 @@ async def run_full_train_pipeline(
                 sym_pnls[t.symbol] = sym_pnls.get(t.symbol, 0.0) + float(t.pnl)
             best_sym, best_sym_pnl = max(sym_pnls.items(), key=lambda kv: kv[1])
             trades_ex_sym = [t for t in eng_sh.trades if t.symbol != best_sym]
-            rob_sym = _calc_robustness_view(trades_ex_sym, float(eng_sh.initial_capital))
+            init_cash = float(getattr(eng_sh, "initial_cash", 10000.0))
+            rob_sym = _calc_robustness_view(trades_ex_sym, init_cash)
 
             trades_sorted_pnl = sorted(eng_sh.trades, key=lambda t: float(t.pnl), reverse=True)
             top5_trades = trades_sorted_pnl[:5]
             top5_pnl = sum(float(t.pnl) for t in top5_trades)
             trades_ex_top5 = trades_sorted_pnl[5:]
-            rob_top5 = _calc_robustness_view(trades_ex_top5, float(eng_sh.initial_capital))
+            rob_top5 = _calc_robustness_view(trades_ex_top5, init_cash)
 
             _log_msg(f"    - Robustness 1: Excluding Single Best Symbol ({best_sym}, Net PnL: ${best_sym_pnl:+,.2f}):", log_file)
             _log_msg(f"        Trades: {rob_sym['trades']:,} | Win Rate: {rob_sym['win_rate']:.1f}% | Gross: {rob_sym['gross_exp']:+.3f}R | Cost: {rob_sym['cost_r']:.3f}R | Net: {rob_sym['net_exp']:+.3f}R | Net PnL: ${rob_sym['tot_pnl']:+,.2f} | Max DD: {rob_sym['max_dd']:.2f}%", log_file)
