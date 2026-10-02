@@ -478,3 +478,125 @@ def test_matched_random_baseline_properties() -> None:
         assert tod_candidate == tod_original
 
 
+def test_accounting_invariants_pass_and_reconciliation() -> None:
+    """Verify accounting invariants pass on valid trades and reconcile to the cent."""
+    from decimal import Decimal
+    from deskmind.backtest.engine import Trade
+    from deskmind.research.gates import check_accounting_invariants
+
+    trades = [
+        # Win trade: +2R target
+        Trade(
+            id="t1",
+            symbol="BTCUSDT",
+            side="long",
+            entry_time_ms=1680000000000,
+            entry_price=Decimal("20000.0"),
+            exit_time_ms=1680003600000,
+            exit_price=Decimal("20400.0"),
+            qty=Decimal("0.5"),
+            pnl=Decimal("199.0"),  # gross 200 - fee 1.0 = 199.0
+            pnl_pct=Decimal("1.99"),
+            r_multiple=Decimal("1.99"),
+            exit_reason="take_profit",
+            fees_paid=Decimal("1.0"),
+            funding_paid=Decimal("0.0"),
+            slippage_paid=Decimal("0.0"),
+            holding_time_minutes=60,
+            spanned_gap=False,
+            initial_risk=Decimal("100.0"),
+        ),
+        # Loss trade: -1R stop
+        Trade(
+            id="t2",
+            symbol="BTCUSDT",
+            side="long",
+            entry_time_ms=1680007200000,
+            entry_price=Decimal("20000.0"),
+            exit_time_ms=1680010800000,
+            exit_price=Decimal("19800.0"),
+            qty=Decimal("0.5"),
+            pnl=Decimal("-101.0"),  # gross -100 - fee 1.0 = -101.0
+            pnl_pct=Decimal("-1.01"),
+            r_multiple=Decimal("-1.01"),
+            exit_reason="stop_loss",
+            fees_paid=Decimal("1.0"),
+            funding_paid=Decimal("0.0"),
+            slippage_paid=Decimal("0.0"),
+            holding_time_minutes=60,
+            spanned_gap=False,
+            initial_risk=Decimal("100.0"),
+        ),
+    ]
+
+    # Initial cash: 10,000, Total net: 199 - 101 = +98.0 -> final cash: 10,098.0
+    res = check_accounting_invariants(trades, initial_cash=10_000.0, final_cash=10_098.0)
+    assert res.passed is True
+    assert res.per_trade_gross_bounds is True
+    assert res.per_trade_cost_bound is True
+    assert res.run_gross_expectancy_reconciled is True
+    assert res.net_reconciled_to_cent is True
+    assert res.equity_reconciled_to_cent is True
+    assert len(res.violations) == 0
+
+
+def test_accounting_invariants_fail_on_corrupted_numbers() -> None:
+    """Verify invariants FAIL when gross R bounds or cost limits are violated."""
+    from decimal import Decimal
+    from deskmind.backtest.engine import Trade
+    from deskmind.research.gates import check_accounting_invariants
+
+    # 1. Gross R bound violation: trade loses -50R (like the unpatched DOGE bug)
+    corrupted_trade_gross = Trade(
+        id="t_bad_gross",
+        symbol="DOGEUSDT",
+        side="long",
+        entry_time_ms=1680000000000,
+        entry_price=Decimal("0.20"),
+        exit_time_ms=1680003600000,
+        exit_price=Decimal("0.10"),
+        qty=Decimal("50000.0"),
+        pnl=Decimal("-5005.0"),
+        pnl_pct=Decimal("-50.0"),
+        r_multiple=Decimal("-50.05"),
+        exit_reason="stop_loss",
+        fees_paid=Decimal("5.0"),
+        funding_paid=Decimal("0.0"),
+        slippage_paid=Decimal("5000.0"),
+        holding_time_minutes=60,
+        spanned_gap=False,
+        initial_risk=Decimal("100.0"),
+    )
+    res_gross = check_accounting_invariants([corrupted_trade_gross], initial_cash=100_000.0, final_cash=94_995.0)
+    assert res_gross.passed is False
+    assert res_gross.per_trade_gross_bounds is False
+    assert any("outside bounds" in v for v in res_gross.violations)
+
+    # 2. Cost R bound violation: cost > 0.50R
+    corrupted_trade_cost = Trade(
+        id="t_bad_cost",
+        symbol="BTCUSDT",
+        side="long",
+        entry_time_ms=1680000000000,
+        entry_price=Decimal("20000.0"),
+        exit_time_ms=1680003600000,
+        exit_price=Decimal("20010.0"),
+        qty=Decimal("0.5"),
+        pnl=Decimal("-55.0"),
+        pnl_pct=Decimal("-0.55"),
+        r_multiple=Decimal("-0.55"),
+        exit_reason="manual_close",
+        fees_paid=Decimal("60.0"),  # 0.60R cost!
+        funding_paid=Decimal("0.0"),
+        slippage_paid=Decimal("0.0"),
+        holding_time_minutes=60,
+        spanned_gap=False,
+        initial_risk=Decimal("100.0"),
+    )
+    res_cost = check_accounting_invariants([corrupted_trade_cost], initial_cash=100_000.0, final_cash=99_945.0)
+    assert res_cost.passed is False
+    assert res_cost.per_trade_cost_bound is False
+    assert any("exceeds maximum allowed 0.50R" in v for v in res_cost.violations)
+
+
+

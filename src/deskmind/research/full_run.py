@@ -752,20 +752,41 @@ async def run_full_train_pipeline(
             tc = len(eng.trades)
             w = [t for t in eng.trades if t.pnl > Decimal("0")]
             wr = (len(w) / tc * 100) if tc > 0 else 0.0
-            r_vals = [float(t.r_multiple) for t in eng.trades]
-            f_r = [
-                float(t.fees_paid + t.slippage_paid + t.funding_paid) / (float(t.initial_risk) if float(t.initial_risk) > 0 else 100.0)
-                for t in eng.trades
-            ]
-            c_r = (sum(f_r) / len(f_r)) if f_r else 0.0
-            n_r = (sum(r_vals) / len(r_vals)) if r_vals else 0.0
-            g_r = n_r + c_r
+
+            gross_rs: list[float] = []
+            cost_rs: list[float] = []
+            net_rs: list[float] = []
+            pnls: list[float] = []
+
+            for t in eng.trades:
+                init_risk = float(t.initial_risk) if float(t.initial_risk) > 0 else 100.0
+                if t.side == "long":
+                    gross_pnl = float((t.exit_price - t.entry_price) * t.qty)
+                else:
+                    gross_pnl = float((t.entry_price - t.exit_price) * t.qty)
+
+                gross_r = gross_pnl / init_risk
+                cost_usd = float(t.fees_paid + t.funding_paid)
+                cost_r = cost_usd / init_risk
+                net_pnl = float(t.pnl)
+                net_r = net_pnl / init_risk
+
+                gross_rs.append(gross_r)
+                cost_rs.append(cost_r)
+                net_rs.append(net_r)
+                pnls.append(net_pnl)
+
+            g_r = (sum(gross_rs) / tc) if tc > 0 else 0.0
+            c_r = (sum(cost_rs) / tc) if tc > 0 else 0.0
+            n_r = (sum(net_rs) / tc) if tc > 0 else 0.0
+
             return {
                 "trades": tc,
                 "win_rate": wr,
                 "gross_exp": g_r,
                 "cost_r": c_r,
                 "net_exp": n_r,
+                "tot_pnl": sum(pnls),
             }
 
         st_sh = _calc_stats(eng_sh)
@@ -782,6 +803,7 @@ async def run_full_train_pipeline(
         _log_msg(f"    Gross Expectancy          : {st_sh['gross_exp']:+.3f}R", log_file)
         _log_msg(f"    Frictional Cost per Trade : {st_sh['cost_r']:.3f}R", log_file)
         _log_msg(f"    Net Expectancy            : {st_sh['net_exp']:+.3f}R", log_file)
+        _log_msg(f"    Net PnL ($)               : ${st_sh['tot_pnl']:+,.2f}", log_file)
         _log_msg(f"    Max Drawdown              : {float(gate_sh.max_drawdown_pct):.2f}%", log_file)
 
         _log_msg("\n  [B] ENFORCED VIEW (Live-like Risk — Circuit Breakers Active):", log_file)
@@ -790,7 +812,86 @@ async def run_full_train_pipeline(
         _log_msg(f"    Gross Expectancy          : {st_enf['gross_exp']:+.3f}R", log_file)
         _log_msg(f"    Frictional Cost per Trade : {st_enf['cost_r']:.3f}R", log_file)
         _log_msg(f"    Net Expectancy            : {st_enf['net_exp']:+.3f}R", log_file)
+        _log_msg(f"    Net PnL ($)               : ${st_enf['tot_pnl']:+,.2f}", log_file)
         _log_msg(f"    Max Drawdown              : {float(gate_enf.max_drawdown_pct):.2f}%", log_file)
+
+        # Accounting Invariants Check (Shadow)
+        inv_sh = gate_sh.invariants
+        _log_msg("\n  [C] ACCOUNTING INVARIANTS CHECK (Shadow):", log_file)
+        if inv_sh is not None:
+            _log_msg(f"    - Per-trade Gross R [-1.50R, +3.50R]     : {'PASS' if inv_sh.per_trade_gross_bounds else 'FAIL'}", log_file)
+            _log_msg(f"    - Per-trade Cost R <= 0.50R             : {'PASS' if inv_sh.per_trade_cost_bound else 'FAIL'} (max cost: {inv_sh.max_cost_r:.3f}R, flagged > 0.20R: {inv_sh.flagged_cost_count})", log_file)
+            _log_msg(f"    - Run Gross Exp Identity (|diff|<=1e-4) : {'PASS' if inv_sh.run_gross_expectancy_reconciled else 'FAIL'}", log_file)
+            _log_msg(f"    - Net PnL = Gross - Costs (to cent)     : {'PASS' if inv_sh.net_reconciled_to_cent else 'FAIL'}", log_file)
+            _log_msg(f"    - Equity Reconciliation (to cent)       : {'PASS' if inv_sh.equity_reconciled_to_cent else 'FAIL'}", log_file)
+            if inv_sh.violations:
+                _log_msg("    Violations:", log_file)
+                for v in inv_sh.violations[:5]:
+                    _log_msg(f"      * {v}", log_file)
+            if inv_sh.warnings:
+                _log_msg(f"    Warnings: {len(inv_sh.warnings)} trades flagged for review (> 0.20R cost)", log_file)
+            _log_msg(f"    -> INVARIANTS CHECK VERDICT: {'PASS' if inv_sh.passed else 'FAIL'}", log_file)
+        else:
+            _log_msg("    (No backtest trades to evaluate)", log_file)
+
+        # Robustness Analysis (Shadow)
+        def _calc_robustness_view(sub_trades: list[Any], init_cap: float = 100_000.0) -> dict[str, Any]:
+            tc_sub = len(sub_trades)
+            if tc_sub == 0:
+                return {"trades": 0, "win_rate": 0.0, "gross_exp": 0.0, "cost_r": 0.0, "net_exp": 0.0, "tot_pnl": 0.0, "max_dd": 0.0}
+            w_sub = [t for t in sub_trades if t.pnl > Decimal("0")]
+            wr_sub = (len(w_sub) / tc_sub * 100)
+            g_list, c_list, n_list, pnl_list = [], [], [], []
+            for t in sub_trades:
+                ir = float(t.initial_risk) if float(t.initial_risk) > 0 else 100.0
+                gp = float((t.exit_price - t.entry_price) * t.qty) if t.side == "long" else float((t.entry_price - t.exit_price) * t.qty)
+                g_list.append(gp / ir)
+                c_list.append(float(t.fees_paid + t.funding_paid) / ir)
+                n_list.append(float(t.pnl) / ir)
+                pnl_list.append(float(t.pnl))
+            pk = init_cap
+            cur = init_cap
+            mdd = 0.0
+            for pnl in pnl_list:
+                cur += pnl
+                if cur > pk:
+                    pk = cur
+                elif pk > 0:
+                    dd = ((pk - cur) / pk) * 100.0
+                    if dd > mdd:
+                        mdd = dd
+            return {
+                "trades": tc_sub,
+                "win_rate": wr_sub,
+                "gross_exp": sum(g_list) / tc_sub,
+                "cost_r": sum(c_list) / tc_sub,
+                "net_exp": sum(n_list) / tc_sub,
+                "tot_pnl": sum(pnl_list),
+                "max_dd": mdd,
+            }
+
+        _log_msg("\n  [D] ROBUSTNESS ANALYSIS (Shadow):", log_file)
+        if len(eng_sh.trades) > 5:
+            sym_pnls: dict[str, float] = {}
+            for t in eng_sh.trades:
+                sym_pnls[t.symbol] = sym_pnls.get(t.symbol, 0.0) + float(t.pnl)
+            best_sym, best_sym_pnl = max(sym_pnls.items(), key=lambda kv: kv[1])
+            trades_ex_sym = [t for t in eng_sh.trades if t.symbol != best_sym]
+            rob_sym = _calc_robustness_view(trades_ex_sym, float(eng_sh.initial_capital))
+
+            trades_sorted_pnl = sorted(eng_sh.trades, key=lambda t: float(t.pnl), reverse=True)
+            top5_trades = trades_sorted_pnl[:5]
+            top5_pnl = sum(float(t.pnl) for t in top5_trades)
+            trades_ex_top5 = trades_sorted_pnl[5:]
+            rob_top5 = _calc_robustness_view(trades_ex_top5, float(eng_sh.initial_capital))
+
+            _log_msg(f"    - Robustness 1: Excluding Single Best Symbol ({best_sym}, Net PnL: ${best_sym_pnl:+,.2f}):", log_file)
+            _log_msg(f"        Trades: {rob_sym['trades']:,} | Win Rate: {rob_sym['win_rate']:.1f}% | Gross: {rob_sym['gross_exp']:+.3f}R | Cost: {rob_sym['cost_r']:.3f}R | Net: {rob_sym['net_exp']:+.3f}R | Net PnL: ${rob_sym['tot_pnl']:+,.2f} | Max DD: {rob_sym['max_dd']:.2f}%", log_file)
+
+            _log_msg(f"    - Robustness 2: Excluding Top 5 Trades (Contributed: ${top5_pnl:+,.2f}):", log_file)
+            _log_msg(f"        Trades: {rob_top5['trades']:,} | Win Rate: {rob_top5['win_rate']:.1f}% | Gross: {rob_top5['gross_exp']:+.3f}R | Cost: {rob_top5['cost_r']:.3f}R | Net: {rob_top5['net_exp']:+.3f}R | Net PnL: ${rob_top5['tot_pnl']:+,.2f} | Max DD: {rob_top5['max_dd']:.2f}%", log_file)
+        else:
+            _log_msg("    (Insufficient trades for robustness analysis)", log_file)
 
         # Train Halves Consistency (Shadow)
         mid_ms = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)

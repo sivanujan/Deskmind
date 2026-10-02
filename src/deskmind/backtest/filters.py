@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -25,21 +26,35 @@ class SymbolFilters:
     liquidation_fee: Decimal = Decimal("0.0125")  # default 1.25%
 
 
+KNOWN_BINANCE_FILTERS: dict[str, dict[str, Any]] = {
+    "BTCUSDT": {"tick_size": Decimal("0.10"), "step_size": Decimal("0.001"), "min_qty": Decimal("0.001"), "max_qty": Decimal("1000.0"), "price_prec": 1, "qty_prec": 3},
+    "ETHUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.001"), "min_qty": Decimal("0.001"), "max_qty": Decimal("10000.0"), "price_prec": 2, "qty_prec": 3},
+    "BNBUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.01"), "min_qty": Decimal("0.01"), "max_qty": Decimal("10000.0"), "price_prec": 2, "qty_prec": 2},
+    "SOLUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.01"), "min_qty": Decimal("0.01"), "max_qty": Decimal("100000.0"), "price_prec": 2, "qty_prec": 2},
+    "XRPUSDT": {"tick_size": Decimal("0.0001"), "step_size": Decimal("0.1"), "min_qty": Decimal("0.1"), "max_qty": Decimal("10000000.0"), "price_prec": 4, "qty_prec": 1},
+    "DOGEUSDT": {"tick_size": Decimal("0.00001"), "step_size": Decimal("1.0"), "min_qty": Decimal("1.0"), "max_qty": Decimal("10000000.0"), "price_prec": 5, "qty_prec": 0},
+    "ADAUSDT": {"tick_size": Decimal("0.0001"), "step_size": Decimal("1.0"), "min_qty": Decimal("1.0"), "max_qty": Decimal("10000000.0"), "price_prec": 4, "qty_prec": 0},
+    "MATICUSDT": {"tick_size": Decimal("0.0001"), "step_size": Decimal("0.1"), "min_qty": Decimal("0.1"), "max_qty": Decimal("10000000.0"), "price_prec": 4, "qty_prec": 1},
+    "LINKUSDT": {"tick_size": Decimal("0.001"), "step_size": Decimal("0.01"), "min_qty": Decimal("0.01"), "max_qty": Decimal("1000000.0"), "price_prec": 3, "qty_prec": 2},
+    "LTCUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.001"), "min_qty": Decimal("0.001"), "max_qty": Decimal("100000.0"), "price_prec": 2, "qty_prec": 3},
+}
+
+
 def load_symbol_filters(data_dir: Path, symbol: str) -> SymbolFilters:
-    """Load latest exchange filter snapshot for symbol from meta directory."""
+    """Load latest exchange filter snapshot for symbol from meta directory, with known fallback."""
     meta_dir = data_dir / "meta"
     matches = sorted(meta_dir.glob(f"{symbol}_filters_*.json"))
     if not matches:
-        # Fallback defaults if meta snapshot missing
+        kb = KNOWN_BINANCE_FILTERS.get(symbol, {})
         return SymbolFilters(
             symbol=symbol,
-            tick_size=Decimal("0.10"),
-            step_size=Decimal("0.001"),
-            min_qty=Decimal("0.001"),
-            max_qty=Decimal("1000.0"),
-            min_notional=Decimal("50.0"),
-            price_precision=2,
-            quantity_precision=3,
+            tick_size=kb.get("tick_size", Decimal("0.01")),
+            step_size=kb.get("step_size", Decimal("0.001")),
+            min_qty=kb.get("min_qty", Decimal("0.001")),
+            max_qty=kb.get("max_qty", Decimal("10000.0")),
+            min_notional=Decimal("5.0"),
+            price_precision=kb.get("price_prec", 2),
+            quantity_precision=kb.get("qty_prec", 3),
             liquidation_fee=Decimal("0.0125"),
         )
     latest_file = matches[-1]
