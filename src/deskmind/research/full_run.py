@@ -859,6 +859,8 @@ async def run_full_train_pipeline(
             tc_sub = len(sub_trades)
             if tc_sub == 0:
                 return {"trades": 0, "win_rate": 0.0, "gross_exp": 0.0, "cost_r": 0.0, "net_exp": 0.0, "tot_pnl": 0.0, "max_dd": 0.0}
+            # Maintain strict chronological order for equity curve and drawdown
+            sub_trades = sorted(sub_trades, key=lambda t: (t.entry_time_ms, t.exit_time_ms))
             w_sub = [t for t in sub_trades if t.pnl > Decimal("0")]
             wr_sub = (len(w_sub) / tc_sub * 100)
             g_list, c_list, n_list, pnl_list = [], [], [], []
@@ -866,7 +868,7 @@ async def run_full_train_pipeline(
                 ir = float(t.initial_risk) if float(t.initial_risk) > 0 else 100.0
                 gp = float((t.exit_price - t.entry_price) * t.qty) if t.side == "long" else float((t.entry_price - t.exit_price) * t.qty)
                 g_list.append(gp / ir)
-                c_list.append(float(t.fees_paid + t.funding_paid) / ir)
+                c_list.append(float(t.fees_paid + t.funding_paid + t.slippage_paid) / ir)
                 n_list.append(float(t.pnl) / ir)
                 pnl_list.append(float(t.pnl))
             pk = init_cap
@@ -903,7 +905,8 @@ async def run_full_train_pipeline(
             trades_sorted_pnl = sorted(eng_sh.trades, key=lambda t: float(t.pnl), reverse=True)
             top5_trades = trades_sorted_pnl[:5]
             top5_pnl = sum(float(t.pnl) for t in top5_trades)
-            trades_ex_top5 = trades_sorted_pnl[5:]
+            top5_ids = {id(t) for t in top5_trades}
+            trades_ex_top5 = [t for t in eng_sh.trades if id(t) not in top5_ids]
             rob_top5 = _calc_robustness_view(trades_ex_top5, init_cash)
 
             _log_msg(f"    - Robustness 1: Excluding Single Best Symbol ({best_sym}, Net PnL: ${best_sym_pnl:+,.2f}):", log_file)
@@ -914,15 +917,23 @@ async def run_full_train_pipeline(
         else:
             _log_msg("    (Insufficient trades for robustness analysis)", log_file)
 
-        # Train Halves Consistency (Shadow)
+        # Per-Year Performance Consistency (Shadow)
         mid_ms = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
         h1_trades = [t for t in eng_sh.trades if t.entry_time_ms < mid_ms]
         h2_trades = [t for t in eng_sh.trades if t.entry_time_ms >= mid_ms]
-        h1_r = sum(float(t.r_multiple) for t in h1_trades) / len(h1_trades) if h1_trades else 0.0
-        h2_r = sum(float(t.r_multiple) for t in h2_trades) / len(h2_trades) if h2_trades else 0.0
-        _log_msg("\n  Train Halves Consistency (Shadow):", log_file)
-        _log_msg(f"    Train Half 1 (2023)       : {len(h1_trades)} trades, {h1_r:+.3f}R avg", log_file)
-        _log_msg(f"    Train Half 2 (2024)       : {len(h2_trades)} trades, {h2_r:+.3f}R avg", log_file)
+        def _calc_yr_metrics(tr_list: list[Any]) -> tuple[int, float, float, float]:
+            if not tr_list:
+                return 0, 0.0, 0.0, 0.0
+            tc = len(tr_list)
+            g_sum = sum((float((t.exit_price - t.entry_price) * t.qty) if t.side == "long" else float((t.entry_price - t.exit_price) * t.qty)) / (float(t.initial_risk) if float(t.initial_risk) > 0 else 100.0) for t in tr_list)
+            n_sum = sum(float(t.pnl) / (float(t.initial_risk) if float(t.initial_risk) > 0 else 100.0) for t in tr_list)
+            pnl_sum = sum(float(t.pnl) for t in tr_list)
+            return tc, g_sum / tc, n_sum / tc, pnl_sum
+        c1, g1, n1, p1 = _calc_yr_metrics(h1_trades)
+        c2, g2, n2, p2 = _calc_yr_metrics(h2_trades)
+        _log_msg("\n  Per-Year Consistency (Shadow):", log_file)
+        _log_msg(f"    2023 : {c1:,} trades | Gross: {g1:+.3f}R | Net: {n1:+.3f}R | Net PnL: ${p1:+,.2f}", log_file)
+        _log_msg(f"    2024 : {c2:,} trades | Gross: {g2:+.3f}R | Net: {n2:+.3f}R | Net PnL: ${p2:+,.2f}", log_file)
 
         # Rejections by Reason (Enforced)
         rej_counts = {}
