@@ -38,14 +38,17 @@ class BaseHypothesisStrategy(BaseStrategy):
         super().__init__(params)
         self.plugin = plugin
         self._emitted_setup_ids: set[str] = set()
+        self._loaded_symbols: set[str] = set()
         self._feature_lookup: dict[str, dict[str, Any]] = {}
         initial_lookup = self.params.get("feature_lookup") or {}
         for k, v in initial_lookup.items():
             self._index_row(v)
+            sym = v.get("symbol")
+            if sym:
+                self._loaded_symbols.add(sym)
         self._feature_store = FeatureStore(
             base_dir=self.params.get("feature_dir", "data/features")
         )
-        self._loaded_symbols: set[str] = set()
 
     def _bar_open_key(self, symbol: str, ts_ms: int) -> str:
         open_ms = ((int(ts_ms) - 1) // 300_000) * 300_000
@@ -62,7 +65,7 @@ class BaseHypothesisStrategy(BaseStrategy):
             self._feature_lookup[self._bar_open_key(sym, ts_int)] = row
 
     def _ensure_features_loaded(self, symbol: str) -> None:
-        if symbol in self._loaded_symbols or self._feature_lookup:
+        if symbol in self._loaded_symbols:
             return
         rows = self._feature_store.read_features(symbol=symbol, split=None)
         for r in rows:

@@ -69,6 +69,7 @@ def simulate_candle_exit(
     If no trigger occurred, returns (None, None, False, Decimal("0")).
     """
     slip_pct = calc_slippage_pct(b_open, atr, slippage_bps, slippage_atr_factor)
+    pos_side = pos_side.lower()
 
     if pos_side == "long":
         # Gap check: opened below stop

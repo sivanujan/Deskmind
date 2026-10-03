@@ -29,6 +29,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Sequence
 
 from deskmind.backtest.fills import (
@@ -38,7 +39,8 @@ from deskmind.backtest.fills import (
     simulate_limit_fill,
     simulate_market_fill,
 )
-from deskmind.backtest.filters import round_price
+from deskmind.backtest.filters import load_symbol_filters, round_price
+from deskmind.config import KNOWN_BINANCE_FILTERS
 
 
 @dataclass
@@ -96,11 +98,13 @@ def run_backtest_random_baseline(
     slippage_bps: Decimal = Decimal("2.0"),
     slippage_atr_factor: Decimal = Decimal("0.05"),
     fixed_cost_r: float | None = None,
-    tick_size: Decimal = Decimal("0.01"),
+    tick_size: Decimal | None = None,
     seed_offset: int = 42,
     entry_order_type: str = "market",
     limit_expiry_bars: int = 12,
     sampled_trades: list[SampledTradeInfo] | None = None,
+    symbol_filters: dict[str, Decimal] | None = None,
+    data_dir: Path | str = "data",
 ) -> RandomBaselineStats:
     """Run backtest-level matched random baseline with exact engine fill model.
 
@@ -240,6 +244,24 @@ def run_backtest_random_baseline(
     skipped_per_seed: list[int] = []
     missed_limit_fills_list: list[int] = []
 
+    # Resolve per-symbol tick sizes to prevent cross-symbol tick-size mismatch
+    symbol_ticks: dict[str, Decimal] = {}
+    for s_name in normalized_bars.keys():
+        if symbol_filters and s_name in symbol_filters:
+            symbol_ticks[s_name] = Decimal(str(symbol_filters[s_name]))
+        else:
+            try:
+                sf = load_symbol_filters(Path(data_dir), s_name)
+                symbol_ticks[s_name] = sf.tick_size
+            except Exception:
+                kb = KNOWN_BINANCE_FILTERS.get(s_name, {})
+                if "tick_size" in kb:
+                    symbol_ticks[s_name] = kb["tick_size"]
+                elif tick_size is not None:
+                    symbol_ticks[s_name] = tick_size
+                else:
+                    symbol_ticks[s_name] = Decimal("0.01")
+
     for seed in range(num_seeds):
         rng = random.Random(seed + seed_offset)
         seed_gross_list: list[float] = []
@@ -250,6 +272,10 @@ def run_backtest_random_baseline(
 
         for prof in trade_profiles:
             sym = prof["symbol"]
+            sym_tick = symbol_ticks.get(
+                sym,
+                tick_size if tick_size is not None else Decimal("0.01"),
+            )
             b_list = normalized_bars.get(sym)
             if not b_list or len(b_list) < 2:
                 skipped_count += 1
@@ -272,11 +298,11 @@ def run_backtest_random_baseline(
 
             if is_limit_order:
                 # Limit order execution: honest trade-through by >= 1 tick
-                limit_price = round_price(cand_bar["open"], tick_size)
+                limit_price = round_price(cand_bar["open"], sym_tick)
                 fill_idx = None
                 for j in range(bar_idx + 1, min(len(b_list), bar_idx + 1 + limit_expiry_bars)):
                     b = b_list[j]
-                    fill_p, _ = simulate_limit_fill(side, limit_price, b["high"], b["low"], tick_size)
+                    fill_p, _ = simulate_limit_fill(side, limit_price, b["high"], b["low"], sym_tick)
                     if fill_p is not None:
                         fill_idx = j
                         break
@@ -294,7 +320,7 @@ def run_backtest_random_baseline(
                 entry_fill, _ = simulate_market_fill(
                     price=cand_bar["open"],
                     side=side,
-                    tick_size=tick_size,
+                    tick_size=sym_tick,
                     atr=None,
                     slippage_bps=slippage_bps,
                     slippage_atr_factor=slippage_atr_factor,
@@ -307,11 +333,11 @@ def run_backtest_random_baseline(
                 r_dist = entry_fill * Decimal("0.01")  # fallback 1%
 
             if side == "long":
-                stop_loss = round_price(entry_fill - r_dist, tick_size)
-                take_profit = round_price(entry_fill + (Decimal("2.0") * r_dist), tick_size)
+                stop_loss = round_price(entry_fill - r_dist, sym_tick)
+                take_profit = round_price(entry_fill + (Decimal("2.0") * r_dist), sym_tick)
             else:
-                stop_loss = round_price(entry_fill + r_dist, tick_size)
-                take_profit = round_price(entry_fill - (Decimal("2.0") * r_dist), tick_size)
+                stop_loss = round_price(entry_fill + r_dist, sym_tick)
+                take_profit = round_price(entry_fill - (Decimal("2.0") * r_dist), sym_tick)
 
             # 3. Intra-candle forward evaluation using shared simulate_candle_exit
             max_look = (
@@ -336,7 +362,7 @@ def run_backtest_random_baseline(
                     b_open=b["open"],
                     b_high=b["high"],
                     b_low=b["low"],
-                    tick_size=tick_size,
+                    tick_size=sym_tick,
                     atr=None,
                     slippage_bps=slippage_bps,
                     slippage_atr_factor=slippage_atr_factor,
@@ -359,7 +385,7 @@ def run_backtest_random_baseline(
                 exit_price, _ = simulate_market_fill(
                     price=cand_close,
                     side=closing_side,
-                    tick_size=tick_size,
+                    tick_size=sym_tick,
                     atr=None,
                     slippage_bps=slippage_bps,
                     slippage_atr_factor=slippage_atr_factor,
@@ -443,3 +469,18 @@ def run_backtest_random_baseline(
         sampled_trades=out_sampled_trades,
         sampled_entry_times_by_seed=sampled_entry_times_by_seed,
     )
+
+
+def check_random_baseline_sanity(stats: RandomBaselineStats, threshold: float = 0.05) -> None:
+    """Sanity guard: if any random baseline has |mean gross R| > 0.05, abort.
+
+    A random baseline on symmetric / matched price moves must have gross expectancy ≈ 0.0.
+    A non-zero gross expectancy indicates simulation bugs (e.g. tick_size mismatch,
+    asymmetric fill logic, or unapplied constraints).
+    """
+    if abs(stats.mean_gross_r) > threshold:
+        raise RuntimeError(
+            f"SANITY GUARD ABORT: Random baseline has |mean gross R| = {abs(stats.mean_gross_r):.4f} > {threshold}. "
+            "Simulation is invalid (must be ≈ 0.0R gross). Aborting pipeline with no report/verdict written."
+        )
+
