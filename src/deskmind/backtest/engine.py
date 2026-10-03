@@ -488,7 +488,7 @@ class BacktestEngine:
                                 pnl=net_pnl,
                                 pnl_pct=pnl_pct,
                                 r_multiple=r_mult,
-                                exit_reason="manual_close",
+                                exit_reason=p_order.metadata.get("exit_reason", "manual_close"),
                                 fees_paid=pos.fees_paid + exit_fee,
                                 funding_paid=pos.funding_paid,
                                 slippage_paid=pos.slippage_paid,

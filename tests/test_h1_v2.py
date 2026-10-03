@@ -194,8 +194,8 @@ def test_h1_v2_frozen_spec_hash_and_registry_program_trial_count_is_9() -> None:
     calculated_hash = hashlib.sha256(spec_path.read_bytes()).hexdigest()
     assert calculated_hash == H1_V2_FROZEN_SHA256
 
-    # 2. Registry trial counts computed program-wide: K=9
-    assert REGISTRY.get_program_trial_count() == 9
+    # 2. Registry trial counts computed program-wide: K=10 (with H6 pre-registered)
+    assert REGISTRY.get_program_trial_count() == 10
     expected_trials = [
         "H1_v1.0.0",
         "H1_v2.0.0_A",
@@ -206,13 +206,14 @@ def test_h1_v2_frozen_spec_hash_and_registry_program_trial_count_is_9() -> None:
         "H4_v1.0.0",
         "H4_v1.1.0",
         "H5_v1.0.0",
+        "H6_v1.0.0",
     ]
     assert REGISTRY.get_program_trials() == expected_trials
-    assert REGISTRY.get_trial_count("H1_v2.0.0") == 9
-    assert REGISTRY.get_trial_count("H1_v2.0.0_A") == 9
-    assert REGISTRY.get_trial_count("H1_v2.0.0_B") == 9
-    assert REGISTRY.get_trial_count("H1_v2.0.0_C") == 9
-    assert REGISTRY.get_trial_count("H1_v1.0.0") == 9
+    assert REGISTRY.get_trial_count("H1_v2.0.0") == 10
+    assert REGISTRY.get_trial_count("H1_v2.0.0_A") == 10
+    assert REGISTRY.get_trial_count("H1_v2.0.0_B") == 10
+    assert REGISTRY.get_trial_count("H1_v2.0.0_C") == 10
+    assert REGISTRY.get_trial_count("H1_v1.0.0") == 10
 
     # 3. DSR strictly uses K=9 trials for any H1_v2 evaluation
     returns = [1.0, 0.8, -0.2, 1.2, 0.5, 0.3, 0.9, -0.1, 0.7, 0.4] * 5

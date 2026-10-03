@@ -1298,6 +1298,35 @@ def test_ensure_features_loaded_multi_symbol_fixture(tmp_path) -> None:
     assert len(intents) == 3, f"Expected 3 intents, got {len(intents)}"
 
 
+def test_deflated_sharpe_textbook_example() -> None:
+    """Textbook example from Bailey and Lopez de Prado (2014) / Python Financial:
+    N = 100 trials, T = 500 observations
+    best unannualized Sharpe = 2.117 / sqrt(252) = 0.13336
+    unannualized SR0 = 1.940 / sqrt(252) = 0.12221
+    skew = 0.0, kurtosis = 3.0 (normal)
+    yields z = 0.2480, DSR = 0.598.
+    """
+    import math
+    from deskmind.research.gates import _norm_ppf, calculate_deflated_sharpe
+
+    k = 100
+    t = 500
+    gamma_em = 0.5772156649
+    z_k = (1.0 - gamma_em) * _norm_ppf(1.0 - 1.0 / k) + gamma_em * _norm_ppf(1.0 - 1.0 / (k * math.e))
+
+    target_sr = 2.117 / math.sqrt(252)
+    target_sr0 = 1.940 / math.sqrt(252)
+    sr_std = target_sr0 / z_k
+    var_sr = sr_std ** 2
+
+    # Synthesize returns vector of length 500 with mean = target_sr and std = 1.0
+    synth_returns = [target_sr + 1.0] * (t // 2) + [target_sr - 1.0] * (t // 2)
+
+    dsr = calculate_deflated_sharpe(synth_returns, total_trials=k, var_sharpe=var_sr)
+    assert abs(dsr - 0.598) <= 0.005, f"Expected DSR ~ 0.598, got {dsr}"
+
+
+
 
 
 

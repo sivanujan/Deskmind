@@ -197,3 +197,6 @@ class H5PDSweepStrategy(BaseHypothesisStrategy):
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(H5PDSweepPlugin(), params)
+
+
+from deskmind.strategies.h6_trend_breakout import H6TrendBreakoutStrategy

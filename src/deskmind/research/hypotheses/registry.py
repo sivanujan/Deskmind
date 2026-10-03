@@ -16,6 +16,7 @@ from deskmind.research.hypotheses.h2_sweep_reversal import H2SweepReversalPlugin
 from deskmind.research.hypotheses.h3_silver_bullet import H3SilverBulletPlugin
 from deskmind.research.hypotheses.h4_breakout_retest import H4BreakoutRetestPlugin
 from deskmind.research.hypotheses.h5_pd_sweep import H5PDSweepPlugin
+from deskmind.research.hypotheses.h6_trend_breakout import H6TrendBreakoutPlugin
 
 
 VOID_HYPOTHESES: dict[str, str] = {
@@ -25,6 +26,10 @@ VOID_HYPOTHESES: dict[str, str] = {
 # Frozen specification file and SHA-256 hash for H1 v2.0.0
 H1_V2_SPEC_PATH: str = "docs/research/hypotheses/H1_v2.md"
 H1_V2_FROZEN_SHA256: str = "50a4f2558de47a700a9196f576c61e631f757b626852d79365ca1993f80db4a4"
+
+# Frozen specification file and SHA-256 hash for H6 v1.0.0
+H6_SPEC_PATH: str = "docs/research/hypotheses/H6.md"
+H6_FROZEN_SHA256: str = "3d2a11046a4e58f59ec51970b1707d242845cb88b82fd7925b71a34e245335c3"
 
 
 def verify_h1_v2_spec_hash() -> bool:
@@ -39,6 +44,18 @@ def verify_h1_v2_spec_hash() -> bool:
     return h.lower() == H1_V2_FROZEN_SHA256.lower()
 
 
+def verify_h6_spec_hash() -> bool:
+    """Verify that docs/research/hypotheses/H6.md is byte-identical to the frozen pre-registered spec."""
+    import hashlib
+    from pathlib import Path
+
+    p = Path(H6_SPEC_PATH)
+    if not p.exists():
+        return False
+    h = hashlib.sha256(p.read_bytes()).hexdigest()
+    return h.lower() == H6_FROZEN_SHA256.lower()
+
+
 class HypothesisRegistry:
     def __init__(self) -> None:
         self._plugins: dict[str, HypothesisPlugin] = {
@@ -47,6 +64,7 @@ class HypothesisRegistry:
             "H3_v1.0.0": H3SilverBulletPlugin(),
             "H4_v1.1.0": H4BreakoutRetestPlugin(),
             "H5_v1.0.0": H5PDSweepPlugin(),
+            "H6_v1.0.0": H6TrendBreakoutPlugin(),
         }
         self._v2_plugins: dict[str, HypothesisPlugin] = {
             "H1_v2.0.0": H1DiscountOBPluginV2(variant="A"),
@@ -65,6 +83,7 @@ class HypothesisRegistry:
             "H4_v1.0.0": 1,     # Trial #1 (VOID)
             "H4_v1.1.0": 1,     # Trial #2 (ACTIVE / PRE-REGISTERED)
             "H5_v1.0.0": 1,
+            "H6_v1.0.0": 1,
         }
 
     def list_hypotheses(self, include_v2: bool = False) -> Sequence[HypothesisPlugin]:

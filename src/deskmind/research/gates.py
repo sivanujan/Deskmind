@@ -211,9 +211,69 @@ def check_accounting_invariants(
     )
 
 
+def _norm_ppf(p: float) -> float:
+    """Acklam rational approximation for standard normal inverse CDF / quantile function."""
+    a = [
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    ]
+    b = [
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    ]
+    c = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    ]
+    d = [
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    ]
+    p_low = 0.02425
+    p_high = 1.0 - p_low
+    if 0.0 < p < p_low:
+        q = math.sqrt(-2.0 * math.log(p))
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0
+        )
+    elif p_low <= p <= p_high:
+        q = p - 0.5
+        r = q * q
+        return (
+            (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5])
+            * q
+            / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1.0)
+        )
+    elif p_high < p < 1.0:
+        q = math.sqrt(-2.0 * math.log(1.0 - p))
+        return -(
+            (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+            / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0)
+        )
+    elif p <= 0.0:
+        return -10.0
+    else:
+        return 10.0
+
+
 def calculate_deflated_sharpe(
     returns: Sequence[float],
     total_trials: int = 1,
+    var_sharpe: float | None = None,
+    trial_sharpes: Sequence[float] | None = None,
 ) -> float:
     """Calculate Deflated Sharpe Ratio (DSR) as defined by Bailey and Lopez de Prado (2014).
 
@@ -224,16 +284,18 @@ def calculate_deflated_sharpe(
     Documented Inputs:
       - returns: Sequence of periodic or per-trade returns (sample observations).
       - total_trials (K): Total number of strategy trials or variations tested (>= 1).
+      - var_sharpe: Variance of Sharpe ratios observed across the K trials (V[{SR_k}]).
+      - trial_sharpes: Sequence of Sharpe ratios across all trials (used to compute var_sharpe if omitted).
       - sample_length (N): Number of return observations, len(returns).
       - skewness (gamma_3): Fisher-Pearson standardized sample skewness.
       - kurtosis (gamma_4): Sample kurtosis (Pearson, normal distribution = 3.0).
       - sharpe (SR_hat): Sample Sharpe ratio (mean / std).
-      - expected_max_sharpe (SR_star): Expected maximum Sharpe ratio under the null
-        hypothesis among K independent trials, using Euler-Mascheroni extreme value
-        approximation: SR* = sqrt(2 * ln(K)) + gamma / sqrt(2 * ln(K)) for K > 1.
+      - expected_max_sharpe (SR_0): Expected maximum Sharpe ratio under the null
+        hypothesis among K independent trials:
+        SR_0 = sqrt(V[{SR_k}]) * ((1 - gamma) * Phi^-1(1 - 1/K) + gamma * Phi^-1(1 - 1/(K*e))).
       - dsr_std_err (sigma_SR): Standard error of the Sharpe ratio adjusted for skew
         and kurtosis: sqrt((1 - gamma_3*SR + ((gamma_4 - 1)/4)*SR^2) / (N - 1)).
-      - z: Standardized test statistic: (SR_hat - SR_star) / sigma_SR.
+      - z: Standardized test statistic: (SR_hat - SR_0) / sigma_SR.
       - DSR: Cumulative normal probability Phi(z) = 0.5 * (1 + erf(z / sqrt(2))).
     """
     n = len(returns)
@@ -258,11 +320,21 @@ def calculate_deflated_sharpe(
     if k == 1:
         expected_max_sharpe = 0.0
     else:
-        # Euler-Mascheroni constant gamma
+        # Standard normal quantile formula from Bailey & Lopez de Prado (2014)
         gamma_em = 0.5772156649
-        two_log_k = 2.0 * math.log(k)
-        sqrt_two_log_k = math.sqrt(two_log_k)
-        expected_max_sharpe = sqrt_two_log_k + (gamma_em / sqrt_two_log_k)
+        z_k = (1.0 - gamma_em) * _norm_ppf(1.0 - 1.0 / k) + gamma_em * _norm_ppf(1.0 - 1.0 / (k * math.e))
+
+        if var_sharpe is not None:
+            sr_std = math.sqrt(max(0.0, var_sharpe))
+        elif trial_sharpes is not None and len(trial_sharpes) > 1:
+            m_ts = sum(trial_sharpes) / len(trial_sharpes)
+            v_ts = sum((s - m_ts) ** 2 for s in trial_sharpes) / (len(trial_sharpes) - 1)
+            sr_std = math.sqrt(v_ts)
+        else:
+            # Fallback default: unit variance
+            sr_std = 1.0
+
+        expected_max_sharpe = sr_std * z_k
 
     # Standard error of Sharpe ratio estimator under non-normality
     var_sr = (1.0 - skew * sharpe + ((kurt - 1.0) / 4.0) * (sharpe ** 2)) / (n - 1)
@@ -286,6 +358,8 @@ def evaluate_research_gates(
     trial_count: int | None = None,
     cost_per_trade_r: float = 0.05,
     backtest_result: Any | None = None,
+    var_sharpe: float | None = None,
+    trial_sharpes: Sequence[float] | None = None,
 ) -> GateCheckResult:
     """Evaluate encoded research gates for TRAIN -> VALIDATION qualification."""
     from deskmind.research.hypotheses.registry import REGISTRY
@@ -392,7 +466,12 @@ def evaluate_research_gates(
         else:
             pos_symbols_pct = 100.0 if net_exp > 0 else 0.0
 
-        dsr = calculate_deflated_sharpe(net_r_list, total_trials=effective_trials)
+        dsr = calculate_deflated_sharpe(
+            net_r_list,
+            total_trials=effective_trials,
+            var_sharpe=var_sharpe,
+            trial_sharpes=trial_sharpes,
+        )
 
         # Baseline percentile comparison (matched condition: compare strategy signals against matched baseline)
         if results and baseline_results:
@@ -481,7 +560,12 @@ def evaluate_research_gates(
             and all(sum(vals) > 0 for vals in by_half.values())
         )
 
-        dsr = calculate_deflated_sharpe(r_multiples, total_trials=effective_trials)
+        dsr = calculate_deflated_sharpe(
+            r_multiples,
+            total_trials=effective_trials,
+            var_sharpe=var_sharpe,
+            trial_sharpes=trial_sharpes,
+        )
 
     checklist = {
         "min_trades_100": trades_count >= 100,

@@ -48,6 +48,7 @@ from deskmind.strategies.hypothesis_base import (
     H3SilverBulletStrategy,
     H4BreakoutRetestStrategy,
     H5PDSweepStrategy,
+    H6TrendBreakoutStrategy,
 )
 from deskmind.strategies.trend_follow_v1 import TrendFollowV1
 from deskmind.universe.history import MembershipHistory
@@ -64,6 +65,7 @@ STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     "h3_silver_bullet": H3SilverBulletStrategy,
     "h4_breakout_retest": H4BreakoutRetestStrategy,
     "h5_pd_sweep": H5PDSweepStrategy,
+    "h6_trend_breakout": H6TrendBreakoutStrategy,
 }
 
 
