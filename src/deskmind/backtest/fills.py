@@ -121,3 +121,43 @@ def simulate_candle_exit(
             return take_profit, "take_profit", True, Decimal("0")
 
     return None, None, False, Decimal("0")
+
+
+def check_limit_trade_through(
+    side: str,
+    limit_price: Decimal,
+    b_high: Decimal,
+    b_low: Decimal,
+    tick_size: Decimal,
+) -> bool:
+    """Check honest trade-through condition for a limit order on a single candle.
+
+    Touch-only is NEVER a fill:
+    - Long (buy): requires b_low <= limit_price - tick_size (trades through by >= 1 tick).
+      If b_low == limit_price, returns False.
+    - Short (sell): requires b_high >= limit_price + tick_size (trades through by >= 1 tick).
+      If b_high == limit_price, returns False.
+    """
+    if side.lower() in ("long", "buy"):
+        return b_low <= (limit_price - tick_size)
+    else:
+        return b_high >= (limit_price + tick_size)
+
+
+def simulate_limit_fill(
+    side: str,
+    limit_price: Decimal,
+    b_high: Decimal,
+    b_low: Decimal,
+    tick_size: Decimal,
+) -> tuple[Decimal | None, bool]:
+    """Evaluate honest trade-through limit fill on a single candle.
+
+    Returns (fill_price, is_maker).
+    If filled: (limit_price, True) with maker execution.
+    If not filled: (None, False).
+    """
+    if check_limit_trade_through(side, limit_price, b_high, b_low, tick_size):
+        return limit_price, True
+    return None, False
+

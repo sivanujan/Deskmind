@@ -18,6 +18,9 @@ class Signal:
     r_multiple: float   # Target R distance ratio (target_dist / stop_dist)
     rationale: str
     setup_id: str = ""
+    order_type: str = "market"  # "market" | "limit"
+    limit_price: float | None = None
+    limit_expiry_bars: int = 12
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

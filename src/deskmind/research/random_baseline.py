@@ -31,7 +31,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Sequence
 
-from deskmind.backtest.fills import calc_slippage_pct, simulate_candle_exit, simulate_market_fill
+from deskmind.backtest.fills import (
+    calc_slippage_pct,
+    check_limit_trade_through,
+    simulate_candle_exit,
+    simulate_limit_fill,
+    simulate_market_fill,
+)
 from deskmind.backtest.filters import round_price
 
 
@@ -50,6 +56,7 @@ class SampledTradeInfo:
     exit_reason: str
     entry_time_ms: int = 0
     source_entry_time_ms: int = 0
+    order_type: str = "market"
 
 
 @dataclass
@@ -62,6 +69,7 @@ class RandomBaselineStats:
     percentile: float
     beat_count: int
     skipped_trades_per_seed: int
+    missed_limit_fills_per_seed: int = 0
     seed_net_exp: list[float] = field(default_factory=list)
     seed_gross_exp: list[float] = field(default_factory=list)
     sampled_trades: list[SampledTradeInfo] = field(default_factory=list)
@@ -90,14 +98,17 @@ def run_backtest_random_baseline(
     fixed_cost_r: float | None = None,
     tick_size: Decimal = Decimal("0.01"),
     seed_offset: int = 42,
+    entry_order_type: str = "market",
+    limit_expiry_bars: int = 12,
 ) -> RandomBaselineStats:
     """Run backtest-level matched random baseline with exact engine fill model.
 
     Invariants:
       1. Uses shared `simulate_market_fill` and `simulate_candle_exit` from `deskmind.backtest.fills`.
-      2. Matches symbol, side, risk_pct (1R stop, 2R target), and time-of-day (UTC ms).
-      3. Compares per-trade expectancy in R (mean net R per seed).
-      4. Tracks and returns skipped_trades_per_seed (must be 0).
+      2. For limit orders, uses shared `simulate_limit_fill` requiring trade-through by >= 1 tick.
+      3. Matches symbol, side, risk_pct (1R stop, 2R target), and time-of-day (UTC ms).
+      4. Compares per-trade expectancy in R (mean net R per seed).
+      5. Tracks and returns skipped_trades_per_seed and missed_limit_fills_per_seed.
     """
     # Accept BacktestResult or raw trade sequence
     if hasattr(trades, "trades"):
@@ -116,6 +127,7 @@ def run_backtest_random_baseline(
             percentile=50.0,
             beat_count=0,
             skipped_trades_per_seed=0,
+            missed_limit_fills_per_seed=0,
         )
 
     # Extract source trade profiles
@@ -133,6 +145,7 @@ def run_backtest_random_baseline(
             pnl = float(t.get("pnl", 0.0))
             fees = float(t.get("fees_paid", 0.0))
             funding = float(t.get("funding_paid", 0.0))
+            t_order_type = str(t.get("order_type", ""))
         else:
             sym = str(getattr(t, "symbol", ""))
             side = str(getattr(t, "side", ""))
@@ -143,6 +156,7 @@ def run_backtest_random_baseline(
             pnl = float(getattr(t, "pnl", 0.0))
             fees = float(getattr(t, "fees_paid", 0.0))
             funding = float(getattr(t, "funding_paid", 0.0))
+            t_order_type = str(getattr(t, "order_type", ""))
 
         if ir <= 0:
             ir = 100.0
@@ -160,6 +174,7 @@ def run_backtest_random_baseline(
         stop_dist = (ir / qty) if qty > 0 else (ep * 0.015)
         risk_pct = (stop_dist / ep) if ep > 0 else 0.015
         tod_ms = entry_ms % 86_400_000
+        resolved_order_type = "limit" if (entry_order_type == "limit" or t_order_type == "limit") else "market"
 
         trade_profiles.append({
             "symbol": sym,
@@ -169,6 +184,7 @@ def run_backtest_random_baseline(
             "risk_pct": risk_pct,
             "cost_r": cost_r,
             "initial_risk": ir,
+            "order_type": resolved_order_type,
         })
 
     actual_net_exp = sum(actual_net_rs) / len(actual_net_rs)
@@ -220,6 +236,7 @@ def run_backtest_random_baseline(
     sampled_trades: list[SampledTradeInfo] = []
     sampled_entry_times_by_seed: list[list[int]] = []
     skipped_per_seed: list[int] = []
+    missed_limit_fills_list: list[int] = []
 
     for seed in range(num_seeds):
         rng = random.Random(seed + seed_offset)
@@ -227,6 +244,7 @@ def run_backtest_random_baseline(
         seed_net_list: list[float] = []
         seed_entry_times: list[int] = []
         skipped_count = 0
+        missed_limit_count = 0
 
         for prof in trade_profiles:
             sym = prof["symbol"]
@@ -248,18 +266,42 @@ def run_backtest_random_baseline(
             side = prof["side"]
             risk_pct = prof["risk_pct"]
             cost_r = prof["cost_r"]
+            is_limit_order = prof.get("order_type") == "limit"
 
-            # 1. Entry execution using the shared engine fill model (includes slippage)
-            entry_fill, _ = simulate_market_fill(
-                price=cand_bar["open"],
-                side=side,
-                tick_size=tick_size,
-                atr=None,
-                slippage_bps=slippage_bps,
-                slippage_atr_factor=slippage_atr_factor,
-            )
+            if is_limit_order:
+                # Limit order execution: honest trade-through by >= 1 tick
+                limit_price = round_price(cand_bar["open"], tick_size)
+                fill_idx = None
+                for j in range(bar_idx + 1, min(len(b_list), bar_idx + 1 + limit_expiry_bars)):
+                    b = b_list[j]
+                    fill_p, _ = simulate_limit_fill(side, limit_price, b["high"], b["low"], tick_size)
+                    if fill_p is not None:
+                        fill_idx = j
+                        break
 
-            # 2. 1R Stop / 2R Target geometry
+                if fill_idx is None:
+                    # Expired without trade-through -> missed fill
+                    skipped_count += 1
+                    missed_limit_count += 1
+                    continue
+
+                entry_fill = limit_price
+                start_exit_idx = fill_idx + 1
+                effective_cost_r = cost_r * 0.4 if fixed_cost_r is None else cost_r
+            else:
+                # Market order entry execution (includes slippage)
+                entry_fill, _ = simulate_market_fill(
+                    price=cand_bar["open"],
+                    side=side,
+                    tick_size=tick_size,
+                    atr=None,
+                    slippage_bps=slippage_bps,
+                    slippage_atr_factor=slippage_atr_factor,
+                )
+                start_exit_idx = bar_idx + 1
+                effective_cost_r = cost_r
+
+            # 2. 1R Stop / 2R Target geometry from actual fill
             r_dist = entry_fill * Decimal(str(risk_pct))
             if r_dist <= Decimal("0"):
                 r_dist = entry_fill * Decimal("0.01")  # fallback 1%
@@ -273,16 +315,16 @@ def run_backtest_random_baseline(
 
             # 3. Intra-candle forward evaluation using shared simulate_candle_exit
             max_look = (
-                min(len(b_list) - 1, bar_idx + max_horizon_bars)
+                min(len(b_list) - 1, start_exit_idx + max_horizon_bars)
                 if max_horizon_bars is not None
                 else (len(b_list) - 1)
             )
 
             gross_r: float | None = None
             exit_reason_str = "mark_to_market"
-            last_idx = bar_idx + 1
+            last_idx = start_exit_idx
 
-            for j in range(bar_idx + 1, max_look + 1):
+            for j in range(start_exit_idx, max_look + 1):
                 last_idx = j
                 b = b_list[j]
                 exit_price, exit_reason, is_maker, slip_pct = simulate_candle_exit(
@@ -306,8 +348,6 @@ def run_backtest_random_baseline(
                         gross_r = float((entry_fill - exit_price) / r_dist)
                     break
 
-            # 4. Strategy's actual max-holding rule: no intra-trade timeout.
-            # When horizon/dataset ends, mark to market at terminal bar close.
             if gross_r is None:
                 term_price = b_list[min(last_idx, len(b_list) - 1)]["close"]
                 if side == "long":
@@ -315,7 +355,7 @@ def run_backtest_random_baseline(
                 else:
                     gross_r = float((entry_fill - term_price) / r_dist)
 
-            net_r = gross_r - cost_r
+            net_r = gross_r - effective_cost_r
             seed_gross_list.append(gross_r)
             seed_net_list.append(net_r)
 
@@ -335,10 +375,12 @@ def run_backtest_random_baseline(
                         exit_reason=exit_reason_str,
                         entry_time_ms=cand_bar["open_time"],
                         source_entry_time_ms=prof["entry_time_ms"],
+                        order_type="limit" if is_limit_order else "market",
                     )
                 )
 
         skipped_per_seed.append(skipped_count)
+        missed_limit_fills_list.append(missed_limit_count)
         sampled_entry_times_by_seed.append(seed_entry_times)
         if seed_net_list:
             seed_gross_exp.append(sum(seed_gross_list) / len(seed_gross_list))
@@ -352,6 +394,7 @@ def run_backtest_random_baseline(
     beat_count = sum(1 for r in seed_net_exp if actual_net_exp > r)
     percentile = (beat_count / len(seed_net_exp) * 100.0) if seed_net_exp else 50.0
     avg_skipped = sum(skipped_per_seed) // len(skipped_per_seed) if skipped_per_seed else 0
+    avg_missed_limit = sum(missed_limit_fills_list) // len(missed_limit_fills_list) if missed_limit_fills_list else 0
 
     return RandomBaselineStats(
         num_seeds=num_seeds,
@@ -362,6 +405,7 @@ def run_backtest_random_baseline(
         percentile=percentile,
         beat_count=beat_count,
         skipped_trades_per_seed=avg_skipped,
+        missed_limit_fills_per_seed=avg_missed_limit,
         seed_net_exp=seed_net_exp,
         seed_gross_exp=seed_gross_exp,
         sampled_trades=sampled_trades,

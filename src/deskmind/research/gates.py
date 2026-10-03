@@ -288,6 +288,10 @@ def evaluate_research_gates(
     backtest_result: Any | None = None,
 ) -> GateCheckResult:
     """Evaluate encoded research gates for TRAIN -> VALIDATION qualification."""
+    effective_trials = trial_count
+    if hypothesis_id.startswith("H1_v2"):
+        effective_trials = max(effective_trials, 4)
+
     max_dd_pct = 0.0
     trades: list[Any] = []
     if backtest_result is not None:
@@ -384,7 +388,7 @@ def evaluate_research_gates(
         else:
             pos_symbols_pct = 100.0 if net_exp > 0 else 0.0
 
-        dsr = calculate_deflated_sharpe(net_r_list, total_trials=trial_count)
+        dsr = calculate_deflated_sharpe(net_r_list, total_trials=effective_trials)
 
         # Baseline percentile comparison (matched condition: compare strategy signals against matched baseline)
         if results and baseline_results:
@@ -473,7 +477,7 @@ def evaluate_research_gates(
             and all(sum(vals) > 0 for vals in by_half.values())
         )
 
-        dsr = calculate_deflated_sharpe(r_multiples, total_trials=trial_count)
+        dsr = calculate_deflated_sharpe(r_multiples, total_trials=effective_trials)
 
     checklist = {
         "min_trades_100": trades_count >= 100,
