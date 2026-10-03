@@ -506,3 +506,57 @@ def test_h1_v2_tp_requires_trade_through_touch_does_not_fill() -> None:
     assert len(sampled_touch) == 1
     # Because 103.0 was touch-only, it did not fill TP, and instead exited at horizon
     assert sampled_touch[0].exit_reason == "max_horizon_bars"
+
+
+def test_h1_v2_variant_b_emits_signals_on_bullish_trend_fixture() -> None:
+    """Pre-check: Variant B compares htf_trend_1h ('bullish'/'bearish') with v1_sig.direction.
+    Assert Variant B emits signals on a bullish-trend fixture when direction matches,
+    and also on bearish-trend fixture when direction matches, but rejects mismatches.
+    """
+    plugin_b = H1V2VariantBPlugin()
+
+    # 1. Bullish fixture
+    bullish_row = {
+        "symbol": "BTCUSDT",
+        "timestamp": 1680000000000,
+        "htf_trend_1h": "bullish",
+        "pd_zone_1h": "discount",
+        "nearest_fvg_size_atr": 0.0,
+        "nearest_fvg_dist_atr": 999.0,
+        "nearest_ob_state": "fresh",
+        "nearest_ob_dist_atr": 0.2,
+        "last_event_5m": "CHoCH_up",
+        "atr_pct": 0.01,
+        "killzone": "london_open",
+    }
+    sig_bullish = plugin_b.evaluate(bullish_row, current_close=50000.0)
+    assert sig_bullish is not None, "Variant B must emit signal on bullish-trend fixture"
+    assert sig_bullish.direction == "bullish"
+    assert sig_bullish.order_type == "limit"
+    assert sig_bullish.entry_price < 50000.0  # proximal discount limit
+
+    # Mismatch check: if 1h trend is bearish or ranging, bullish setup must be rejected
+    assert plugin_b.evaluate(dict(bullish_row, htf_trend_1h="bearish"), current_close=50000.0) is None
+    assert plugin_b.evaluate(dict(bullish_row, htf_trend_1h="ranging"), current_close=50000.0) is None
+
+    # 2. Bearish fixture
+    bearish_row = {
+        "symbol": "BTCUSDT",
+        "timestamp": 1680000000000,
+        "htf_trend_1h": "bearish",
+        "pd_zone_1h": "premium",
+        "nearest_fvg_size_atr": 0.0,
+        "nearest_fvg_dist_atr": 999.0,
+        "nearest_ob_state": "fresh",
+        "nearest_ob_dist_atr": 0.2,
+        "last_event_5m": "CHoCH_down",
+        "atr_pct": 0.01,
+        "killzone": "ny_am",
+    }
+    sig_bearish = plugin_b.evaluate(bearish_row, current_close=50000.0)
+    assert sig_bearish is not None, "Variant B must emit signal on bearish-trend fixture"
+    assert sig_bearish.direction == "bearish"
+    assert sig_bearish.order_type == "limit"
+    assert sig_bearish.entry_price > 50000.0  # proximal premium limit
+    assert plugin_b.evaluate(dict(bearish_row, htf_trend_1h="bullish"), current_close=50000.0) is None
+

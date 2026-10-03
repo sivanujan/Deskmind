@@ -90,8 +90,9 @@ class H1DiscountOBPluginV2(HypothesisPlugin):
 
         # Variant B: 1h Trend Direction Filter (must match frozen spec)
         if self.variant == "B":
-            t_1h = str(r.get("htf_trend_1h", "ranging"))
-            if t_1h != v1_sig.direction:
+            t_1h = str(r.get("htf_trend_1h", "ranging")).strip().lower()
+            v1_dir = str(v1_sig.direction).strip().lower()
+            if t_1h != v1_dir:
                 return None
 
         # Variant C: London & NY AM killzone filter
