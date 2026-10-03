@@ -14,6 +14,11 @@ from typing import Any
 from deskmind.features.store import FeatureStore
 from deskmind.research.hypotheses.base import HypothesisPlugin
 from deskmind.research.hypotheses.h1_discount_ob import H1DiscountOBPlugin
+from deskmind.research.hypotheses.h1_v2 import (
+    H1V2VariantAPlugin,
+    H1V2VariantBPlugin,
+    H1V2VariantCPlugin,
+)
 from deskmind.research.hypotheses.h2_sweep_reversal import H2SweepReversalPlugin
 from deskmind.research.hypotheses.h3_silver_bullet import H3SilverBulletPlugin
 from deskmind.research.hypotheses.h4_breakout_retest import H4BreakoutRetestPlugin
@@ -98,11 +103,19 @@ class BaseHypothesisStrategy(BaseStrategy):
             if stop_val <= Decimal("0"):
                 continue
 
+            order_type = getattr(sig, "order_type", "market") or "market"
+            limit_val = (
+                Decimal(str(sig.limit_price))
+                if getattr(sig, "limit_price", None) is not None
+                else None
+            )
+
             intents.append(
                 Intent(
                     symbol=symbol,
                     action=action,
-                    order_type="market",
+                    order_type=order_type,
+                    limit_price=limit_val,
                     stop_loss=stop_val,
                     take_profit=target_val,
                     ranking_score=1.0,
@@ -125,6 +138,30 @@ class H1DiscountOBStrategy(BaseHypothesisStrategy):
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(H1DiscountOBPlugin(), params)
+
+
+class H1V2VariantAStrategy(BaseHypothesisStrategy):
+    name = "h1_v2_variant_a"
+    version = "2.0.0"
+
+    def __init__(self, params: dict[str, Any] | None = None) -> None:
+        super().__init__(H1V2VariantAPlugin(), params)
+
+
+class H1V2VariantBStrategy(BaseHypothesisStrategy):
+    name = "h1_v2_variant_b"
+    version = "2.0.0"
+
+    def __init__(self, params: dict[str, Any] | None = None) -> None:
+        super().__init__(H1V2VariantBPlugin(), params)
+
+
+class H1V2VariantCStrategy(BaseHypothesisStrategy):
+    name = "h1_v2_variant_c"
+    version = "2.0.0"
+
+    def __init__(self, params: dict[str, Any] | None = None) -> None:
+        super().__init__(H1V2VariantCPlugin(), params)
 
 
 class H2SweepReversalStrategy(BaseHypothesisStrategy):

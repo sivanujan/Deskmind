@@ -154,6 +154,8 @@ class BacktestResult:
     universe_skips: int = 0  # entry intents on symbols outside that day's universe
     delisted_exits: int = 0
     universe_filter: str = "none"  # "point_in_time" when a MembershipHistory was used
+    orders_placed: int = 0
+    missed_limit_orders: int = 0
 
 
 def load_funding_map(data_dir: Path, symbol: str) -> dict[int, Decimal]:
@@ -257,6 +259,8 @@ class BacktestEngine:
         self.total_funding_paid = Decimal("0")
         self.total_fees_paid = Decimal("0")
         self.total_slippage_paid = Decimal("0")
+        self.orders_placed = 0
+        self.missed_limit_orders = 0
 
     def _calc_slippage_pct(self, price: Decimal, atr: float | None) -> Decimal:
         """Slippage = fixed_bps + atr_factor * (atr / price)."""
@@ -510,9 +514,9 @@ class BacktestEngine:
                                 slip_paid = (b_open - fill_price) * p_order.qty
                             self.total_slippage_paid += max(Decimal("0"), slip_paid)
                         elif p_order.order_type == "limit" and p_order.limit_price is not None:
-                            # Trade THROUGH check (not just touches)
-                            if (p_order.action == "open_long" and b_low < p_order.limit_price) or (
-                                p_order.action == "open_short" and b_high > p_order.limit_price
+                            # Trade THROUGH check (not just touches: must trade through by >= 1 tick)
+                            if (p_order.action == "open_long" and b_low <= p_order.limit_price - filters.tick_size) or (
+                                p_order.action == "open_short" and b_high >= p_order.limit_price + filters.tick_size
                             ):
                                 fill_price = p_order.limit_price
                                 is_maker = True
@@ -582,8 +586,19 @@ class BacktestEngine:
                                 risk_decision=p_order.metadata.get("risk_decision"),
                             )
                         elif p_order.order_type == "limit":
-                            # Retain limit order on book until filled or canceled
+                            # Retain limit order on book until filled or expired (N=12 bars)
+                            bars_pending = (t_open - p_order.intent_time_ms) // step_5m
+                            if bars_pending < 12:
+                                self.pending_order = p_order
+                            else:
+                                self.missed_limit_orders += 1
+                else:
+                    if p_order.order_type == "limit":
+                        bars_pending = (t_open - p_order.intent_time_ms) // step_5m
+                        if bars_pending < 12:
                             self.pending_order = p_order
+                        else:
+                            self.missed_limit_orders += 1
 
             # ----------------------------------------------------
             # STEP A2: Delisting settles an open position. (A pending entry on a delisted
@@ -1004,12 +1019,17 @@ class BacktestEngine:
                             future_fundings = [ft for ft in f_rates if ft > t_close]
                             next_funding_ms = min(future_fundings) if future_fundings else None
 
+                            eff_entry = (
+                                chosen.limit_price
+                                if (chosen.order_type == "limit" and chosen.limit_price is not None)
+                                else cur_close
+                            )
                             # Size position
                             if isinstance(self.sizer, RiskManagerSizer):
                                 qty, reason = self.sizer.size_position(
                                     ctx.account,
                                     chosen,
-                                    cur_close,
+                                    eff_entry,
                                     self.filters[chosen.symbol],
                                     mark_price=mark_price,
                                     atr_by_tf=atr_map,
@@ -1020,7 +1040,7 @@ class BacktestEngine:
                                 decision = self.sizer.last_decision
                             else:
                                 qty, reason = self.sizer.size_position(
-                                    ctx.account, chosen, cur_close, self.filters[chosen.symbol]
+                                    ctx.account, chosen, eff_entry, self.filters[chosen.symbol]
                                 )
                                 decision = None
 
@@ -1036,12 +1056,13 @@ class BacktestEngine:
                                 init_risk = (
                                     decision.actual_risk_usd
                                     if decision is not None
-                                    else abs(cur_close - chosen.stop_loss) * qty
+                                    else abs(eff_entry - chosen.stop_loss) * qty
                                 )
                                 meta = dict(chosen.metadata)
                                 if decision is not None:
                                     meta["risk_decision"] = decision.to_dict()
 
+                                self.orders_placed += 1
                                 self.pending_order = PendingOrder(
                                     symbol=chosen.symbol,
                                     action=chosen.action,  # type: ignore[arg-type]
@@ -1142,4 +1163,6 @@ class BacktestEngine:
             universe_skips=self.universe_skips,
             delisted_exits=self.delisted_exits,
             universe_filter="point_in_time" if self.universe is not None else "none",
+            orders_placed=self.orders_placed,
+            missed_limit_orders=self.missed_limit_orders,
         )

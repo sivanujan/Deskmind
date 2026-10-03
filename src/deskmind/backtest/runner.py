@@ -41,6 +41,9 @@ from deskmind.risk.sizer import RiskManagerSizer
 from deskmind.strategies.base import BaseStrategy
 from deskmind.strategies.hypothesis_base import (
     H1DiscountOBStrategy,
+    H1V2VariantAStrategy,
+    H1V2VariantBStrategy,
+    H1V2VariantCStrategy,
     H2SweepReversalStrategy,
     H3SilverBulletStrategy,
     H4BreakoutRetestStrategy,
@@ -54,6 +57,9 @@ logger = logging.getLogger("deskmind.backtest.runner")
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     "trend_follow_v1": TrendFollowV1,
     "h1_discount_ob": H1DiscountOBStrategy,
+    "h1_v2_variant_a": H1V2VariantAStrategy,
+    "h1_v2_variant_b": H1V2VariantBStrategy,
+    "h1_v2_variant_c": H1V2VariantCStrategy,
     "h2_sweep_reversal": H2SweepReversalStrategy,
     "h3_silver_bullet": H3SilverBulletStrategy,
     "h4_breakout_retest": H4BreakoutRetestStrategy,
