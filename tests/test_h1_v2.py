@@ -147,6 +147,7 @@ def test_h1_v2_no_lookahead_in_filters() -> None:
         "symbol": "BTCUSDT",
         "timestamp": 1704100000000,
         "htf_trend_1h": "bullish",
+        "htf_trend_2h": "bullish",
         "pd_zone_1h": "discount",
         "nearest_fvg_size_atr": 0.0,
         "nearest_fvg_dist_atr": 999.0,
@@ -167,10 +168,10 @@ def test_h1_v2_no_lookahead_in_filters() -> None:
     assert sig_a.stop_price == sig_a.entry_price - (1.5 * atr)
     assert sig_a.target_price == sig_a.entry_price + (3.0 * atr)
 
-    # 2. Variant B (1h trend filter): rejects when trend is bearish
-    row_bearish_trend = dict(base_row, htf_trend_1h="bearish")
+    # 2. Variant B (2h trend confirmation filter): rejects when 2h trend is bearish
+    row_bearish_trend = dict(base_row, htf_trend_2h="bearish")
     assert plugin_b.evaluate(row_bearish_trend, current_close=close_price) is None
-    # Accepts when trend is bullish
+    # Accepts when 2h trend is bullish
     assert plugin_b.evaluate(base_row, current_close=close_price) is not None
 
     # 3. Variant C (Killzone filter): rejects outside London / NY AM
@@ -184,8 +185,8 @@ def test_h1_v2_no_lookahead_in_filters() -> None:
     assert plugin_c.evaluate(row_ny, current_close=close_price) is not None
 
 
-def test_h1_v2_frozen_spec_hash_and_registry_trial_count_is_4() -> None:
-    """Verify that H1 v2 specification file is frozen (SHA-256 match) and trial count K=4 is enforced."""
+def test_h1_v2_frozen_spec_hash_and_registry_program_trial_count_is_9() -> None:
+    """Verify that H1 v2 specification file is frozen (SHA-256 match) and program-wide trial count K=9 is enforced."""
     # 1. SHA-256 integrity match
     assert verify_h1_v2_spec_hash() is True
     spec_path = Path(H1_V2_SPEC_PATH)
@@ -193,19 +194,33 @@ def test_h1_v2_frozen_spec_hash_and_registry_trial_count_is_4() -> None:
     calculated_hash = hashlib.sha256(spec_path.read_bytes()).hexdigest()
     assert calculated_hash == H1_V2_FROZEN_SHA256
 
-    # 2. Registry trial counts for H1 v2 and its variants are 4
-    assert REGISTRY.get_trial_count("H1_v2.0.0") == 4
-    assert REGISTRY.get_trial_count("H1_v2.0.0_A") == 4
-    assert REGISTRY.get_trial_count("H1_v2.0.0_B") == 4
-    assert REGISTRY.get_trial_count("H1_v2.0.0_C") == 4
+    # 2. Registry trial counts computed program-wide: K=9
+    assert REGISTRY.get_program_trial_count() == 9
+    expected_trials = [
+        "H1_v1.0.0",
+        "H1_v2.0.0_A",
+        "H1_v2.0.0_B",
+        "H1_v2.0.0_C",
+        "H2_v1.0.0",
+        "H3_v1.0.0",
+        "H4_v1.0.0",
+        "H4_v1.1.0",
+        "H5_v1.0.0",
+    ]
+    assert REGISTRY.get_program_trials() == expected_trials
+    assert REGISTRY.get_trial_count("H1_v2.0.0") == 9
+    assert REGISTRY.get_trial_count("H1_v2.0.0_A") == 9
+    assert REGISTRY.get_trial_count("H1_v2.0.0_B") == 9
+    assert REGISTRY.get_trial_count("H1_v2.0.0_C") == 9
+    assert REGISTRY.get_trial_count("H1_v1.0.0") == 9
 
-    # 3. DSR strictly uses K=4 trials for any H1_v2 evaluation
+    # 3. DSR strictly uses K=9 trials for any H1_v2 evaluation
     returns = [1.0, 0.8, -0.2, 1.2, 0.5, 0.3, 0.9, -0.1, 0.7, 0.4] * 5
     dsr_k1 = calculate_deflated_sharpe(returns, total_trials=1)
-    dsr_k4 = calculate_deflated_sharpe(returns, total_trials=4)
-    assert dsr_k1 > dsr_k4, f"DSR K=1 ({dsr_k1}) must strictly exceed DSR K=4 ({dsr_k4})"
+    dsr_k9 = calculate_deflated_sharpe(returns, total_trials=9)
+    assert dsr_k1 > dsr_k9, f"DSR K=1 ({dsr_k1}) must strictly exceed DSR K=9 ({dsr_k9})"
 
-    # 4. Gate check result enforces K=4 DSR
+    # 4. Gate check result enforces K=9 DSR
     from unittest.mock import MagicMock
     from deskmind.backtest.engine import BacktestResult, Trade
 
@@ -223,9 +238,9 @@ def test_h1_v2_frozen_spec_hash_and_registry_trial_count_is_4() -> None:
     bt.max_drawdown_pct = 2.0
 
     gate = evaluate_research_gates("H1_v2.0.0_A", [], [], trial_count=1, backtest_result=bt)
-    # Even if trial_count=1 was passed in, H1_v2 enforces effective_trials >= 4
-    expected_dsr_k4 = calculate_deflated_sharpe([1.93] * 50, total_trials=4)
-    assert gate.deflated_sharpe == expected_dsr_k4
+    # Even if trial_count=1 was passed in, H1_v2 enforces effective_trials >= 9
+    expected_dsr_k9 = calculate_deflated_sharpe([1.93] * 50, total_trials=9)
+    assert gate.deflated_sharpe == expected_dsr_k9
 
 
 def test_h1_v2_random_baseline_limit_model_integration() -> None:
@@ -293,3 +308,100 @@ def test_h1_v2_random_baseline_limit_model_integration() -> None:
     # Order fills -> 0 missed limit fills!
     assert stats_filled.missed_limit_fills_per_seed == 0
     assert stats_filled.skipped_trades_per_seed == 0
+
+
+def test_h1_v2_exit_fee_model_in_random_baseline() -> None:
+    """Verify that random baseline applies spec exit fee model:
+    - Target: limit (maker 0.0002, 0 slippage)
+    - Stop: market (taker 0.0005 + adverse slippage)
+    - Time/other: market (taker 0.0005 + adverse slippage)
+    """
+    day_start = 1680000000000
+    mock_trade = {
+        "symbol": "BTCUSDT",
+        "side": "long",
+        "entry_time_ms": day_start,
+        "entry_price": Decimal("100.0"),
+        "qty": Decimal("10.0"),
+        "initial_risk": Decimal("15.0"),  # risk_pct = 15.0 / (100.0 * 10.0) = 0.015 (1.5%)
+        "pnl": Decimal("0.0"),
+        "fees_paid": Decimal("0.0"),
+        "funding_paid": Decimal("0.0"),
+        "slippage_paid": Decimal("0.0"),
+        "order_type": "limit",
+    }
+
+    # 1. Target exit scenario: bar 1 trades through entry (99.8 <= 99.9), bar 2 hits TP (high 104.0 >= 103.0)
+    bars_tp = [
+        {"open_time": day_start + 0 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.9"), "close": Decimal("100.0")},
+        {"open_time": day_start + 1 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.8"), "close": Decimal("100.0")},
+        {"open_time": day_start + 2 * 300_000, "open": Decimal("100.0"), "high": Decimal("104.0"), "low": Decimal("99.9"), "close": Decimal("103.5")},
+    ]
+    sampled_tp: list[Any] = []
+    stats_tp = run_backtest_random_baseline(
+        trades=[mock_trade],
+        bars_by_symbol={"BTCUSDT": bars_tp},
+        num_seeds=1,
+        entry_order_type="limit",
+        limit_expiry_bars=5,
+        sampled_trades=sampled_tp,
+    )
+    assert len(sampled_tp) == 1
+    t_tp = sampled_tp[0]
+    assert t_tp.exit_reason == "take_profit"
+    # Target reached exactly at 103.0 without slippage
+    assert t_tp.target_price == 103.0
+    assert abs(t_tp.gross_r - 2.0) < 1e-4
+    # Expected fee: entry (maker 0.0002 / 0.015 = 0.013333R) + exit (maker 0.0002 * (103/100) / 0.015 = 0.013733R) = 0.027067R
+    expected_tp_cost = (0.0002 / 0.015) + (0.0002 * 1.03 / 0.015)
+    expected_tp_net = 2.0 - expected_tp_cost
+    assert abs(t_tp.net_r - expected_tp_net) < 1e-4, f"Expected net R {expected_tp_net:.4f}, got {t_tp.net_r:.4f}"
+
+    # 2. Stop exit scenario: bar 1 trades through entry (99.8), bar 2 hits SL (low 97.0 <= 98.5)
+    bars_sl = [
+        {"open_time": day_start + 0 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.9"), "close": Decimal("100.0")},
+        {"open_time": day_start + 1 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.8"), "close": Decimal("100.0")},
+        {"open_time": day_start + 2 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("97.0"), "close": Decimal("98.0")},
+    ]
+    sampled_sl: list[Any] = []
+    stats_sl = run_backtest_random_baseline(
+        trades=[mock_trade],
+        bars_by_symbol={"BTCUSDT": bars_sl},
+        num_seeds=1,
+        entry_order_type="limit",
+        limit_expiry_bars=5,
+        sampled_trades=sampled_sl,
+    )
+    assert len(sampled_sl) == 1
+    t_sl = sampled_sl[0]
+    assert t_sl.exit_reason == "stop_loss"
+    # Gross R must include adverse slippage, so gross_r <= -1.0
+    assert t_sl.gross_r <= -1.0
+    # Stop exit uses taker fee rate (0.0005), so total cost exceeds maker target cost
+    stop_cost = t_sl.gross_r - t_sl.net_r
+    assert stop_cost > expected_tp_cost, f"Stop taker cost ({stop_cost:.4f}R) must exceed target maker cost ({expected_tp_cost:.4f}R)"
+
+    # 3. Horizon exit scenario: bars stay flat, exits at max_horizon_bars=2
+    bars_horizon = [
+        {"open_time": day_start + 0 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.9"), "close": Decimal("100.0")},
+        {"open_time": day_start + 1 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.8"), "close": Decimal("100.0")},
+        {"open_time": day_start + 2 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.2"), "low": Decimal("99.9"), "close": Decimal("100.0")},
+        {"open_time": day_start + 3 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.2"), "low": Decimal("99.9"), "close": Decimal("100.0")},
+    ]
+    sampled_hz: list[Any] = []
+    stats_hz = run_backtest_random_baseline(
+        trades=[mock_trade],
+        bars_by_symbol={"BTCUSDT": bars_horizon},
+        num_seeds=1,
+        entry_order_type="limit",
+        limit_expiry_bars=5,
+        max_horizon_bars=2,
+        sampled_trades=sampled_hz,
+    )
+    assert len(sampled_hz) == 1
+    t_hz = sampled_hz[0]
+    assert t_hz.exit_reason == "max_horizon_bars"
+    hz_cost = t_hz.gross_r - t_hz.net_r
+    # Horizon exit uses taker fee rate (0.0005)
+    expected_hz_fee = (0.0002 / 0.015) + (0.0005 * 1.0 / 0.015)
+    assert abs(hz_cost - expected_hz_fee) < 0.01

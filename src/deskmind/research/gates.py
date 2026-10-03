@@ -283,14 +283,18 @@ def evaluate_research_gates(
     hypothesis_id: str,
     results: Sequence[EventStudyResult],
     baseline_results: Sequence[EventStudyResult],
-    trial_count: int = 1,
+    trial_count: int | None = None,
     cost_per_trade_r: float = 0.05,
     backtest_result: Any | None = None,
 ) -> GateCheckResult:
     """Evaluate encoded research gates for TRAIN -> VALIDATION qualification."""
-    effective_trials = trial_count
-    if hypothesis_id.startswith("H1_v2"):
-        effective_trials = max(effective_trials, 4)
+    from deskmind.research.hypotheses.registry import REGISTRY
+
+    program_k = REGISTRY.get_program_trial_count()
+    if trial_count is not None and trial_count > 0:
+        effective_trials = max(trial_count, program_k) if hypothesis_id.startswith("H1_v2") else trial_count
+    else:
+        effective_trials = program_k
 
     max_dd_pct = 0.0
     trades: list[Any] = []

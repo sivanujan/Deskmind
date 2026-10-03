@@ -24,7 +24,7 @@ VOID_HYPOTHESES: dict[str, str] = {
 
 # Frozen specification file and SHA-256 hash for H1 v2.0.0
 H1_V2_SPEC_PATH: str = "docs/research/hypotheses/H1_v2.md"
-H1_V2_FROZEN_SHA256: str = "e2da92e2e729d09a8d82d6df59ce48dc02061392cc20cd5dbaab040c717d3390"
+H1_V2_FROZEN_SHA256: str = "dac34d282f3bbb73fe57b0fc434c9e5afb73911cb31fbb9409bb70f7b1f899de"
 
 
 def verify_h1_v2_spec_hash() -> bool:
@@ -85,10 +85,25 @@ class HypothesisRegistry:
         self._trial_counts[hypothesis_id] = 1
         return 1
 
-    def get_trial_count(self, hypothesis_id: str) -> int:
-        if hypothesis_id.startswith("H1_v2"):
-            return 4
-        return self._trial_counts.get(hypothesis_id, 1)
+    def get_program_trials(self) -> list[str]:
+        """Return distinct program-wide trial IDs across all evaluated and pre-registered hypotheses.
+
+        Trials: H1 v1, H2, H3, H4 v1.0.0 (void), H4 v1.1.0, H5, + 3 H1 v2 variants = K=9.
+        """
+        trials = set(self._plugins.keys()) | set(VOID_HYPOTHESES.keys())
+        trials.update(k for k in self._v2_plugins.keys() if k != "H1_v2.0.0")
+        return sorted(trials)
+
+    def get_program_trial_count(self) -> int:
+        """Compute K program-wide trial count automatically from the registry.
+
+        Returns K = 9.
+        """
+        return len(self.get_program_trials())
+
+    def get_trial_count(self, hypothesis_id: str | None = None) -> int:
+        """Return the program-wide trial count (K=9) for Deflated Sharpe Ratio calculation."""
+        return self.get_program_trial_count()
 
 
 REGISTRY = HypothesisRegistry()

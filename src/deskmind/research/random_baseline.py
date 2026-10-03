@@ -100,6 +100,7 @@ def run_backtest_random_baseline(
     seed_offset: int = 42,
     entry_order_type: str = "market",
     limit_expiry_bars: int = 12,
+    sampled_trades: list[SampledTradeInfo] | None = None,
 ) -> RandomBaselineStats:
     """Run backtest-level matched random baseline with exact engine fill model.
 
@@ -183,6 +184,7 @@ def run_backtest_random_baseline(
             "entry_time_ms": entry_ms,
             "risk_pct": risk_pct,
             "cost_r": cost_r,
+            "funding_r": (funding / ir) if ir > 0 else 0.0,
             "initial_risk": ir,
             "order_type": resolved_order_type,
         })
@@ -233,7 +235,7 @@ def run_backtest_random_baseline(
 
     seed_gross_exp: list[float] = []
     seed_net_exp: list[float] = []
-    sampled_trades: list[SampledTradeInfo] = []
+    out_sampled_trades: list[SampledTradeInfo] = sampled_trades if sampled_trades is not None else []
     sampled_entry_times_by_seed: list[list[int]] = []
     skipped_per_seed: list[int] = []
     missed_limit_fills_list: list[int] = []
@@ -287,7 +289,6 @@ def run_backtest_random_baseline(
 
                 entry_fill = limit_price
                 start_exit_idx = fill_idx + 1
-                effective_cost_r = cost_r * 0.4 if fixed_cost_r is None else cost_r
             else:
                 # Market order entry execution (includes slippage)
                 entry_fill, _ = simulate_market_fill(
@@ -299,7 +300,6 @@ def run_backtest_random_baseline(
                     slippage_atr_factor=slippage_atr_factor,
                 )
                 start_exit_idx = bar_idx + 1
-                effective_cost_r = cost_r
 
             # 2. 1R Stop / 2R Target geometry from actual fill
             r_dist = entry_fill * Decimal(str(risk_pct))
@@ -323,6 +323,8 @@ def run_backtest_random_baseline(
             gross_r: float | None = None
             exit_reason_str = "mark_to_market"
             last_idx = start_exit_idx
+            is_maker_exit = False
+            exit_fill_price: Decimal | None = None
 
             for j in range(start_exit_idx, max_look + 1):
                 last_idx = j
@@ -342,6 +344,8 @@ def run_backtest_random_baseline(
 
                 if exit_reason is not None:
                     exit_reason_str = exit_reason
+                    is_maker_exit = is_maker
+                    exit_fill_price = exit_price
                     if side == "long":
                         gross_r = float((exit_price - entry_fill) / r_dist)
                     else:
@@ -349,18 +353,46 @@ def run_backtest_random_baseline(
                     break
 
             if gross_r is None:
-                term_price = b_list[min(last_idx, len(b_list) - 1)]["close"]
+                # Time / max horizon exit: executes as market order (taker + adverse slippage)
+                cand_close = b_list[min(last_idx, len(b_list) - 1)]["close"]
+                closing_side = "short" if side == "long" else "long"
+                exit_price, _ = simulate_market_fill(
+                    price=cand_close,
+                    side=closing_side,
+                    tick_size=tick_size,
+                    atr=None,
+                    slippage_bps=slippage_bps,
+                    slippage_atr_factor=slippage_atr_factor,
+                )
+                exit_fill_price = exit_price
+                exit_reason_str = "max_horizon_bars"
+                is_maker_exit = False
                 if side == "long":
-                    gross_r = float((term_price - entry_fill) / r_dist)
+                    gross_r = float((exit_price - entry_fill) / r_dist)
                 else:
-                    gross_r = float((entry_fill - term_price) / r_dist)
+                    gross_r = float((entry_fill - exit_price) / r_dist)
+
+            if fixed_cost_r is not None:
+                effective_cost_r = fixed_cost_r
+            else:
+                # Spec-compliant exit fee model:
+                # Entry: maker (0.0002) if limit order, else taker (0.0005)
+                # Exit: target = maker (0.0002, no slippage), stop = taker (0.0005 + slippage), time/other = taker (0.0005 + slippage)
+                entry_fee_rate = 0.0002 if is_limit_order else 0.0005
+                exit_fee_rate = 0.0002 if (is_maker_exit or exit_reason_str == "take_profit") else 0.0005
+
+                entry_fee_r = entry_fee_rate / risk_pct if risk_pct > 0 else 0.0
+                exit_ratio = float(exit_fill_price / entry_fill) if exit_fill_price else 1.0
+                exit_fee_r = (exit_fee_rate * exit_ratio / risk_pct) if risk_pct > 0 else 0.0
+                funding_r = prof.get("funding_r", 0.0)
+                effective_cost_r = entry_fee_r + exit_fee_r + funding_r
 
             net_r = gross_r - effective_cost_r
             seed_gross_list.append(gross_r)
             seed_net_list.append(net_r)
 
             if seed == 0:
-                sampled_trades.append(
+                out_sampled_trades.append(
                     SampledTradeInfo(
                         symbol=sym,
                         side=side,
@@ -408,6 +440,6 @@ def run_backtest_random_baseline(
         missed_limit_fills_per_seed=avg_missed_limit,
         seed_net_exp=seed_net_exp,
         seed_gross_exp=seed_gross_exp,
-        sampled_trades=sampled_trades,
+        sampled_trades=out_sampled_trades,
         sampled_entry_times_by_seed=sampled_entry_times_by_seed,
     )
