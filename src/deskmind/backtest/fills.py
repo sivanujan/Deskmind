@@ -77,11 +77,12 @@ def simulate_candle_exit(
             return round_price(raw_exit, tick_size), "stop_loss", False, slip_pct
 
         # Both SL and TP hit in same bar -> conservative: SL hit first
+        # TP limit exit requires trade-through by >= 1 tick (b_high >= take_profit + tick_size)
         both_hit = (
             stop_loss is not None
             and take_profit is not None
             and b_low <= stop_loss
-            and b_high >= take_profit
+            and b_high >= (take_profit + tick_size)
         )
         if both_hit:
             assert stop_loss is not None
@@ -92,7 +93,8 @@ def simulate_candle_exit(
             raw_exit = stop_loss * (Decimal("1") - slip_pct)
             return round_price(raw_exit, tick_size), "stop_loss", False, slip_pct
 
-        if take_profit is not None and b_high >= take_profit:
+        # Target exit is a maker limit: fills ONLY if traded through by >= 1 tick (touch = no fill)
+        if take_profit is not None and b_high >= (take_profit + tick_size):
             return take_profit, "take_profit", True, Decimal("0")
 
     elif pos_side == "short":
@@ -102,11 +104,12 @@ def simulate_candle_exit(
             return round_price(raw_exit, tick_size), "stop_loss", False, slip_pct
 
         # Both SL and TP hit in same bar -> conservative: SL hit first
+        # TP limit exit requires trade-through by >= 1 tick (b_low <= take_profit - tick_size)
         both_hit_short = (
             stop_loss is not None
             and take_profit is not None
             and b_high >= stop_loss
-            and b_low <= take_profit
+            and b_low <= (take_profit - tick_size)
         )
         if both_hit_short:
             assert stop_loss is not None
@@ -117,7 +120,8 @@ def simulate_candle_exit(
             raw_exit = stop_loss * (Decimal("1") + slip_pct)
             return round_price(raw_exit, tick_size), "stop_loss", False, slip_pct
 
-        if take_profit is not None and b_low <= take_profit:
+        # Target exit is a maker limit: fills ONLY if traded through by >= 1 tick (touch = no fill)
+        if take_profit is not None and b_low <= (take_profit - tick_size):
             return take_profit, "take_profit", True, Decimal("0")
 
     return None, None, False, Decimal("0")

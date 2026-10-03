@@ -24,7 +24,7 @@ VOID_HYPOTHESES: dict[str, str] = {
 
 # Frozen specification file and SHA-256 hash for H1 v2.0.0
 H1_V2_SPEC_PATH: str = "docs/research/hypotheses/H1_v2.md"
-H1_V2_FROZEN_SHA256: str = "dac34d282f3bbb73fe57b0fc434c9e5afb73911cb31fbb9409bb70f7b1f899de"
+H1_V2_FROZEN_SHA256: str = "50a4f2558de47a700a9196f576c61e631f757b626852d79365ca1993f80db4a4"
 
 
 def verify_h1_v2_spec_hash() -> bool:

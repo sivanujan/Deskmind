@@ -168,10 +168,10 @@ def test_h1_v2_no_lookahead_in_filters() -> None:
     assert sig_a.stop_price == sig_a.entry_price - (1.5 * atr)
     assert sig_a.target_price == sig_a.entry_price + (3.0 * atr)
 
-    # 2. Variant B (2h trend confirmation filter): rejects when 2h trend is bearish
-    row_bearish_trend = dict(base_row, htf_trend_2h="bearish")
+    # 2. Variant B (1h trend filter): rejects when 1h trend is bearish
+    row_bearish_trend = dict(base_row, htf_trend_1h="bearish")
     assert plugin_b.evaluate(row_bearish_trend, current_close=close_price) is None
-    # Accepts when 2h trend is bullish
+    # Accepts when 1h trend is bullish
     assert plugin_b.evaluate(base_row, current_close=close_price) is not None
 
     # 3. Variant C (Killzone filter): rejects outside London / NY AM
@@ -405,3 +405,104 @@ def test_h1_v2_exit_fee_model_in_random_baseline() -> None:
     # Horizon exit uses taker fee rate (0.0005)
     expected_hz_fee = (0.0002 / 0.015) + (0.0005 * 1.0 / 0.015)
     assert abs(hz_cost - expected_hz_fee) < 0.01
+
+
+def test_h1_v2_tp_requires_trade_through_touch_does_not_fill() -> None:
+    """Verify that TP fills ONLY when price trades THROUGH target by >= 1 tick.
+    Touch-only (high == take_profit for long, low == take_profit for short) is NO FILL.
+    """
+    from deskmind.backtest.fills import simulate_candle_exit
+
+    tick_size = Decimal("0.1")
+
+    # 1. Long position: take_profit = 105.0
+    # 1a) Touch-only: high == 105.0 -> NO FILL
+    exit_p, reason, is_maker, _ = simulate_candle_exit(
+        pos_side="long",
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("105.0"),
+        b_open=Decimal("100.0"),
+        b_high=Decimal("105.0"),  # touches exactly
+        b_low=Decimal("99.0"),
+        tick_size=tick_size,
+    )
+    assert exit_p is None
+    assert reason is None
+
+    # 1b) Trade-through by 1 tick: high == 105.1 -> FILLED
+    exit_p, reason, is_maker, _ = simulate_candle_exit(
+        pos_side="long",
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("105.0"),
+        b_open=Decimal("100.0"),
+        b_high=Decimal("105.1"),  # trades through by 1 tick
+        b_low=Decimal("99.0"),
+        tick_size=tick_size,
+    )
+    assert exit_p == Decimal("105.0")
+    assert reason == "take_profit"
+    assert is_maker is True
+
+    # 2. Short position: take_profit = 95.0
+    # 2a) Touch-only: low == 95.0 -> NO FILL
+    exit_p, reason, is_maker, _ = simulate_candle_exit(
+        pos_side="short",
+        stop_loss=Decimal("105.0"),
+        take_profit=Decimal("95.0"),
+        b_open=Decimal("100.0"),
+        b_high=Decimal("101.0"),
+        b_low=Decimal("95.0"),  # touches exactly
+        tick_size=tick_size,
+    )
+    assert exit_p is None
+    assert reason is None
+
+    # 2b) Trade-through by 1 tick: low == 94.9 -> FILLED
+    exit_p, reason, is_maker, _ = simulate_candle_exit(
+        pos_side="short",
+        stop_loss=Decimal("105.0"),
+        take_profit=Decimal("95.0"),
+        b_open=Decimal("100.0"),
+        b_high=Decimal("101.0"),
+        b_low=Decimal("94.9"),  # trades through by 1 tick
+        tick_size=tick_size,
+    )
+    assert exit_p == Decimal("95.0")
+    assert reason == "take_profit"
+    assert is_maker is True
+
+    # 3. In random baseline: touch-only TP does NOT trigger TP exit
+    day_start = 1680000000000
+    mock_trade = {
+        "symbol": "BTCUSDT",
+        "side": "long",
+        "entry_time_ms": day_start,
+        "entry_price": Decimal("100.0"),
+        "qty": Decimal("10.0"),
+        "initial_risk": Decimal("15.0"),  # risk_pct = 1.5%, stop = 98.5, target = 103.0
+        "pnl": Decimal("0.0"),
+        "fees_paid": Decimal("0.0"),
+        "funding_paid": Decimal("0.0"),
+        "slippage_paid": Decimal("0.0"),
+        "order_type": "limit",
+    }
+    # Touch-only bar: high is exactly 103.0 (tick_size = 0.01)
+    bars_touch = [
+        {"open_time": day_start + 0 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.9"), "close": Decimal("100.0")},
+        {"open_time": day_start + 1 * 300_000, "open": Decimal("100.0"), "high": Decimal("100.5"), "low": Decimal("99.8"), "close": Decimal("100.0")},
+        {"open_time": day_start + 2 * 300_000, "open": Decimal("100.0"), "high": Decimal("103.0"), "low": Decimal("99.9"), "close": Decimal("102.5")},  # touches 103.0
+        {"open_time": day_start + 3 * 300_000, "open": Decimal("102.0"), "high": Decimal("102.5"), "low": Decimal("99.9"), "close": Decimal("102.0")},
+    ]
+    sampled_touch: list[Any] = []
+    run_backtest_random_baseline(
+        trades=[mock_trade],
+        bars_by_symbol={"BTCUSDT": bars_touch},
+        num_seeds=1,
+        entry_order_type="limit",
+        limit_expiry_bars=5,
+        max_horizon_bars=2,
+        sampled_trades=sampled_touch,
+    )
+    assert len(sampled_touch) == 1
+    # Because 103.0 was touch-only, it did not fill TP, and instead exited at horizon
+    assert sampled_touch[0].exit_reason == "max_horizon_bars"

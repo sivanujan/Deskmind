@@ -3,7 +3,7 @@
 Pre-registered variants:
   - Variant A (H1_v2.0.0_A): Exact v1.0.0 signal conditions (same evaluate function),
     with entry changed from market to honest proximal limit order (N=12 expiry, trade-through fill).
-  - Variant B (H1_v2.0.0_B): Variant A + dual-timeframe trend confirmation (1h + 2h trend alignment).
+  - Variant B (H1_v2.0.0_B): Variant A + 1h trend filter (htf_trend_1h in signal direction).
   - Variant C (H1_v2.0.0_C): Variant A + ICT Session Killzones (London Open & NY AM only).
 """
 
@@ -88,10 +88,10 @@ class H1DiscountOBPluginV2(HypothesisPlugin):
 
         r = feature_row.as_dict() if isinstance(feature_row, FeatureRow) else feature_row
 
-        # Variant B: Dual-timeframe trend filter (both 1h and 2h trend in signal direction)
+        # Variant B: 1h Trend Direction Filter (must match frozen spec)
         if self.variant == "B":
-            t_2h = str(r.get("htf_trend_2h", "ranging"))
-            if t_2h != v1_sig.direction:
+            t_1h = str(r.get("htf_trend_1h", "ranging"))
+            if t_1h != v1_sig.direction:
                 return None
 
         # Variant C: London & NY AM killzone filter
