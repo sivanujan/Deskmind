@@ -205,6 +205,183 @@ def test_gate_criteria_exact_failing_numbers() -> None:
     assert gate_h4.verdict == "FAIL"
 
 
+def test_gate_criteria_exact_passing_numbers() -> None:
+    """Exact criterion test for passing gate numbers:
+    - >= 100 trades (60 in 2023, 60 in 2024).
+    - Gross expectancy >= +0.15R.
+    - Positive net expectancy in both halves.
+    - Positive symbols >= 60%.
+    - Valid accounting invariants.
+    """
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+    from deskmind.backtest.engine import BacktestResult, Trade
+
+    trades = []
+    # 60 trades in 2023 (mid 2023: 1680000000000)
+    for i in range(60):
+        trades.append(
+            Trade(
+                id=f"t_2023_{i}",
+                symbol="BTCUSDT" if i % 2 == 0 else "ETHUSDT",
+                side="long",
+                entry_time_ms=1680000000000 + i * 3600000,
+                entry_price=Decimal("20000.0"),
+                exit_time_ms=1680000000000 + (i + 1) * 3600000,
+                exit_price=Decimal("20400.0"),
+                qty=Decimal("0.5"),
+                pnl=Decimal("195.0"),
+                pnl_pct=Decimal("1.95"),
+                r_multiple=Decimal("1.95"),
+                exit_reason="take_profit",
+                fees_paid=Decimal("5.0"),
+                funding_paid=Decimal("0.0"),
+                slippage_paid=Decimal("0.0"),
+                holding_time_minutes=60,
+                spanned_gap=False,
+                initial_risk=Decimal("100.0"),
+            )
+        )
+    # 60 trades in 2024 (mid 2024: 1715000000000)
+    for i in range(60):
+        trades.append(
+            Trade(
+                id=f"t_2024_{i}",
+                symbol="BTCUSDT" if i % 2 == 0 else "ETHUSDT",
+                side="long",
+                entry_time_ms=1715000000000 + i * 3600000,
+                entry_price=Decimal("50000.0"),
+                exit_time_ms=1715000000000 + (i + 1) * 3600000,
+                exit_price=Decimal("51000.0"),
+                qty=Decimal("0.2"),
+                pnl=Decimal("195.0"),
+                pnl_pct=Decimal("1.95"),
+                r_multiple=Decimal("1.95"),
+                exit_reason="take_profit",
+                fees_paid=Decimal("5.0"),
+                funding_paid=Decimal("0.0"),
+                slippage_paid=Decimal("0.0"),
+                holding_time_minutes=60,
+                spanned_gap=False,
+                initial_risk=Decimal("100.0"),
+            )
+        )
+
+    bt = MagicMock(spec=BacktestResult)
+    bt.trades = trades
+    bt.initial_cash = Decimal("100000.0")
+    bt.equity_curve = []
+    bt.max_drawdown_pct = 5.2
+
+    gate = evaluate_research_gates("H1_v1.0.0", [], [], trial_count=1, backtest_result=bt)
+    assert gate.trades_count == 120
+    assert gate.checklist["min_trades_100"] is True
+    assert gate.gross_expectancy_r >= 0.15
+    assert gate.checklist["gross_expectancy_0_15R"] is True
+    assert gate.net_expectancy_r > 0.0
+    assert gate.checklist["net_expectancy_positive"] is True
+    assert gate.checklist["both_halves_positive"] is True
+    assert gate.checklist["accounting_invariants_pass"] is True
+
+
+def test_deflated_sharpe_exact_passing_case() -> None:
+    """Strong returns distribution with low trial count yields high DSR (> 0.95)."""
+    returns = [1.5, 1.2, 0.8, 1.9, 0.5, 1.1, 1.4, 0.9, 1.3, 0.7] * 5
+    dsr = calculate_deflated_sharpe(returns, total_trials=1)
+    assert dsr >= 0.95, f"Expected DSR >= 0.95 for strong signal, got {dsr:.4f}"
+
+
+def test_deflated_sharpe_insufficient_sample_length() -> None:
+    """Sample lengths below 5 cannot reliably estimate skew/kurtosis and must return 0.0."""
+    returns = [0.5, 1.0, -0.2]
+    dsr = calculate_deflated_sharpe(returns, total_trials=1)
+    assert dsr == 0.0, f"Expected 0.0 for N < 5, got {dsr}"
+
+
+def test_deflated_sharpe_higher_trials_deflation() -> None:
+    """Test that higher trial counts strictly penalize/deflate Sharpe ratio."""
+    returns = [1.0, 0.8, -0.2, 1.2, 0.5, 0.3, 0.9, -0.1, 0.7, 0.4] * 5
+    dsr_1 = calculate_deflated_sharpe(returns, total_trials=1)
+    dsr_10 = calculate_deflated_sharpe(returns, total_trials=10)
+    dsr_100 = calculate_deflated_sharpe(returns, total_trials=100)
+    assert dsr_1 >= dsr_10 >= dsr_100 and dsr_1 > dsr_100, f"Expected deflation: {dsr_1:.4f} >= {dsr_10:.4f} >= {dsr_100:.4f}"
+
+
+def test_event_study_matched_baseline_scale() -> None:
+    """Matched random baseline preserves identical relative stop and target percentage scale."""
+    from deskmind.agents.trend.models import Bar
+    from deskmind.research.event_study import generate_matched_random_baseline
+    from deskmind.research.hypotheses.models import Signal
+
+    sig = Signal(
+        hypothesis_id="H1_v1.0.0",
+        symbol="BTCUSDT",
+        timestamp=1680000000000,
+        direction="bullish",
+        entry_price=20000.0,
+        stop_price=19600.0,  # 2.0% stop
+        target_price=20800.0,  # 4.0% target (2:1)
+        r_multiple=2.0,
+        rationale="Test scale preservation",
+    )
+
+    bars = [
+        Bar(
+            open_time=1680000000000 + i * 300_000,
+            close_time=1680000000000 + (i + 1) * 300_000,
+            open=30000.0,  # Different price regime
+            high=30100.0,
+            low=29900.0,
+            close=30000.0,
+        )
+        for i in range(100)
+    ]
+
+    baseline = generate_matched_random_baseline([sig], {"BTCUSDT": bars}, samples=5)
+    assert len(baseline) == 5
+    for b in baseline:
+        # Relative stop must match 2.0% and target 4.0%
+        stop_pct = abs(b.signal.entry_price - b.signal.stop_price) / b.signal.entry_price
+        target_pct = abs(b.signal.target_price - b.signal.entry_price) / b.signal.entry_price
+        assert abs(stop_pct - 0.02) < 1e-4, f"Stop scale mismatch: {stop_pct} != 0.02"
+        assert abs(target_pct - 0.04) < 1e-4, f"Target scale mismatch: {target_pct} != 0.04"
+
+
+def test_pilot_pipeline_reproducibility() -> None:
+    """Matched baseline generation produces deterministic and reproducible results with fixed seed."""
+    from deskmind.agents.trend.models import Bar
+    from deskmind.research.event_study import generate_matched_random_baseline
+    from deskmind.research.hypotheses.models import Signal
+
+    sig = Signal(
+        hypothesis_id="H1_v1.0.0",
+        symbol="BTCUSDT",
+        timestamp=1680000000000,
+        direction="bullish",
+        entry_price=20000.0,
+        stop_price=19800.0,
+        target_price=20400.0,
+        r_multiple=2.0,
+        rationale="Deterministic test",
+    )
+    bars = [
+        Bar(
+            open_time=1680000000000 + i * 300_000,
+            close_time=1680000000000 + (i + 1) * 300_000,
+            open=20000.0 + (i % 5),
+            high=20010.0,
+            low=19990.0,
+            close=20002.0,
+        )
+        for i in range(60)
+    ]
+
+    res1 = generate_matched_random_baseline([sig], {"BTCUSDT": bars}, samples=3)
+    res2 = generate_matched_random_baseline([sig], {"BTCUSDT": bars}, samples=3)
+    assert [r.signal.entry_price for r in res1] == [r.signal.entry_price for r in res2]
+    assert [r.final_r for r in res1] == [r.final_r for r in res2]
+
+
 def test_event_study_train_split_never_reads_2025_row(tmp_path) -> None:
     """Event study on 'train' split never reads a 2025 feature row."""
     from datetime import UTC, datetime
@@ -597,6 +774,255 @@ def test_accounting_invariants_fail_on_corrupted_numbers() -> None:
     assert res_cost.passed is False
     assert res_cost.per_trade_cost_bound is False
     assert any("exceeds maximum allowed 0.50R" in v for v in res_cost.violations)
+
+
+def test_random_walk_baseline_zero_costs_and_with_costs() -> None:
+    """Feed synthetic random-walk 5m bars + mock trades into production baseline function:
+    - Zero cost: |mean gross R| < 0.03 over 1000 seeds.
+    - With cost c: mean net ≈ -c ± 0.03 (|mean net - (-c)| < 0.03).
+    """
+    import random
+    from decimal import Decimal
+    from deskmind.research.random_baseline import run_backtest_random_baseline
+
+    # Generate 10,000 bars of zero-drift symmetric random walk
+    rng = random.Random(42)
+    price = 1000
+    bars = []
+    t0 = 1680000000000
+    for i in range(10000):
+        step = 1 if rng.random() > 0.5 else -1
+        op = price
+        cl = price + step
+        hi = max(op, cl)
+        lo = min(op, cl)
+        bars.append({
+            "open_time": t0 + i * 300_000,
+            "open": Decimal(str(op)),
+            "high": Decimal(str(hi)),
+            "low": Decimal(str(lo)),
+            "close": Decimal(str(cl)),
+        })
+        price = cl
+
+    # 100 mock trades (alternating long/short with 1% risk)
+    mock_trades = [
+        {
+            "symbol": "BTCUSDT",
+            "side": "long" if i % 2 == 0 else "short",
+            "entry_time_ms": t0 + (i * 7) * 300_000,
+            "entry_price": Decimal("1000.0"),
+            "qty": Decimal("1.0"),
+            "initial_risk": Decimal("10.0"),
+            "pnl": Decimal("0.0"),
+            "fees_paid": Decimal("0.0"),
+            "funding_paid": Decimal("0.0"),
+            "slippage_paid": Decimal("0.0"),
+        }
+        for i in range(100)
+    ]
+
+    # a1) Zero cost: |mean gross R| < 0.03 over 1000 seeds
+    stats_zero = run_backtest_random_baseline(
+        trades=mock_trades,
+        bars_by_symbol={"BTCUSDT": bars},
+        num_seeds=1000,
+        slippage_bps=Decimal("0"),
+        slippage_atr_factor=Decimal("0"),
+        fixed_cost_r=0.0,
+        seed_offset=1,
+    )
+    assert abs(stats_zero.mean_gross_r) < 0.03, (
+        f"Expected |mean gross R| < 0.03, got {stats_zero.mean_gross_r:+.4f}R"
+    )
+
+    # a2) With cost c (e.g. c = 0.05R): mean net ≈ -c ± 0.03
+    cost_c = 0.05
+    stats_cost = run_backtest_random_baseline(
+        trades=mock_trades,
+        bars_by_symbol={"BTCUSDT": bars},
+        num_seeds=1000,
+        slippage_bps=Decimal("0"),
+        slippage_atr_factor=Decimal("0"),
+        fixed_cost_r=cost_c,
+        seed_offset=1,
+    )
+    expected_net = -cost_c
+    assert abs(stats_cost.mean_net_r - expected_net) < 0.03, (
+        f"Expected mean net ≈ {expected_net:+.4f}R ± 0.03, got {stats_cost.mean_net_r:+.4f}R (diff {abs(stats_cost.mean_net_r - expected_net):.4f})"
+    )
+
+
+def test_exported_trades_csv_accounting_identity() -> None:
+    """Assert identity: net_pnl_usd = gross_pnl_usd - fees_usd - funding_usd for every exported trade.
+    
+    Verifies:
+      - gross_pnl_usd is computed from fill prices (which ALREADY include slippage).
+      - slippage_usd is informational only (never subtracted again).
+      - net_pnl_usd = gross_pnl_usd - fees_usd - funding_usd holds to the cent (<= $0.02).
+    """
+    import csv
+    from pathlib import Path
+
+    csv_dir = Path("reports/research")
+    csv_files = list(csv_dir.glob("trades_*.csv"))
+    assert len(csv_files) >= 3, f"Expected at least 3 trade CSVs in reports/research, found {len(csv_files)}"
+
+    total_trades_checked = 0
+
+    for csv_file in csv_files:
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            # Verify required columns exist
+            required_cols = {
+                "hypothesis", "symbol", "side", "entry_time", "entry_price",
+                "exit_time", "exit_price", "exit_reason", "qty", "stop_price",
+                "target_price", "initial_risk_usd", "gross_pnl_usd", "fees_usd",
+                "slippage_usd", "funding_usd", "net_pnl_usd"
+            }
+            assert required_cols.issubset(set(reader.fieldnames or [])), (
+                f"Missing required columns in {csv_file.name}: {required_cols - set(reader.fieldnames or [])}"
+            )
+
+            for line_no, row in enumerate(reader, start=2):
+                total_trades_checked += 1
+                ep = float(row["entry_price"])
+                xp = float(row["exit_price"])
+                qty = float(row["qty"])
+                side = row["side"]
+                gross = float(row["gross_pnl_usd"])
+                fees = float(row["fees_usd"])
+                slip = float(row["slippage_usd"])
+                funding = float(row["funding_usd"])
+                net = float(row["net_pnl_usd"])
+
+                # 1. Verify gross_pnl_usd is computed directly from fill prices (already containing slippage)
+                # Note: prices in CSV are formatted to 6 decimals, so for high-quantity assets (e.g. 74,000 DOGE)
+                # string rounding to 6 decimals can produce a minute ~2-3 cent discrepancy vs full-precision Decimal.
+                if side == "long":
+                    direct_gross = (xp - ep) * qty
+                else:
+                    direct_gross = (ep - xp) * qty
+                assert abs(gross - direct_gross) <= max(0.05, abs(gross) * 0.001), (
+                    f"{csv_file.name}:{line_no}: gross_pnl_usd ${gross:.2f} != fill price PnL ${direct_gross:.2f}"
+                )
+
+                # 2. Verify net_pnl_usd = gross_pnl_usd - fees_usd - funding_usd (slippage NEVER subtracted again)
+                expected_net = gross - fees - funding
+                assert abs(net - expected_net) <= 0.02, (
+                    f"{csv_file.name}:{line_no}: net_pnl_usd ${net:.2f} != gross - fees - funding (${expected_net:.2f})"
+                )
+
+                # 3. If slippage were subtracted again, it would mismatch when slippage > 0
+                if slip > 0.05:
+                    double_subtracted_net = gross - fees - funding - slip
+                    assert abs(net - double_subtracted_net) > 0.02, (
+                        f"{csv_file.name}:{line_no}: net_pnl appears to have subtracted slippage twice!"
+                    )
+
+    assert total_trades_checked > 1000, f"Expected >1000 trades checked, got {total_trades_checked}"
+
+
+def test_backtest_random_baseline_matching_properties() -> None:
+    """Matching test: assert every random trade has the same symbol, side, risk_pct,
+    and time-of-day as its source trade, and assert no trade is skipped.
+    """
+    from decimal import Decimal
+    from deskmind.research.random_baseline import run_backtest_random_baseline
+
+    day_start = 1680000000000
+    # 30 full days of 5m bars (288 bars/day = 8640 bars)
+    bars = [
+        {
+            "open_time": day_start + i * 300_000,
+            "open": Decimal("100.0"),
+            "high": Decimal("101.0"),
+            "low": Decimal("99.0"),
+            "close": Decimal("100.0"),
+        }
+        for i in range(30 * 288)
+    ]
+
+    source_trades = [
+        {
+            "symbol": "BTCUSDT",
+            "side": "long",
+            "entry_time_ms": day_start + (1 * 288 + 12) * 300_000,  # Day 1
+            "entry_price": Decimal("100.0"),
+            "qty": Decimal("1.0"),
+            "initial_risk": Decimal("5.0"),
+            "pnl": Decimal("0.0"),
+            "fees_paid": Decimal("0.0"),
+            "funding_paid": Decimal("0.0"),
+            "slippage_paid": Decimal("0.0"),
+        },
+        {
+            "symbol": "BTCUSDT",
+            "side": "short",
+            "entry_time_ms": day_start + (5 * 288 + 45) * 300_000,  # Day 5
+            "entry_price": Decimal("100.0"),
+            "qty": Decimal("2.0"),
+            "initial_risk": Decimal("4.0"),
+            "pnl": Decimal("0.0"),
+            "fees_paid": Decimal("0.0"),
+            "funding_paid": Decimal("0.0"),
+            "slippage_paid": Decimal("0.0"),
+        },
+        {
+            "symbol": "BTCUSDT",
+            "side": "long",
+            "entry_time_ms": day_start + (10 * 288 + 120) * 300_000,  # Day 10
+            "entry_price": Decimal("100.0"),
+            "qty": Decimal("0.5"),
+            "initial_risk": Decimal("2.5"),
+            "pnl": Decimal("0.0"),
+            "fees_paid": Decimal("0.0"),
+            "funding_paid": Decimal("0.0"),
+            "slippage_paid": Decimal("0.0"),
+        },
+    ]
+
+    stats = run_backtest_random_baseline(
+        trades=source_trades,
+        bars_by_symbol={"BTCUSDT": bars},
+        num_seeds=50,
+        seed_offset=1,
+    )
+
+    # c) Assert no trade is skipped in the test
+    assert stats.skipped_trades_per_seed == 0, (
+        f"Expected 0 skipped trades, got {stats.skipped_trades_per_seed}"
+    )
+
+    # b) Matching test: assert every random trade has the same symbol, side, risk_pct, and time-of-day
+    assert len(stats.sampled_trades) == len(source_trades)
+    for sampled, src in zip(stats.sampled_trades, source_trades):
+        src_risk_pct = float(src["initial_risk"] / src["qty"]) / float(src["entry_price"])
+        src_tod_ms = src["entry_time_ms"] % 86_400_000
+
+        assert sampled.symbol == src["symbol"], f"Symbol mismatch: {sampled.symbol} != {src['symbol']}"
+        assert sampled.side == src["side"], f"Side mismatch: {sampled.side} != {src['side']}"
+        assert abs(sampled.risk_pct - src_risk_pct) < 1e-6, (
+            f"Risk pct mismatch: {sampled.risk_pct} != {src_risk_pct}"
+        )
+        assert sampled.tod_ms == src_tod_ms, f"Time-of-day mismatch: {sampled.tod_ms} != {src_tod_ms}"
+
+    # d) Across seeds, sampled entry dates must differ from the source trade's date (assert at least 90% differ)
+    diff_count = 0
+    total_comparisons = 0
+    for seed_entries in stats.sampled_entry_times_by_seed:
+        for sampled_entry_time, src in zip(seed_entries, source_trades):
+            total_comparisons += 1
+            src_date = src["entry_time_ms"] // 86_400_000
+            sampled_date = sampled_entry_time // 86_400_000
+            if sampled_date != src_date:
+                diff_count += 1
+
+    diff_fraction = diff_count / total_comparisons if total_comparisons > 0 else 0.0
+    assert diff_fraction >= 0.90, (
+        f"Expected at least 90% of sampled entry dates to differ from source trade date, got {diff_fraction:.2%}"
+    )
+
 
 
 

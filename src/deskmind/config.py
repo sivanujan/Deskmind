@@ -10,7 +10,7 @@ import re
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, SecretStr, ValidationInfo, field_validator
@@ -39,6 +39,18 @@ UNIVERSE_HISTORICAL_CANDIDATES = (
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "MATICUSDT", "LTCUSDT", "LINKUSDT",
 )
+KNOWN_BINANCE_FILTERS: dict[str, dict[str, Any]] = {
+    "BTCUSDT": {"tick_size": Decimal("0.10"), "step_size": Decimal("0.001"), "min_qty": Decimal("0.001"), "max_qty": Decimal("1000.0"), "price_prec": 1, "qty_prec": 3},
+    "ETHUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.001"), "min_qty": Decimal("0.001"), "max_qty": Decimal("10000.0"), "price_prec": 2, "qty_prec": 3},
+    "BNBUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.01"), "min_qty": Decimal("0.01"), "max_qty": Decimal("10000.0"), "price_prec": 2, "qty_prec": 2},
+    "SOLUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.01"), "min_qty": Decimal("0.01"), "max_qty": Decimal("100000.0"), "price_prec": 2, "qty_prec": 2},
+    "XRPUSDT": {"tick_size": Decimal("0.0001"), "step_size": Decimal("0.1"), "min_qty": Decimal("0.1"), "max_qty": Decimal("10000000.0"), "price_prec": 4, "qty_prec": 1},
+    "DOGEUSDT": {"tick_size": Decimal("0.00001"), "step_size": Decimal("1.0"), "min_qty": Decimal("1.0"), "max_qty": Decimal("10000000.0"), "price_prec": 5, "qty_prec": 0},
+    "ADAUSDT": {"tick_size": Decimal("0.0001"), "step_size": Decimal("1.0"), "min_qty": Decimal("1.0"), "max_qty": Decimal("10000000.0"), "price_prec": 4, "qty_prec": 0},
+    "MATICUSDT": {"tick_size": Decimal("0.0001"), "step_size": Decimal("0.1"), "min_qty": Decimal("0.1"), "max_qty": Decimal("10000000.0"), "price_prec": 4, "qty_prec": 1},
+    "LINKUSDT": {"tick_size": Decimal("0.001"), "step_size": Decimal("0.01"), "min_qty": Decimal("0.01"), "max_qty": Decimal("1000000.0"), "price_prec": 3, "qty_prec": 2},
+    "LTCUSDT": {"tick_size": Decimal("0.01"), "step_size": Decimal("0.001"), "min_qty": Decimal("0.001"), "max_qty": Decimal("100000.0"), "price_prec": 2, "qty_prec": 3},
+}
 # Symbols the trade service may open NEW positions on (also needs universe state `tradeable`).
 DEFAULT_TRADE_SYMBOLS = ("BTCUSDT",)
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,20}USDT$")
