@@ -34,7 +34,7 @@ class H6TrendBreakoutPlugin(HypothesisPlugin):
 
     @property
     def name(self) -> str:
-        return "4h Trend Breakout (H6)"
+        return "4h Trend Breakout"
 
     def evaluate(
         self, feature_row: FeatureRow | dict[str, Any], current_close: float

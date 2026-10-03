@@ -29,6 +29,8 @@ class H6TrendBreakoutStrategy(BaseStrategy):
 
     name = "h6_trend_breakout"
     version = "1.0.0"
+    uses_agents = ("trend",)
+    timeframes = ("4h", "5m")
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)

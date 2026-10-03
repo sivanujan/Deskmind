@@ -12,11 +12,11 @@ from deskmind.research.hypotheses.h5_pd_sweep import H5PDSweepPlugin
 from deskmind.research.hypotheses.registry import REGISTRY
 
 
-def test_registry_contains_all_five_hypotheses() -> None:
+def test_registry_contains_all_hypotheses() -> None:
     plugins = REGISTRY.list_hypotheses()
-    assert len(plugins) == 5
+    assert len(plugins) == 6
     ids = {p.hypothesis_id for p in plugins}
-    assert ids == {"H1_v1.0.0", "H2_v1.0.0", "H3_v1.0.0", "H4_v1.1.0", "H5_v1.0.0"}
+    assert ids == {"H1_v1.0.0", "H2_v1.0.0", "H3_v1.0.0", "H4_v1.1.0", "H5_v1.0.0", "H6_v1.0.0"}
 
 
 def test_plugin_names_equal_preregistered_names() -> None:
@@ -27,6 +27,7 @@ def test_plugin_names_equal_preregistered_names() -> None:
         "H3_v1.0.0": "Silver Bullet Window FVG",
         "H4_v1.1.0": "Support/Resistance Breakout-Retest",
         "H5_v1.0.0": "PDH/PDL Sweep Reversal",
+        "H6_v1.0.0": "4h Trend Breakout",
     }
     plugins = REGISTRY.list_hypotheses()
     for p in plugins:
