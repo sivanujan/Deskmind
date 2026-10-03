@@ -34,10 +34,17 @@ def load_symbol_filters(data_dir: Path, symbol: str) -> SymbolFilters:
     meta_dir = data_dir / "meta"
     matches = sorted(meta_dir.glob(f"{symbol}_filters_*.json"))
     if not matches:
-        kb = KNOWN_BINANCE_FILTERS.get(symbol, {})
+        if symbol not in KNOWN_BINANCE_FILTERS:
+            raise KeyError(
+                f"Symbol '{symbol}' has no exchange filter snapshot in {meta_dir} and is not in KNOWN_BINANCE_FILTERS. "
+                "tick_size must come from symbol filters."
+            )
+        kb = KNOWN_BINANCE_FILTERS[symbol]
+        if "tick_size" not in kb:
+            raise KeyError(f"Symbol '{symbol}' in KNOWN_BINANCE_FILTERS is missing 'tick_size'")
         return SymbolFilters(
             symbol=symbol,
-            tick_size=kb.get("tick_size", Decimal("0.01")),
+            tick_size=kb["tick_size"],
             step_size=kb.get("step_size", Decimal("0.001")),
             min_qty=kb.get("min_qty", Decimal("0.001")),
             max_qty=kb.get("max_qty", Decimal("10000.0")),
@@ -53,9 +60,12 @@ def load_symbol_filters(data_dir: Path, symbol: str) -> SymbolFilters:
     summary = data.get("summary", {})
     contract = data.get("contract", {})
 
+    if "tickSize" not in summary:
+        raise KeyError(f"Missing 'tickSize' in exchange filter snapshot for {symbol}")
+
     return SymbolFilters(
         symbol=symbol,
-        tick_size=Decimal(str(summary.get("tickSize", "0.10"))),
+        tick_size=Decimal(str(summary["tickSize"])),
         step_size=Decimal(str(summary.get("stepSize", "0.001"))),
         min_qty=Decimal(str(summary.get("minQty", "0.001"))),
         max_qty=Decimal(str(summary.get("maxQty", "1000.0"))),

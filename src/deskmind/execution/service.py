@@ -20,6 +20,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from deskmind.backtest.filters import load_symbol_filters
 from deskmind.config import Settings
 from deskmind.execution.approval import ApprovalGate
 from deskmind.execution.binance_client import BinanceFuturesClient
@@ -341,11 +342,12 @@ class ExecutionService:
 
         tf_1h = self.recent_reports.get(intent.symbol, {}).get("timeframes", {}).get("1h", {})
         atr = Decimal(str(tf_1h.get("atr", "1.0")))
+        sym_filters = load_symbol_filters(self.settings.data_dir, intent.symbol)
         market_state = MarketState(
             mark_price=curr_price,
             atr=atr,
-            tick_size=Decimal("0.10"),
-            step_size=Decimal("0.001"),
+            tick_size=sym_filters.tick_size,
+            step_size=sym_filters.step_size,
         )
 
         # Evaluate through Risk Manager

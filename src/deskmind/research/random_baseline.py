@@ -260,7 +260,10 @@ def run_backtest_random_baseline(
                 elif tick_size is not None:
                     symbol_ticks[s_name] = tick_size
                 else:
-                    symbol_ticks[s_name] = Decimal("0.01")
+                    raise KeyError(
+                        f"Missing tick_size for symbol '{s_name}' in symbol filters / metadata. "
+                        "tick_size must come from symbol filters."
+                    )
 
     for seed in range(num_seeds):
         rng = random.Random(seed + seed_offset)
@@ -272,10 +275,13 @@ def run_backtest_random_baseline(
 
         for prof in trade_profiles:
             sym = prof["symbol"]
-            sym_tick = symbol_ticks.get(
-                sym,
-                tick_size if tick_size is not None else Decimal("0.01"),
-            )
+            if sym not in symbol_ticks:
+                if tick_size is not None:
+                    sym_tick = tick_size
+                else:
+                    raise KeyError(f"Missing tick_size for symbol '{sym}' in symbol filters")
+            else:
+                sym_tick = symbol_ticks[sym]
             b_list = normalized_bars.get(sym)
             if not b_list or len(b_list) < 2:
                 skipped_count += 1

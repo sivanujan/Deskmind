@@ -112,7 +112,7 @@ class BinanceTestnetExecutor(BaseExecutor):
             if sym not in self.settings.data_symbols:
                 continue
 
-            tick_size = Decimal("0.10")
+            tick_size = None
             step_size = Decimal("0.001")
             min_qty = Decimal("0.001")
             max_qty = Decimal("10000.0")
@@ -121,13 +121,17 @@ class BinanceTestnetExecutor(BaseExecutor):
             for f in s.get("filters", []):
                 ftype = f.get("filterType")
                 if ftype == "PRICE_FILTER":
-                    tick_size = Decimal(str(f.get("tickSize", "0.10")))
+                    if "tickSize" in f:
+                        tick_size = Decimal(str(f["tickSize"]))
                 elif ftype == "LOT_SIZE":
                     step_size = Decimal(str(f.get("stepSize", "0.001")))
                     min_qty = Decimal(str(f.get("minQty", "0.001")))
                     max_qty = Decimal(str(f.get("maxQty", "10000.0")))
                 elif ftype in ("MIN_NOTIONAL", "NOTIONAL"):
                     min_notional = Decimal(str(f.get("notional", f.get("minNotional", "5.0"))))
+
+            if tick_size is None:
+                tick_size = load_symbol_filters(self.settings.data_dir, sym).tick_size
 
             self.filters_map[sym] = SymbolFilters(
                 symbol=sym,
@@ -143,16 +147,7 @@ class BinanceTestnetExecutor(BaseExecutor):
     def _get_filters(self, symbol: str) -> SymbolFilters:
         if symbol in self.filters_map:
             return self.filters_map[symbol]
-        return SymbolFilters(
-            symbol=symbol,
-            tick_size=Decimal("0.10"),
-            step_size=Decimal("0.001"),
-            min_qty=Decimal("0.001"),
-            max_qty=Decimal("10000.0"),
-            min_notional=Decimal("5.0"),
-            price_precision=2,
-            quantity_precision=3,
-        )
+        return load_symbol_filters(self.settings.data_dir, symbol)
 
     async def get_ticker_price(self, symbol: str) -> tuple[Decimal, Decimal]:
         """Fetch current (last_price, mark_price) from testnet."""

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 import time
 import uuid
-from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from deskmind.backtest.fills import calc_slippage_pct, simulate_candle_exit, simulate_market_fill
-from deskmind.backtest.filters import SymbolFilters, round_qty
+from deskmind.backtest.filters import SymbolFilters, load_symbol_filters, round_qty
 from deskmind.backtest.liquidation import compute_liquidation_price
 from deskmind.config import (
     DEFAULT_INITIAL_CASH,
@@ -89,16 +90,7 @@ class PaperExecutor(BaseExecutor):
     def _get_filters(self, symbol: str) -> SymbolFilters:
         if symbol in self.filters_map:
             return self.filters_map[symbol]
-        return SymbolFilters(
-            symbol=symbol,
-            tick_size=Decimal("0.10"),
-            step_size=Decimal("0.001"),
-            min_qty=Decimal("0.001"),
-            max_qty=Decimal("10000.0"),
-            min_notional=Decimal("5.0"),
-            price_precision=2,
-            quantity_precision=3,
-        )
+        return load_symbol_filters(Path("data"), symbol)
 
     def _calc_slippage_pct(self, price: Decimal, atr: Decimal | None) -> Decimal:
         return calc_slippage_pct(price, atr, self.slippage_bps, self.slippage_atr_factor)

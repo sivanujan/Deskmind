@@ -1203,6 +1203,102 @@ def test_random_baseline_sanity_guard_aborts_on_gross_r_violation() -> None:
         check_random_baseline_sanity(invalid_stats, threshold=0.05)
 
 
+def test_ensure_features_loaded_multi_symbol_fixture(tmp_path) -> None:
+    """Regression test for _ensure_features_loaded: a 3-symbol fixture must
+    load features for all 3 symbols and emit signals on all 3.
+    """
+    from decimal import Decimal
+    from deskmind.features.models import FeatureRow
+    from deskmind.features.store import FeatureStore
+    from deskmind.strategies.base import BarSnapshot, StrategyContext
+    from deskmind.strategies.hypothesis_base import H1DiscountOBStrategy
+
+    store = FeatureStore(base_dir=tmp_path)
+    symbols = ["ADAUSDT", "BTCUSDT", "ETHUSDT"]
+    ts = 1680000000000  # 2023-03-28 10:40:00 UTC
+
+    rows = []
+    for sym in symbols:
+        rows.append(
+            FeatureRow(
+                timestamp=ts,
+                symbol=sym,
+                htf_trend_2h="bullish",
+                htf_trend_1h="bullish",
+                last_event_15m="MSS_up",
+                last_event_15m_confirmed_at=ts,
+                last_event_5m="CHoCH_up",
+                last_event_5m_confirmed_at=ts,
+                pd_zone_1h="discount",
+                position_pct_1h=0.35,
+                outside_range_1h=False,
+                in_ote_1h=True,
+                nearest_fvg_size_atr=0.8,
+                nearest_fvg_displacement=True,
+                nearest_fvg_dist_atr=0.5,
+                nearest_ob_state="fresh",
+                nearest_ob_dist_atr=0.5,
+                strong_pool_swept_side="low",
+                strong_pool_swept_bars_ago=2,
+                killzone="london_open",
+                silver_bullet_active=False,
+                session="london",
+                dist_to_pdh_atr=2.0,
+                dist_to_pdl_atr=0.5,
+                pdh_swept_recent=False,
+                pdl_swept_recent=True,
+                nearest_sr_strength=3,
+                nearest_sr_touches=3,
+                nearest_sr_dist_atr=1.0,
+                pattern_recent_type="none",
+                pattern_recent_at_zone=False,
+                pattern_recent_with_trend="bullish",
+                pattern_recent_bars_ago=5,
+                weekend_flag=False,
+                atr_pct=0.01,
+                universe_member=True,
+            )
+        )
+    store.write_features(rows)
+
+    strategy = H1DiscountOBStrategy(params={"feature_dir": str(tmp_path)})
+
+    # Build contexts for all 3 symbols on the same bar
+    contexts: dict[str, StrategyContext] = {}
+    for sym in symbols:
+        bar = BarSnapshot(
+            open_time=ts,
+            close_time=ts + 300_000,
+            open=Decimal("100.0"),
+            high=Decimal("102.0"),
+            low=Decimal("99.0"),
+            close=Decimal("101.0"),
+            volume=Decimal("1000.0"),
+        )
+        contexts[sym] = StrategyContext(
+            symbol=sym,
+            as_of_ms=ts,
+            current_bar=bar,
+            agent_report=None,
+            account=None,
+        )
+
+    intents = strategy.on_bar(contexts)
+
+    # 1. Assert all 3 symbols were loaded
+    assert strategy._loaded_symbols == set(symbols), (
+        f"Expected loaded symbols {set(symbols)}, got {strategy._loaded_symbols}"
+    )
+
+    # 2. Assert signals were emitted on all 3 symbols
+    emitted_symbols = {it.symbol for it in intents}
+    assert emitted_symbols == set(symbols), (
+        f"Expected intents for all 3 symbols, got {emitted_symbols}"
+    )
+    assert len(intents) == 3, f"Expected 3 intents, got {len(intents)}"
+
+
+
 
 
 
