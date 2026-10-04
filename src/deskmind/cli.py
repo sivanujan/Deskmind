@@ -1594,5 +1594,68 @@ def supervisor_cmd() -> None:
         asyncio.run(go())
 
 
+# ---------------------------------------------------------------- tas-backtest
+
+
+@app.command("tas-backtest")
+def tas_backtest_cmd(
+    symbol: str = typer.Option(..., "--symbol", "-s", help="Symbol to backtest (e.g. ETHUSDT)"),
+    tf: str = typer.Option(..., "--tf", help="Timeframe (e.g. 4h, 1d)"),
+    start: str = typer.Option("2023-01-01", "--start", help="Start date (YYYY-MM-DD) for signals"),
+    end: str = typer.Option("2024-12-31", "--end", help="End date (YYYY-MM-DD) for signals"),
+    data_dir: Path = typer.Option(Path("data/parquet"), "--data-dir", help="Parquet base directory"),
+    meta_path: Path = typer.Option(
+        Path("data/meta/symbol_filters_universe.json"),
+        "--meta-path",
+        help="Symbol filters JSON path",
+    ),
+    output_dir: Path = typer.Option(
+        Path("reports/research/tas"), "--output-dir", help="Output directory for reports"
+    ),
+) -> None:
+    """Run Trend Analysis Strategy (TAS) backtest on historical OHLCV data."""
+    import subprocess
+
+    from deskmind.strategies.tas import get_tick_size, load_ohlcv, run_backtest
+
+    typer.echo(f"Loading native OHLCV for {symbol} ({tf}) from {data_dir}...")
+    df = load_ohlcv(symbol, tf, data_dir=data_dir)
+    typer.echo(f"Loaded {len(df)} bars ({df['open_time'].min()} to {df['open_time'].max()})")
+
+    tick = get_tick_size(symbol, meta_path=meta_path)
+    typer.echo(f"Tick size for {symbol}: {tick}")
+
+    typer.echo(f"Running TAS backtest (window: {start} -> {end}, warming up on full history)...")
+    res = run_backtest(df, tick=tick, start=start, end=end)
+
+    typer.echo("\n--- Backtest Stats ---")
+    typer.echo(res["stats"])
+    for k, v in res["stats"].items():
+        typer.echo(f"  {k:24s}: {v}")
+
+    # Git commit
+    commit = "unknown"
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
+        )
+        commit = out.decode("utf-8").strip()
+    except Exception:
+        pass
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    trades_path = output_dir / f"{symbol}_{tf}_{commit}_trades.csv"
+    positions_path = output_dir / f"{symbol}_{tf}_{commit}_positions.csv"
+    default_csv_path = output_dir / f"{symbol}_{tf}_{commit}.csv"
+
+    res["trades"].to_csv(trades_path, index=False)
+    res["positions"].to_csv(positions_path, index=False)
+    res["trades"].to_csv(default_csv_path, index=False)
+
+    typer.echo(f"\nSaved {len(res['trades'])} trades to: {trades_path}")
+    typer.echo(f"Saved {len(res['positions'])} positions to: {positions_path}")
+    typer.echo(f"Saved summary trades CSV to: {default_csv_path}")
+
+
 if __name__ == "__main__":
     app()
