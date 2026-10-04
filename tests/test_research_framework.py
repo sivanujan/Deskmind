@@ -1326,6 +1326,87 @@ def test_deflated_sharpe_textbook_example() -> None:
     assert abs(dsr - 0.598) <= 0.005, f"Expected DSR ~ 0.598, got {dsr}"
 
 
+@pytest.mark.asyncio
+async def test_per_symbol_independent_mode_trades_overlapping_signals(tmp_path) -> None:
+    """In per_symbol_independent mode, a 2-symbol fixture with overlapping signals must trade both symbols.
+
+    In standard portfolio mode (max 1 active position globally), the second symbol is blocked.
+    In per_symbol_independent mode, each symbol is isolated (max 1 position per symbol),
+    so both symbols execute their trades concurrently.
+    """
+    from decimal import Decimal
+    from deskmind.backtest.runner import STRATEGY_REGISTRY, run_backtest
+    from deskmind.strategies.base import BaseStrategy, Intent, StrategyContext
+
+    class OverlappingTestStrategy(BaseStrategy):
+        name = "test_overlapping_independent"
+        version = "1.0.0"
+
+        def on_bar(self, contexts: dict[str, StrategyContext]) -> list[Intent]:
+            intents = []
+            for sym, ctx in contexts.items():
+                if ctx.account and ctx.account.open_position and ctx.account.open_position.symbol == sym:
+                    if ctx.current_bar.open_time >= 1672531200000 + 20 * 300_000:
+                        intents.append(Intent(symbol=sym, action="close", setup_id=f"close_{sym}"))
+                        continue
+                if ctx.current_bar.open_time == 1672531200000:
+                    c_price = ctx.current_bar.close
+                    intents.append(
+                        Intent(
+                            symbol=sym,
+                            action="open_long",
+                            order_type="market",
+                            stop_loss=c_price * Decimal("0.98"),
+                            take_profit=c_price * Decimal("1.04"),
+                            setup_id=f"test_setup_{sym}_{ctx.current_bar.open_time}",
+                        )
+                    )
+            return intents
+
+    STRATEGY_REGISTRY["test_overlapping_independent"] = OverlappingTestStrategy
+    try:
+        # 1. Standard portfolio mode: cross-symbol blocking occurs (only 1 trade executes)
+        res_portfolio = await run_backtest(
+            strategy_name="test_overlapping_independent",
+            split="train",
+            symbols=["BTCUSDT", "ETHUSDT"],
+            start_date="2023-01-01",
+            end_date="2023-01-02",
+            warmup_days=0,
+            mode="portfolio",
+            disable_circuit_breakers=True,
+            reports_dir=tmp_path / "portfolio",
+        )
+        portfolio_trades = res_portfolio["result"].trades
+        assert len(portfolio_trades) == 1, (
+            f"Expected exactly 1 trade in portfolio mode due to cross-symbol blocking, got {len(portfolio_trades)}"
+        )
+
+        # 2. per_symbol_independent mode: zero cross-symbol blocking (both symbols trade!)
+        res_independent = await run_backtest(
+            strategy_name="test_overlapping_independent",
+            split="train",
+            symbols=["BTCUSDT", "ETHUSDT"],
+            start_date="2023-01-01",
+            end_date="2023-01-02",
+            warmup_days=0,
+            mode="per_symbol_independent",
+            disable_circuit_breakers=True,
+            reports_dir=tmp_path / "independent",
+        )
+        independent_trades = res_independent["result"].trades
+        assert len(independent_trades) == 2, (
+            f"Expected 2 trades in per_symbol_independent mode (both symbols), got {len(independent_trades)}"
+        )
+        symbols_traded = {t.symbol for t in independent_trades}
+        assert symbols_traded == {"BTCUSDT", "ETHUSDT"}, (
+            f"Expected both BTCUSDT and ETHUSDT to trade, got {symbols_traded}"
+        )
+    finally:
+        STRATEGY_REGISTRY.pop("test_overlapping_independent", None)
+
+
+
 
 
 

@@ -20,7 +20,13 @@ from typing import Any, Literal
 
 from deskmind.agents.trend.config import AGENT_VERSION
 from deskmind.backtest.baselines import compute_buy_and_hold, run_random_baseline
-from deskmind.backtest.engine import BacktestEngine, RejectedIntent, Trade
+from deskmind.backtest.engine import (
+    BacktestEngine,
+    BacktestResult,
+    EquityPoint,
+    RejectedIntent,
+    Trade,
+)
 from deskmind.backtest.metrics import calculate_metrics
 from deskmind.backtest.registry import (
     get_git_commit,
@@ -257,6 +263,7 @@ async def run_backtest(
     reports_dir: Path = Path("reports/backtests"),
     universe: MembershipHistory | None = None,
     universe_mode: Literal["auto", "require", "off"] = "auto",
+    mode: Literal["portfolio", "per_symbol_independent"] = "portfolio",
 ) -> dict[str, Any]:
     settings = get_settings()
     d_dir = data_dir or settings.data_dir
@@ -266,6 +273,112 @@ async def run_backtest(
         raise ValueError(
             f"Unknown strategy {strategy_name!r}. Available: {list(STRATEGY_REGISTRY.keys())}"
         )
+
+    if mode == "per_symbol_independent" and len(syms) > 1:
+        # Research mode: Each symbol runs its own backtest independently.
+        # Max 1 position PER SYMBOL, 0 cross-symbol blocking.
+        per_symbol_runs: dict[str, dict[str, Any]] = {}
+        all_trades: list[Trade] = []
+        total_orders_placed = 0
+        total_missed_orders = 0
+        total_rejected_intents: list[RejectedIntent] = []
+        total_delisted_exits = 0
+        total_universe_skips = 0
+
+        for sym in syms:
+            single_res = await run_backtest(
+                strategy_name=strategy_name,
+                split=split,
+                symbols=[sym],
+                start_date=start_date,
+                end_date=end_date,
+                initial_cash=initial_cash,
+                strategy_params=strategy_params,
+                unlock_test=unlock_test,
+                confirm_test_unlock=confirm_test_unlock,
+                notes=notes,
+                random_seeds=random_seeds,
+                warmup_days=warmup_days,
+                disable_circuit_breakers=disable_circuit_breakers,
+                data_dir=data_dir,
+                reports_dir=reports_dir,
+                universe=universe,
+                universe_mode=universe_mode,
+                mode="portfolio",
+            )
+            per_symbol_runs[sym] = single_res
+            r: BacktestResult = single_res["result"]
+            all_trades.extend(r.trades)
+            total_orders_placed += r.orders_placed
+            total_missed_orders += r.missed_limit_orders
+            total_rejected_intents += r.rejected_intents
+            total_delisted_exits += r.delisted_exits
+            total_universe_skips += r.universe_skips
+
+        all_trades_sorted = sorted(all_trades, key=lambda t: (t.entry_time_ms, t.exit_time_ms))
+        strat_cls = STRATEGY_REGISTRY[strategy_name]
+        strategy = strat_cls(strategy_params or {})
+
+        timestamp_str = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        cb_suffix = "_no_cb" if disable_circuit_breakers else ""
+        run_id = f"{strategy.name}_{split}_independent{cb_suffix}_{timestamp_str}"
+
+        start_time_ms = min((sr["result"].start_time_ms for sr in per_symbol_runs.values()), default=0)
+        end_time_ms = max((sr["result"].end_time_ms for sr in per_symbol_runs.values()), default=0)
+        tot_funding = sum((sr["result"].total_funding_paid for sr in per_symbol_runs.values()), Decimal("0"))
+        tot_fees = sum((sr["result"].total_fees_paid for sr in per_symbol_runs.values()), Decimal("0"))
+        tot_slip = sum((sr["result"].total_slippage_paid for sr in per_symbol_runs.values()), Decimal("0"))
+        same_bar_sl_tp = sum(sr["result"].same_bar_sl_tp_count for sr in per_symbol_runs.values())
+        liquidations = sum(sr["result"].liquidations_count for sr in per_symbol_runs.values())
+        skipped_sig = sum(sr["result"].skipped_signals_count for sr in per_symbol_runs.values())
+        pos_open_skips = sum(sr["result"].position_open_skips for sr in per_symbol_runs.values())
+        dup_skips = sum(sr["result"].duplicate_setup_skips for sr in per_symbol_runs.values())
+        raw_signals = sum(sr["result"].raw_entry_signals for sr in per_symbol_runs.values())
+
+        tot_pnl = sum((t.pnl for t in all_trades_sorted), Decimal("0"))
+        final_equity = initial_cash + tot_pnl
+
+        # Construct trade-exit-based equity curve
+        curve = [EquityPoint(time_ms=start_time_ms, equity=initial_cash, cash=initial_cash)]
+        curr_eq = initial_cash
+        for t in all_trades_sorted:
+            curr_eq += t.pnl
+            curve.append(EquityPoint(time_ms=t.exit_time_ms, equity=curr_eq, cash=curr_eq, position_symbol=t.symbol))
+        if end_time_ms > (curve[-1].time_ms if curve else 0):
+            curve.append(EquityPoint(time_ms=end_time_ms, equity=curr_eq, cash=curr_eq))
+
+        combined_result = BacktestResult(
+            trades=all_trades_sorted,
+            equity_curve=curve,
+            same_bar_sl_tp_count=same_bar_sl_tp,
+            liquidations_count=liquidations,
+            skipped_signals_count=skipped_sig,
+            position_open_skips=pos_open_skips,
+            duplicate_setup_skips=dup_skips,
+            total_funding_paid=tot_funding,
+            total_fees_paid=tot_fees,
+            total_slippage_paid=tot_slip,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
+            initial_cash=initial_cash,
+            final_equity=final_equity,
+            rejected_intents=total_rejected_intents,
+            delisted_exits=total_delisted_exits,
+            raw_entry_signals=raw_signals,
+            orders_placed=total_orders_placed,
+            missed_limit_orders=total_missed_orders,
+            universe_skips=total_universe_skips,
+        )
+
+        return {
+            "run_id": run_id,
+            "mode": "per_symbol_independent",
+            "output_dir": str(reports_dir / run_id),
+            "result": combined_result,
+            "metrics": calculate_metrics(combined_result) if combined_result.trades else None,
+            "strategy_version": strategy.version,
+            "per_symbol_runs": per_symbol_runs,
+        }
 
     # Determine date range
     if start_date and end_date:
