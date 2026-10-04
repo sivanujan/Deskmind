@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, API_URL } from "@/lib/api";
 
+const ALL_TIMEFRAMES = ["5m", "15m", "30m", "1h", "2h", "4h"];
+
 interface RuleDetail {
   value: number;
   threshold: number;
@@ -16,6 +18,7 @@ interface StrategyJob {
   strategy_name: string;
   strategy_version: string;
   trial_k: number;
+  timeframe?: string;
   status: string;
   progress_pct: number;
   current_step: string;
@@ -68,13 +71,25 @@ interface StrategyJob {
     is_concentrated: boolean;
   };
   comparison_row: {
-    name: string;
-    coins_count: number;
-    pooled_positions: number;
-    pooled_trades: number;
-    pooled_mean_r: number;
-    pooled_profit_factor: number;
-    pooled_net_profit: number;
+    tf?: string;
+    eligible_coins?: number;
+    train_positions?: number;
+    train_pooled_mean_r?: number;
+    train_pooled_pf?: number;
+    avg_cost_in_r?: number;
+    selected?: number;
+    val_positions?: number;
+    val_pooled_mean_r?: number;
+    val_pooled_pf?: number;
+    pct_selected_profitable_2025?: number;
+    verdict?: string;
+    name?: string;
+    coins_count?: number;
+    pooled_positions?: number;
+    pooled_trades?: number;
+    pooled_mean_r?: number;
+    pooled_profit_factor?: number;
+    pooled_net_profit?: number;
   };
   test_2026_status: string;
 }
@@ -83,6 +98,8 @@ export default function StrategyLabPage() {
   const [trialCountK, setTrialCountK] = useState<number>(0);
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
   const [activeJob, setActiveJob] = useState<StrategyJob | null>(null);
+  const [comparisonReport, setComparisonReport] = useState<any[]>([]);
+  const [selectedTfs, setSelectedTfs] = useState<string[]>(["4h"]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showConfirm2026, setShowConfirm2026] = useState(false);
@@ -95,10 +112,11 @@ export default function StrategyLabPage() {
       setTrialCountK(data.trial_count_k);
       setRecentJobs(data.jobs);
       if (!activeJob && data.jobs.length > 0) {
-        // Load latest job
         const latest = await api.strategyLabJob(data.jobs[0].job_id);
         setActiveJob(latest);
       }
+      const compRes = await api.strategyLabComparisonReport();
+      setComparisonReport(compRes.report || []);
     } catch (e) {
       console.error(e);
     }
@@ -139,7 +157,7 @@ export default function StrategyLabPage() {
     setUploadError(null);
 
     try {
-      const res = await api.uploadStrategy(file);
+      const res = await api.uploadStrategy(file, selectedTfs);
       if (res.job_id) {
         const job = await api.strategyLabJob(res.job_id);
         setActiveJob(job);
@@ -171,25 +189,48 @@ export default function StrategyLabPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Strategy Lab</h1>
           <p className="text-sm text-muted-foreground">
-            Standardized evaluation framework: AST sandboxing, automated checks, TRAIN selection, and 2025 validation.
+            Multi-timeframe evaluation: AST sandboxing, automated checks, TRAIN selection, and 2025 validation.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-4">
           <div className="bg-card border border-border/60 px-4 py-2 rounded-lg text-center shadow-sm">
             <span className="text-xs uppercase text-muted-foreground font-semibold">Trial Count (K)</span>
             <div className="text-xl font-mono font-bold text-primary">{trialCountK}</div>
           </div>
-          <label className="cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2.5 rounded-md font-medium text-sm transition inline-flex items-center gap-2">
-            <span>{isUploading ? "Uploading..." : "Upload Strategy (.py)"}</span>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".py"
-              onChange={handleFileUpload}
-              disabled={isUploading}
-              className="hidden"
-            />
-          </label>
+          <div className="flex flex-col gap-2">
+            {/* Timeframe checkboxes */}
+            <div className="flex items-center gap-2 bg-muted/30 border border-border/50 px-3 py-1.5 rounded-lg text-xs">
+              <span className="text-muted-foreground font-semibold">Timeframes:</span>
+              {ALL_TIMEFRAMES.map((tf) => (
+                <label key={tf} className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedTfs.includes(tf)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedTfs([...selectedTfs, tf]);
+                      } else {
+                        setSelectedTfs(selectedTfs.filter((t) => t !== tf));
+                      }
+                    }}
+                    className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
+                  />
+                  <span className="font-mono text-xs">{tf}</span>
+                </label>
+              ))}
+            </div>
+            <label className="cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md font-medium text-sm transition inline-flex items-center justify-center gap-2">
+              <span>{isUploading ? "Uploading & Queuing..." : "Upload Strategy (.py)"}</span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".py"
+                onChange={handleFileUpload}
+                disabled={isUploading}
+                className="hidden"
+              />
+            </label>
+          </div>
         </div>
       </div>
 
@@ -199,6 +240,89 @@ export default function StrategyLabPage() {
           {uploadError}
         </div>
       )}
+
+      {/* STEP 3: Multi-Timeframe Comparison Report Table */}
+      <div className="bg-card border border-border/60 rounded-xl overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-sm">Multi-Timeframe Comparison Report</h3>
+            <p className="text-xs text-muted-foreground">
+              Cross-timeframe evaluation. Key number: <strong className="text-foreground">TRAIN pooled mean R (all eligible)</strong> reflects systemic alpha vs lucky coins.
+            </p>
+          </div>
+          <a
+            href={`${API_URL}/api/strategy-lab/comparison-report.csv`}
+            download="comparison_report.csv"
+            className="inline-flex items-center gap-1.5 border border-border/80 hover:bg-muted px-3 py-1.5 rounded-md text-xs font-medium self-start sm:self-auto transition"
+          >
+            <span>Download CSV</span>
+          </a>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left">
+            <thead className="bg-muted/40 text-muted-foreground border-b border-border/60 uppercase font-semibold">
+              <tr>
+                <th className="py-2.5 px-3">TF</th>
+                <th className="py-2.5 px-3">Eligible Coins</th>
+                <th className="py-2.5 px-3">TRAIN Positions (all eligible)</th>
+                <th className="py-2.5 px-3 bg-primary/10 text-primary font-bold">TRAIN Pooled Mean R (all eligible)</th>
+                <th className="py-2.5 px-3">TRAIN Pooled PF (all eligible)</th>
+                <th className="py-2.5 px-3">Avg Cost in R</th>
+                <th className="py-2.5 px-3">Selected</th>
+                <th className="py-2.5 px-3">2025 Positions</th>
+                <th className="py-2.5 px-3">2025 Pooled Mean R</th>
+                <th className="py-2.5 px-3">2025 Pooled PF</th>
+                <th className="py-2.5 px-3">% Selected Profitable 2025</th>
+                <th className="py-2.5 px-3">Verdict</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40 font-mono">
+              {comparisonReport.length === 0 ? (
+                <tr>
+                  <td colSpan={12} className="py-6 text-center text-muted-foreground font-sans text-xs">
+                    No multi-timeframe comparison runs completed yet. Upload a strategy to generate results.
+                  </td>
+                </tr>
+              ) : (
+                comparisonReport.map((r, i) => (
+                  <tr key={r.tf || i} className="hover:bg-muted/30">
+                    <td className="py-2.5 px-3 font-bold font-sans text-primary">{r.tf}</td>
+                    <td className="py-2.5 px-3">{r.eligible_coins}</td>
+                    <td className="py-2.5 px-3">{r.train_positions}</td>
+                    <td className="py-2.5 px-3 font-bold bg-primary/10 text-primary">
+                      {typeof r.train_pooled_mean_r === "number" && r.train_pooled_mean_r > 0
+                        ? `+${r.train_pooled_mean_r.toFixed(4)}`
+                        : r.train_pooled_mean_r}
+                    </td>
+                    <td className="py-2.5 px-3">{r.train_pooled_pf}</td>
+                    <td className="py-2.5 px-3">{r.avg_cost_in_r}R</td>
+                    <td className="py-2.5 px-3 font-semibold">{r.selected}</td>
+                    <td className="py-2.5 px-3">{r.val_positions}</td>
+                    <td className="py-2.5 px-3">
+                      {typeof r.val_pooled_mean_r === "number" && r.val_pooled_mean_r > 0
+                        ? `+${r.val_pooled_mean_r.toFixed(4)}`
+                        : r.val_pooled_mean_r}
+                    </td>
+                    <td className="py-2.5 px-3">{r.val_pooled_pf}</td>
+                    <td className="py-2.5 px-3">{r.pct_selected_profitable_2025}%</td>
+                    <td className="py-2.5 px-3">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          r.verdict === "PASS"
+                            ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+                            : "bg-red-500/20 text-red-700 dark:text-red-300"
+                        }`}
+                      >
+                        {r.verdict}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Active Job or Empty State */}
       {!activeJob ? (
@@ -219,6 +343,9 @@ export default function StrategyLabPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-lg font-bold">{activeJob.strategy_name}</span>
                   <span className="text-xs bg-muted px-2 py-0.5 rounded font-mono">v{activeJob.strategy_version}</span>
+                  <span className="text-xs bg-primary/20 text-primary font-bold px-2 py-0.5 rounded font-mono">
+                    {activeJob.timeframe || "4h"}
+                  </span>
                   <span className="text-xs bg-muted px-2 py-0.5 rounded font-mono">Job #{activeJob.job_id}</span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
@@ -431,54 +558,6 @@ export default function StrategyLabPage() {
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Universe Comparison Row */}
-          {activeJob.comparison_row && activeJob.comparison_row.coins_count > 0 && (
-            <div className="bg-card border border-border/60 rounded-xl p-5 shadow-sm">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                Comparison: 2025 Full Universe Trend Beta
-              </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-muted/40 text-muted-foreground border-b border-border/60">
-                    <tr>
-                      <th className="py-2 px-4">Cohort</th>
-                      <th className="py-2 px-4">Coins Count</th>
-                      <th className="py-2 px-4">Pooled Positions</th>
-                      <th className="py-2 px-4">Pooled Trades</th>
-                      <th className="py-2 px-4">Pooled Mean R</th>
-                      <th className="py-2 px-4">Pooled PF</th>
-                      <th className="py-2 px-4">Pooled Net PnL</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/40 font-mono">
-                    <tr className="bg-muted/10">
-                      <td className="py-2.5 px-4 font-semibold font-sans">Selected Cohort (2025)</td>
-                      <td className="py-2.5 px-4">{activeJob.funnel.selected_coins}</td>
-                      <td className="py-2.5 px-4">{activeJob.rules_verdict?.pooled_mean_r ? activeJob.selected_symbols.length : "-"}</td>
-                      <td className="py-2.5 px-4">-</td>
-                      <td className="py-2.5 px-4 text-primary font-bold">
-                        {activeJob.rules_verdict?.pooled_mean_r?.value}
-                      </td>
-                      <td className="py-2.5 px-4 font-bold">
-                        {activeJob.rules_verdict?.pooled_profit_factor?.value}
-                      </td>
-                      <td className="py-2.5 px-4">-</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 px-4 font-semibold font-sans">{activeJob.comparison_row.name}</td>
-                      <td className="py-2.5 px-4">{activeJob.comparison_row.coins_count}</td>
-                      <td className="py-2.5 px-4">{activeJob.comparison_row.pooled_positions}</td>
-                      <td className="py-2.5 px-4">{activeJob.comparison_row.pooled_trades}</td>
-                      <td className="py-2.5 px-4">{activeJob.comparison_row.pooled_mean_r}</td>
-                      <td className="py-2.5 px-4">{activeJob.comparison_row.pooled_profit_factor}</td>
-                      <td className="py-2.5 px-4">${activeJob.comparison_row.pooled_net_profit}</td>
-                    </tr>
                   </tbody>
                 </table>
               </div>

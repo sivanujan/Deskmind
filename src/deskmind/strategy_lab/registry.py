@@ -46,10 +46,13 @@ class StrategyRegistry:
             try:
                 data = json.loads(self.registry_file.read_text(encoding="utf-8"))
                 self._entries = [StrategyRegistryEntry(**item) for item in data.get("entries", [])]
+                self._trial_counter = int(data.get("trial_count_k", len(self._entries)))
             except Exception:
                 self._entries = []
+                self._trial_counter = 0
         else:
             self._entries = []
+            self._trial_counter = 0
 
     def _save(self) -> None:
         payload = {
@@ -61,9 +64,15 @@ class StrategyRegistry:
 
     @property
     def trial_count_k(self) -> int:
-        """Trial count K represents the number of unique strategy hashes registered."""
+        """Trial count K represents the number of trials registered/executed."""
         unique_hashes = {e.sha256 for e in self._entries}
-        return len(unique_hashes)
+        return max(getattr(self, "_trial_counter", len(unique_hashes)), len(unique_hashes))
+
+    def allocate_trial_k(self) -> int:
+        """Allocate and return next trial K for a job."""
+        self._trial_counter = self.trial_count_k + 1
+        self._save()
+        return self._trial_counter
 
     def get_entries(self) -> list[StrategyRegistryEntry]:
         return list(self._entries)

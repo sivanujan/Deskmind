@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import subprocess
-import sys
+import os
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,7 +20,11 @@ from deskmind.strategies.tas.loader import get_tick_size, load_ohlcv
 from deskmind.strategies.tas.phase2_runner import build_volume_map, load_universe_symbols
 from deskmind.strategy_lab.base import load_strategy, run_strategy_backtest
 from deskmind.strategy_lab.checks import run_strategy_checks
+from deskmind.strategy_lab.registry import StrategyRegistry
 from deskmind.strategy_lab.rules import StrategyLabRules, load_rules
+from deskmind.strategy_lab.workers import scan_symbol_worker
+
+TF_ORDER: list[str] = ["4h", "2h", "1h", "30m", "15m", "5m"]
 
 
 @dataclass
@@ -36,7 +39,7 @@ class JobFunnel:
 class ConcentrationWarning:
     top_4_profit_share_pct: float = 0.0
     top_4_coins: list[str] = field(default_factory=list)
-    is_concentrated: bool = False  # e.g. > 70% from top 4
+    is_concentrated: bool = False
 
 
 @dataclass
@@ -47,7 +50,8 @@ class StrategyLabJob:
     strategy_version: str
     strategy_path: str
     trial_k: int
-    status: str  # QUEUED, RUNNING_CHECKS, ESTIMATING, TRAIN_SCAN, FREEZING, VALIDATION_SCAN, COMPLETED, REJECTED, FAILED
+    timeframe: str = "4h"
+    status: str = "QUEUED"  # QUEUED, RUNNING_CHECKS, ESTIMATING, TRAIN_SCAN, FREEZING, VALIDATION_SCAN, COMPLETED, REJECTED, FAILED
     progress_pct: float = 0.0
     current_step: str = "Queued"
     reject_reason: str | None = None
@@ -69,7 +73,9 @@ class StrategyLabJob:
 
 
 _JOBS: dict[str, StrategyLabJob] = {}
-_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+_JOB_QUEUE: list[tuple[str, str]] = []  # [(job_id, rules_version)]
+_QUEUE_LOCK = threading.Lock()
+_QUEUE_THREAD: threading.Thread | None = None
 
 
 def get_job(job_id: str) -> StrategyLabJob | None:
@@ -94,7 +100,6 @@ def get_job(job_id: str) -> StrategyLabJob | None:
 
 
 def list_jobs() -> list[StrategyLabJob]:
-    # Also load from disk
     jobs_dir = Path("data/strategy_lab/jobs")
     if jobs_dir.exists():
         for sub in jobs_dir.iterdir():
@@ -151,7 +156,8 @@ def run_pipeline_sync(job_id: str, rules_version: str = "v1") -> None:
         # ── Step b) Time 1 coin & estimate scan time ─────────────────────────
         update("ESTIMATING", 10.0, "Timing benchmark coin for duration estimate")
         strat = load_strategy(strat_path)
-        tf = strat.timeframe
+        tf = job.timeframe or getattr(strat, "timeframe", "4h")
+        strat.timeframe = tf
 
         vol_map = build_volume_map(rules.liquidity.volume_data_path)
         symbols = load_universe_symbols(rules.universe.path)
@@ -179,82 +185,61 @@ def run_pipeline_sync(job_id: str, rules_version: str = "v1") -> None:
         except Exception:
             t_coin = 0.2
 
+        num_workers = max(1, (os.cpu_count() or 2) - 1)
         job.time_per_coin_s = round(t_coin, 3)
-        job.estimated_seconds = round(t_coin * len(symbols), 1)
+        job.estimated_seconds = round((t_coin * len(symbols)) / num_workers, 1)
 
-        # ── Step c) TRAIN scan on all eligible coins (per-symbol independent) ─
-        update("TRAIN_SCAN", 15.0, f"Scanning {len(symbols)} coins on TRAIN ({rules.splits.train.start} -> {rules.splits.train.end})")
+        # ── Step c) TRAIN scan on all coins with process parallelism ─────────
+        eta_min = job.estimated_seconds / 60.0
+        update(
+            "TRAIN_SCAN",
+            15.0,
+            f"Scanning {len(symbols)} coins on {tf} (ETA ~{eta_min:.1f}m across {num_workers} cores)",
+        )
 
         train_results: list[dict[str, Any]] = []
-        eligible_count = 0
-        total_syms = len(symbols)
+        all_train_pos_records: list[dict[str, float]] = []
 
-        for idx, sym in enumerate(symbols, 1):
-            pct = 15.0 + (idx / total_syms) * 45.0
-            if idx % 20 == 0 or idx == total_syms:
-                update(None, pct, f"TRAIN scan: processed {idx}/{total_syms} coins ({sym})")
+        with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            futures = [
+                pool.submit(
+                    scan_symbol_worker,
+                    sym,
+                    tf,
+                    str(strat_path),
+                    rules.splits.train.start,
+                    rules.splits.train.end,
+                    rules.liquidity.min_30d_median_quote_volume_usd,
+                    rules.slippage.tiered,
+                    rules.liquidity.volume_data_path,
+                )
+                for sym in symbols
+            ]
+            for idx, fut in enumerate(futures, 1):
+                res_sym = fut.result()
+                train_results.append(res_sym)
+                if res_sym["is_eligible"]:
+                    all_train_pos_records.extend(res_sym["positions_records"])
+                if idx % 20 == 0 or idx == len(symbols):
+                    pct = 15.0 + (idx / len(symbols)) * 45.0
+                    update(None, pct, f"TRAIN scan: processed {idx}/{len(symbols)} coins ({res_sym['symbol']})")
 
-            try:
-                tick = get_tick_size(sym)
-                df = load_ohlcv(sym, tf)
-            except Exception:
-                continue
-
-            df["date_str"] = df["open_time"].dt.strftime("%Y-%m-%d")
-            df["vol_30d_med"] = [vol_map.get((sym, d), float("nan")) for d in df["date_str"]]
-
-            # Check eligibility in window
-            t_start_ts = pd.Timestamp(rules.splits.train.start, tz="UTC")
-            t_end_ts = pd.Timestamp(rules.splits.train.end, tz="UTC")
-            window_mask = (df["open_time"] >= t_start_ts) & (df["open_time"] <= t_end_ts)
-            window_vols = df.loc[window_mask, "vol_30d_med"]
-            has_eligible_bars = (window_vols >= rules.liquidity.min_30d_median_quote_volume_usd).any()
-
-            if not has_eligible_bars:
-                train_results.append({
-                    "symbol": sym,
-                    "is_eligible": False,
-                    "positions": 0,
-                    "closed_trades": 0,
-                    "profit_factor": 0.0,
-                    "mean_r": 0.0,
-                    "max_drawdown_pct": 0.0,
-                    "net_profit": 0.0,
-                    "win_rate_pct": 0.0,
-                    "not_tradeable_reason": "30-day quote volume < $20M",
-                })
-                continue
-
-            eligible_count += 1
-            # Run backtest
-            res = run_strategy_backtest(
-                strat,
-                df,
-                tick=tick,
-                start=rules.splits.train.start,
-                end=rules.splits.train.end,
-                min_quote_volume_30d=rules.liquidity.min_30d_median_quote_volume_usd,
-                tiered_slippage=rules.slippage.tiered,
-            )
-            st = res["stats"]
-            pf_val = float(st.get("profit_factor", 0.0))
-            if np.isinf(pf_val):
-                pf_val = 999.0
-
-            train_results.append({
-                "symbol": sym,
-                "is_eligible": True,
-                "positions": int(st.get("positions", 0)),
-                "closed_trades": int(st.get("closed_trades", 0)),
-                "profit_factor": round(pf_val, 3),
-                "mean_r": round(float(st.get("mean_r", 0.0)), 4),
-                "max_drawdown_pct": round(float(st.get("max_drawdown_pct", 0.0)), 2),
-                "net_profit": round(float(st.get("net_profit", 0.0)), 2),
-                "win_rate_pct": round(float(st.get("win_rate_pct", 0.0)), 2),
-                "not_tradeable_reason": None,
-            })
-
+        eligible_count = sum(1 for r in train_results if r["is_eligible"])
         job.funnel.eligible_coins = eligible_count
+
+        # Compute TRAIN pooled metrics
+        if all_train_pos_records:
+            train_r_vals = [p["r_multiple"] for p in all_train_pos_records if not np.isnan(p.get("r_multiple", np.nan))]
+            train_pooled_mean_r = float(np.mean(train_r_vals)) if train_r_vals else 0.0
+            train_cost_vals = [p["cost_in_r"] for p in all_train_pos_records if not np.isnan(p.get("cost_in_r", np.nan))]
+            train_avg_cost_in_r = float(np.mean(train_cost_vals)) if train_cost_vals else 0.0
+        else:
+            train_pooled_mean_r = 0.0
+            train_avg_cost_in_r = 0.0
+
+        train_gp = sum(r.get("gross_profit", 0.0) for r in train_results if r["is_eligible"])
+        train_gl = sum(r.get("gross_loss", 0.0) for r in train_results if r["is_eligible"])
+        train_pooled_pf = (train_gp / train_gl) if train_gl > 0 else (999.0 if train_gp > 0 else 0.0)
 
         # ── Step d) Freeze selected list BEFORE validation ───────────────────
         update("FREEZING", 65.0, "Freezing selected coins list by TRAIN criteria")
@@ -269,7 +254,6 @@ def run_pipeline_sync(job_id: str, rules_version: str = "v1") -> None:
                 not_tradeable.append({"symbol": sym, "reason": "30-day quote volume < $20M"})
                 continue
 
-            # Evaluate selection gates
             pos = row["positions"]
             pf = row["profit_factor"]
             mr = row["mean_r"]
@@ -306,127 +290,45 @@ def run_pipeline_sync(job_id: str, rules_version: str = "v1") -> None:
         update("VALIDATION_SCAN", 70.0, f"Validating {len(selected_symbols)} selected coins on 2025")
 
         val_selected_results: dict[str, dict[str, Any]] = {}
-        all_val_positions: list[pd.DataFrame] = []
-        all_val_trades: list[pd.DataFrame] = []
+        all_val_positions: list[dict[str, float]] = []
 
-        for idx, sym in enumerate(selected_symbols, 1):
-            pct = 70.0 + (idx / max(len(selected_symbols), 1)) * 15.0
-            update(None, pct, f"Validation: processed {idx}/{len(selected_symbols)} selected coins ({sym})")
-
-            try:
-                tick = get_tick_size(sym)
-                df = load_ohlcv(sym, tf)
-                df["date_str"] = df["open_time"].dt.strftime("%Y-%m-%d")
-                df["vol_30d_med"] = [vol_map.get((sym, d), float("nan")) for d in df["date_str"]]
-            except Exception:
-                continue
-
-            res_val = run_strategy_backtest(
-                strat,
-                df,
-                tick=tick,
-                start=rules.splits.validation.start,
-                end=rules.splits.validation.end,
-                min_quote_volume_30d=rules.liquidity.min_30d_median_quote_volume_usd,
-                tiered_slippage=rules.slippage.tiered,
-            )
-            st_val = res_val["stats"]
-            p_df = res_val["positions"]
-            t_df = res_val["trades"]
-
-            if not p_df.empty:
-                all_val_positions.append(p_df)
-            if not t_df.empty:
-                all_val_trades.append(t_df)
-
-            pf_val = float(st_val.get("profit_factor", 0.0))
-            if np.isinf(pf_val):
-                pf_val = 999.0
-
-            val_selected_results[sym] = {
-                "positions": int(st_val.get("positions", 0)),
-                "closed_trades": int(st_val.get("closed_trades", 0)),
-                "profit_factor": round(pf_val, 3),
-                "mean_r": round(float(st_val.get("mean_r", 0.0)), 4),
-                "net_profit": round(float(st_val.get("net_profit", 0.0)), 2),
-                "max_drawdown_pct": round(float(st_val.get("max_drawdown_pct", 0.0)), 2),
-                "win_rate_pct": round(float(st_val.get("win_rate_pct", 0.0)), 2),
-            }
-
-        # Also run all eligible coins on 2025 for comparison row
-        update(None, 88.0, "Computing 2025 universe comparison row across all eligible coins")
-        eligible_symbols = [r["symbol"] for r in train_results if r["is_eligible"]]
-        comp_positions: list[pd.DataFrame] = []
-        comp_trades: list[pd.DataFrame] = []
-
-        for sym in eligible_symbols:
-            try:
-                tick = get_tick_size(sym)
-                df = load_ohlcv(sym, tf)
-                df["date_str"] = df["open_time"].dt.strftime("%Y-%m-%d")
-                df["vol_30d_med"] = [vol_map.get((sym, d), float("nan")) for d in df["date_str"]]
-                c_res = run_strategy_backtest(
-                    strat,
-                    df,
-                    tick=tick,
-                    start=rules.splits.validation.start,
-                    end=rules.splits.validation.end,
-                    min_quote_volume_30d=rules.liquidity.min_30d_median_quote_volume_usd,
-                    tiered_slippage=rules.slippage.tiered,
-                )
-                if not c_res["positions"].empty:
-                    comp_positions.append(c_res["positions"])
-                if not c_res["trades"].empty:
-                    comp_trades.append(c_res["trades"])
-            except Exception:
-                continue
-
-        # Compute comparison row pooled metrics
-        if comp_positions:
-            c_pos_all = pd.concat(comp_positions, ignore_index=True)
-            c_tr_all = pd.concat(comp_trades, ignore_index=True) if comp_trades else pd.DataFrame()
-            c_wins = c_tr_all[c_tr_all["pnl"] > 0]["pnl"].sum() if not c_tr_all.empty else 0.0
-            c_losses = -c_tr_all[c_tr_all["pnl"] <= 0]["pnl"].sum() if not c_tr_all.empty else 0.0
-            c_pf = (c_wins / c_losses) if c_losses > 0 else (999.0 if c_wins > 0 else 0.0)
-            c_r = c_pos_all["r_multiple"].dropna()
-            job.comparison_row = {
-                "name": "All Eligible Coins (2025)",
-                "coins_count": len(eligible_symbols),
-                "pooled_positions": len(c_pos_all),
-                "pooled_trades": len(c_tr_all),
-                "pooled_mean_r": round(float(c_r.mean()), 4) if len(c_r) > 0 else 0.0,
-                "pooled_profit_factor": round(float(c_pf), 3),
-                "pooled_net_profit": round(float(c_pos_all["net_pnl"].sum()), 2),
-            }
-        else:
-            job.comparison_row = {
-                "name": "All Eligible Coins (2025)",
-                "coins_count": len(eligible_symbols),
-                "pooled_positions": 0,
-                "pooled_trades": 0,
-                "pooled_mean_r": 0.0,
-                "pooled_profit_factor": 0.0,
-                "pooled_net_profit": 0.0,
-            }
+        if selected_symbols:
+            with ProcessPoolExecutor(max_workers=min(num_workers, len(selected_symbols))) as pool:
+                futures = [
+                    pool.submit(
+                        scan_symbol_worker,
+                        sym,
+                        tf,
+                        str(strat_path),
+                        rules.splits.validation.start,
+                        rules.splits.validation.end,
+                        rules.liquidity.min_30d_median_quote_volume_usd,
+                        rules.slippage.tiered,
+                        rules.liquidity.volume_data_path,
+                    )
+                    for sym in selected_symbols
+                ]
+                for idx, fut in enumerate(futures, 1):
+                    val_res = fut.result()
+                    sym = val_res["symbol"]
+                    val_selected_results[sym] = val_res
+                    all_val_positions.extend(val_res["positions_records"])
+                    pct = 70.0 + (idx / len(selected_symbols)) * 20.0
+                    update(None, pct, f"Validation: processed {idx}/{len(selected_symbols)} selected coins ({sym})")
 
         # ── Step f) Verdict PASS / FAIL by rules_v1 ───────────────────────────
         update("VALIDATION_SCAN", 95.0, "Evaluating validation pass/fail criteria")
 
-        # Selected pooled metrics
         if all_val_positions:
-            v_pos_all = pd.concat(all_val_positions, ignore_index=True)
-            v_tr_all = pd.concat(all_val_trades, ignore_index=True) if all_val_trades else pd.DataFrame()
-            v_wins = v_tr_all[v_tr_all["pnl"] > 0]["pnl"].sum() if not v_tr_all.empty else 0.0
-            v_losses = -v_tr_all[v_tr_all["pnl"] <= 0]["pnl"].sum() if not v_tr_all.empty else 0.0
-            v_pf = (v_wins / v_losses) if v_losses > 0 else (999.0 if v_wins > 0 else 0.0)
-            v_r = v_pos_all["r_multiple"].dropna()
-            pooled_mean_r = round(float(v_r.mean()), 4) if len(v_r) > 0 else 0.0
-            pooled_pf = round(float(v_pf), 3)
+            val_r_vals = [p["r_multiple"] for p in all_val_positions if not np.isnan(p.get("r_multiple", np.nan))]
+            pooled_mean_r = round(float(np.mean(val_r_vals)), 4) if val_r_vals else 0.0
         else:
             pooled_mean_r = 0.0
-            pooled_pf = 0.0
 
-        # Profitable selected coins in 2025
+        val_gp = sum(v.get("gross_profit", 0.0) for v in val_selected_results.values())
+        val_gl = sum(v.get("gross_loss", 0.0) for v in val_selected_results.values())
+        pooled_pf = round((val_gp / val_gl) if val_gl > 0 else (999.0 if val_gp > 0 else 0.0), 3)
+
         profitable_coins = [
             sym for sym in selected_symbols if val_selected_results.get(sym, {}).get("net_profit", 0.0) > 0
         ]
@@ -463,7 +365,23 @@ def run_pipeline_sync(job_id: str, rules_version: str = "v1") -> None:
             },
         }
 
-        # Build candidate coins (selected AND profitable in 2025)
+        # Multi-timeframe comparison row (exact STEP 3 columns)
+        job.comparison_row = {
+            "tf": job.timeframe,
+            "eligible_coins": eligible_count,
+            "train_positions": len(all_train_pos_records),
+            "train_pooled_mean_r": round(train_pooled_mean_r, 4),
+            "train_pooled_pf": round(train_pooled_pf, 3),
+            "avg_cost_in_r": round(train_avg_cost_in_r, 4),
+            "selected": len(selected_symbols),
+            "val_positions": len(all_val_positions),
+            "val_pooled_mean_r": round(pooled_mean_r, 4),
+            "val_pooled_pf": round(pooled_pf, 3),
+            "pct_selected_profitable_2025": profitable_pct,
+            "verdict": job.verdict,
+        }
+
+        # Candidate coins (selected AND profitable in 2025)
         train_map = {r["symbol"]: r for r in train_results}
         candidate_coins = []
         for sym in profitable_coins:
@@ -532,32 +450,150 @@ def run_pipeline_sync(job_id: str, rules_version: str = "v1") -> None:
         save_job(job)
 
 
-def start_pipeline_job(
-    strategy_entry: Any, rules_version: str = "v1", auto_start: bool = True
-) -> StrategyLabJob:
-    """Instantiate a new pipeline job and queue background worker."""
-    job_id = str(uuid4())[:12]
-    job = StrategyLabJob(
-        job_id=job_id,
-        strategy_id=strategy_entry.strategy_id,
-        strategy_name=strategy_entry.name,
-        strategy_version=strategy_entry.version,
-        strategy_path=strategy_entry.file_path,
-        trial_k=strategy_entry.trial_k,
-        status="QUEUED",
-        current_step="Queued for execution",
-    )
-    _JOBS[job_id] = job
-    save_job(job)
+def _queue_worker_loop() -> None:
+    global _QUEUE_THREAD
+    while True:
+        with _QUEUE_LOCK:
+            if not _JOB_QUEUE:
+                _QUEUE_THREAD = None
+                return
+            job_id, rules_ver = _JOB_QUEUE.pop(0)
+        try:
+            run_pipeline_sync(job_id, rules_ver)
+        except Exception:
+            pass
+
+
+def _trigger_queue_worker() -> None:
+    global _QUEUE_THREAD
+    with _QUEUE_LOCK:
+        if _QUEUE_THREAD is None or not _QUEUE_THREAD.is_alive():
+            _QUEUE_THREAD = threading.Thread(
+                target=_queue_worker_loop,
+                daemon=True,
+                name="pipeline-sequential-queue",
+            )
+            _QUEUE_THREAD.start()
+
+
+def start_pipeline_jobs(
+    strategy_entry: Any,
+    timeframes: list[str] | None = None,
+    rules_version: str = "v1",
+    auto_start: bool = True,
+) -> list[StrategyLabJob]:
+    """Create a separate pipeline job for each selected timeframe in TF_ORDER.
+
+    Job order: 4h -> 2h -> 1h -> 30m -> 15m -> 5m (slowest last).
+    Each selected timeframe = a separate job = 1 trial in K.
+    Jobs run sequentially one after another.
+    """
+    registry = StrategyRegistry()
+    raw_tfs = timeframes if timeframes else [getattr(strategy_entry, "timeframe", "4h")]
+
+    # Sort in specified order: 4h -> 2h -> 1h -> 30m -> 15m -> 5m
+    ordered_tfs = [tf for tf in TF_ORDER if tf in raw_tfs] + [tf for tf in raw_tfs if tf not in TF_ORDER]
+
+    created_jobs: list[StrategyLabJob] = []
+    with _QUEUE_LOCK:
+        for tf in ordered_tfs:
+            trial_k = registry.allocate_trial_k()
+            job_id = str(uuid4())[:12]
+            job = StrategyLabJob(
+                job_id=job_id,
+                strategy_id=strategy_entry.strategy_id,
+                strategy_name=strategy_entry.name,
+                strategy_version=strategy_entry.version,
+                strategy_path=strategy_entry.file_path,
+                timeframe=tf,
+                trial_k=trial_k,
+                status="QUEUED",
+                current_step=f"Queued for execution on {tf}",
+            )
+            _JOBS[job_id] = job
+            save_job(job)
+            created_jobs.append(job)
+            if auto_start:
+                _JOB_QUEUE.append((job_id, rules_version))
 
     if auto_start:
-        import threading
+        _trigger_queue_worker()
 
-        thread = threading.Thread(
-            target=run_pipeline_sync,
-            args=(job_id, rules_version),
-            daemon=True,
-            name=f"pipeline-{job_id}",
-        )
-        thread.start()
-    return job
+    return created_jobs
+
+
+def start_pipeline_job(
+    strategy_entry: Any,
+    rules_version: str = "v1",
+    auto_start: bool = True,
+    timeframe: str | None = None,
+) -> StrategyLabJob:
+    """Instantiate a new pipeline job and queue background worker."""
+    tf = timeframe or getattr(strategy_entry, "timeframe", "4h")
+    jobs = start_pipeline_jobs(
+        strategy_entry,
+        timeframes=[tf],
+        rules_version=rules_version,
+        auto_start=auto_start,
+    )
+    return jobs[0]
+
+
+def get_comparison_report(strategy_id: str | None = None) -> list[dict[str, Any]]:
+    """Retrieve comparison rows across timeframes ordered by 4h -> 2h -> 1h -> 30m -> 15m -> 5m."""
+    jobs = list_jobs()
+    if strategy_id:
+        jobs = [j for j in jobs if j.strategy_id == strategy_id or j.strategy_id.endswith(strategy_id)]
+
+    tf_map: dict[str, dict[str, Any]] = {}
+    for j in sorted(jobs, key=lambda x: x.created_at):
+        if j.status == "COMPLETED" and j.comparison_row:
+            tf = j.timeframe or j.comparison_row.get("tf", "4h")
+            tf_map[tf] = j.comparison_row
+
+    res: list[dict[str, Any]] = []
+    for tf in TF_ORDER:
+        if tf in tf_map:
+            res.append(tf_map[tf])
+    for tf, row in tf_map.items():
+        if tf not in TF_ORDER:
+            res.append(row)
+    return res
+
+
+def export_comparison_report_csv(strategy_id: str | None = None) -> str:
+    """Generate CSV string of the comparison report table."""
+    rows = get_comparison_report(strategy_id)
+    headers = [
+        "TF",
+        "eligible coins",
+        "TRAIN positions (all eligible)",
+        "TRAIN pooled mean R (all eligible)",
+        "TRAIN pooled PF (all eligible)",
+        "avg cost in R",
+        "selected",
+        "2025 positions",
+        "2025 pooled mean R",
+        "2025 pooled PF",
+        "% selected profitable 2025",
+        "verdict",
+    ]
+    key_mapping = [
+        ("TF", "tf"),
+        ("eligible coins", "eligible_coins"),
+        ("TRAIN positions (all eligible)", "train_positions"),
+        ("TRAIN pooled mean R (all eligible)", "train_pooled_mean_r"),
+        ("TRAIN pooled PF (all eligible)", "train_pooled_pf"),
+        ("avg cost in R", "avg_cost_in_r"),
+        ("selected", "selected"),
+        ("2025 positions", "val_positions"),
+        ("2025 pooled mean R", "val_pooled_mean_r"),
+        ("2025 pooled PF", "val_pooled_pf"),
+        ("% selected profitable 2025", "pct_selected_profitable_2025"),
+        ("verdict", "verdict"),
+    ]
+    lines = [",".join(headers)]
+    for r in rows:
+        vals = [str(r.get(k, "")) for _, k in key_mapping]
+        lines.append(",".join(vals))
+    return "\n".join(lines) + "\n"

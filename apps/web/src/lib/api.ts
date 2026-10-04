@@ -580,13 +580,18 @@ export const api = {
   // Audit
   auditLogs: (params?: { limit?: number; action?: string }) => get<AuditLogEntry[]>("/api/audit/logs", params),
 
-  // Strategy Lab Phase B
+  // Strategy Lab Phase B & Multi-Timeframe
   strategyLabStatus: () => get<{ trial_count_k: number; strategies_count: number; strategies: any[]; jobs: any[] }>("/api/strategy-lab/status"),
   strategyLabJobs: () => get<any[]>("/api/strategy-lab/jobs"),
   strategyLabJob: (jobId: string) => get<any>(`/api/strategy-lab/jobs/${jobId}`),
-  uploadStrategy: async (file: File) => {
+  strategyLabComparisonReport: (strategyId?: string) =>
+    get<{ report: any[] }>("/api/strategy-lab/comparison-report", strategyId ? { strategy_id: strategyId } : undefined),
+  uploadStrategy: async (file: File, timeframes?: string[]) => {
     const formData = new FormData();
     formData.append("file", file);
+    if (timeframes && timeframes.length > 0) {
+      formData.append("timeframes", timeframes.join(","));
+    }
     const url = new URL("/api/strategy-lab/upload", API_URL);
     const res = await fetch(url, { method: "POST", body: formData, credentials: "include" });
     if (!res.ok) {

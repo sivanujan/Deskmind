@@ -22,18 +22,18 @@ import pandas as pd
 
 @dataclass
 class ExitBracket:
-    name: str  # e.g. "TP1", "TP2", "TP3"
-    qty_pct: float  # percentage of position allocated to this exit (e.g. 33.0)
-    limit: float  # take profit target price
-    stop: float  # protective stop loss price
+    name: str  # e.g. "TP1", "TP2", "TP3", "Stop"
+    qty_pct: float  # percentage of position allocated to this exit (e.g. 33.0 or 100.0)
+    limit: float | None = None  # take profit target price (None for stop-only)
+    stop: float | None = None  # protective stop loss price
 
 
 @dataclass
 class _ActiveBracket:
     name: str
     qty: float
-    limit: float
-    stop: float
+    limit: float | None = None
+    stop: float | None = None
     filled: bool = False
 
 
@@ -51,6 +51,9 @@ class Position:
     remaining: float = 0.0
     realized: float = 0.0
     fills: list[dict[str, Any]] = field(default_factory=list)
+    entry_slip: float = 0.0
+    total_exit_slip: float = 0.0
+    total_fees: float = 0.0
 
 
 def round_tick(price: float, tick: float) -> float:
@@ -71,6 +74,8 @@ class TradingViewBroker:
         allow_reverse: bool = True,
         min_quote_volume_30d: float | None = None,
         tiered_slippage: bool = False,
+        risk_pct: float | None = None,
+        max_leverage: float = 1.0,
     ):
         if tick is None or tick <= 0:
             raise ValueError("Valid positive tick size is required")
@@ -84,6 +89,8 @@ class TradingViewBroker:
         self.allow_reverse = allow_reverse
         self.min_quote_volume_30d = min_quote_volume_30d
         self.tiered_slippage = tiered_slippage
+        self.risk_pct = risk_pct
+        self.max_leverage = max_leverage
 
         # State
         self.pos: Position | None = None
@@ -123,9 +130,19 @@ class TradingViewBroker:
         init_stop: float | None = None,
         current_close: float | None = None,
         qty: float | None = None,
+        stop: float | None = None,
+        risk_pct: float | None = None,
+        max_leverage: float | None = None,
     ) -> None:
         """Schedule a market order entry for next bar's open."""
         side_val = 1 if side in (1, "long", "Long") else -1
+        eff_stop = stop if stop is not None else init_stop
+        eff_risk_pct = risk_pct if risk_pct is not None else self.risk_pct
+        eff_max_lev = max_leverage if max_leverage is not None else self.max_leverage
+
+        if brackets is None and eff_stop is not None:
+            brackets = [ExitBracket(name="Stop", qty_pct=100.0, limit=None, stop=eff_stop)]
+
         if qty is None and current_close is not None and current_close > 0:
             open_pnl = (
                 0.0
@@ -133,14 +150,22 @@ class TradingViewBroker:
                 else self.pos.side * (current_close - self.pos.entry_price) * self.pos.remaining
             )
             equity = self.initial_capital + self.realized_total + open_pnl
-            qty = equity * self.equity_pct_per_trade / 100.0 / current_close
+            if eff_risk_pct is not None:
+                stop_dist = abs(current_close - eff_stop) if eff_stop is not None else 0.0
+                q = equity * (eff_risk_pct / 100.0) / stop_dist if stop_dist > 0 else 0.0
+                cap = equity * eff_max_lev / current_close
+                qty = max(min(q, cap), 0.0)
+            else:
+                qty = equity * self.equity_pct_per_trade / 100.0 / current_close
 
         plan = {
             "brackets": brackets or [],
-            "plan_entry": plan_entry,
-            "init_stop": init_stop,
+            "plan_entry": plan_entry if plan_entry is not None else current_close,
+            "init_stop": eff_stop,
             "current_close": current_close,
             "fixed_qty": qty,
+            "risk_pct": eff_risk_pct,
+            "max_leverage": eff_max_lev,
         }
         self.pending_entry = (side_val, qty if qty is not None else 0.0, plan)
 
@@ -165,6 +190,14 @@ class TradingViewBroker:
                 if limit is not None:
                     b.limit = limit
 
+    def update_stop(self, stop: float, bracket_name: str | None = None) -> None:
+        """Update protective trailing stop on live brackets."""
+        self.update_brackets(stop=stop, bracket_name=bracket_name)
+
+    def set_trailing_stop(self, stop: float) -> None:
+        """Update trailing stop on active brackets."""
+        self.update_brackets(stop=stop)
+
     # ---------------------------------------------------------------- Internal Engine
     def get_slip(self, bar: int, price: float, vol_arr: np.ndarray | None) -> float:
         if self.tiered_slippage and vol_arr is not None:
@@ -185,11 +218,14 @@ class TradingViewBroker:
         bar: int,
         reason: str,
         t_open: pd.Series,
+        slip: float = 0.0,
     ) -> None:
         pos = self.pos
         if pos is None:
             return
         fee = price * q * self.fee_rate
+        pos.total_fees += fee
+        pos.total_exit_slip += slip * q
         entry_fee_share = pos.entry_fee * q / pos.qty
         pnl = pos.side * (price - pos.entry_price) * q - fee - entry_fee_share
         pos.realized += pnl
@@ -211,6 +247,8 @@ class TradingViewBroker:
 
         if pos.remaining <= pos.qty * 1e-9:
             risk_unit = abs(pos.plan_entry - pos.init_stop) * pos.qty
+            cost_usd = pos.total_fees + pos.entry_slip + pos.total_exit_slip
+            cost_r = (cost_usd / risk_unit) if risk_unit > 0 else 0.0
             self.position_rows.append(
                 {
                     "side": "long" if pos.side == 1 else "short",
@@ -222,6 +260,9 @@ class TradingViewBroker:
                     "plan_entry": pos.plan_entry,
                     "net_pnl": pos.realized,
                     "r_multiple": pos.realized / risk_unit if risk_unit > 0 else np.nan,
+                    "cost_usd": round(cost_usd, 4),
+                    "cost_in_r": round(cost_r, 4),
+                    "risk_unit": round(risk_unit, 4),
                     "last_exit_reason": reason,
                 }
             )
@@ -239,7 +280,7 @@ class TradingViewBroker:
             return
         slip = self.get_slip(bar, open_arr[bar], vol_arr)
         price = open_arr[bar] - self.pos.side * slip
-        self._close_qty(self.pos.remaining, price, bar, reason, t_open)
+        self._close_qty(self.pos.remaining, price, bar, reason, t_open, slip=slip)
 
     def execute_bar_open(
         self,
@@ -288,6 +329,8 @@ class TradingViewBroker:
                     plan_entry=e_plan,
                     init_stop=init_stop,
                     remaining=qty,
+                    entry_slip=slip * qty,
+                    total_fees=fee,
                 )
 
                 # Initialize active brackets
@@ -334,11 +377,11 @@ class TradingViewBroker:
                 b.filled = True
                 q = self.pos.remaining if b.name == "TP3" else min(b.qty, self.pos.remaining)
                 slip = self.get_slip(i, open_, vol_arr)
-                self._close_qty(q, open_ - s * slip, i, b.name + " SL", t_open)
+                self._close_qty(q, open_ - s * slip, i, b.name + " SL", t_open, slip=slip)
             elif (s == 1 and open_ >= b.limit) or (s == -1 and open_ <= b.limit):
                 b.filled = True
                 q = self.pos.remaining if b.name == "TP3" else min(b.qty, self.pos.remaining)
-                self._close_qty(q, open_, i, b.name, t_open)
+                self._close_qty(q, open_, i, b.name, t_open, slip=0.0)
 
         # 2. Intrabar price path
         if self.pos is not None:
@@ -371,9 +414,9 @@ class TradingViewBroker:
                 q = min(b.qty, self.pos.remaining) if b.name != "TP3" else self.pos.remaining
                 if kind == "stop":
                     slip = self.get_slip(i, lvl, vol_arr)
-                    self._close_qty(q, lvl - s * slip, i, b.name + " SL", t_open)
+                    self._close_qty(q, lvl - s * slip, i, b.name + " SL", t_open, slip=slip)
                 else:
-                    self._close_qty(q, lvl, i, b.name, t_open)
+                    self._close_qty(q, lvl, i, b.name, t_open, slip=0.0)
 
     def record_bar_close(
         self,

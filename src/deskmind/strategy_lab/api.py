@@ -1,22 +1,25 @@
-"""FastAPI endpoints for Strategy Lab Phase B."""
+"""FastAPI endpoints for Strategy Lab Phase B and Multi-Timeframe Support."""
 
 from __future__ import annotations
 
 import io
+import json
 from dataclasses import asdict
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from deskmind.strategy_lab.base import StrategyValidationError
 from deskmind.strategy_lab.pipeline import (
     StrategyLabJob,
+    export_comparison_report_csv,
+    get_comparison_report,
     get_job,
     list_jobs,
-    start_pipeline_job,
+    start_pipeline_jobs,
 )
 from deskmind.strategy_lab.registry import StrategyRegistry
 
@@ -36,11 +39,13 @@ class UploadResponse(BaseModel):
     uploaded_at: str
     is_new_upload: bool
     job_id: str | None = None
+    job_ids: list[str] = []
 
 
 class JobStartRequest(BaseModel):
     strategy_id: str
     rules_version: str = "v1"
+    timeframes: list[str] | None = None
 
 
 class Test2026Request(BaseModel):
@@ -54,7 +59,7 @@ def get_strategy_lab_status() -> dict[str, Any]:
         "trial_count_k": _REGISTRY.trial_count_k,
         "strategies_count": len(_REGISTRY.get_entries()),
         "strategies": [asdict(e) for e in _REGISTRY.get_entries()],
-        "jobs": [asdict(j) for j in list_jobs()[:10]],
+        "jobs": [asdict(j) for j in list_jobs()[:20]],
     }
 
 
@@ -62,12 +67,13 @@ def get_strategy_lab_status() -> dict[str, Any]:
 async def upload_strategy(
     file: UploadFile = File(...),
     auto_start: bool = True,
+    timeframes: str | None = Form(None),
 ) -> UploadResponse:
     """Upload a single .py strategy file.
 
     Validates AST (restricted imports, Strategy protocol),
     saves to uploads/<name>_<version>_<sha256[:8]>.py,
-    records in registry, and increments trial count K for new hashes.
+    records in registry, and queues multi-timeframe jobs.
     """
     if not file.filename or not file.filename.endswith(".py"):
         raise HTTPException(400, "Only standalone Python (.py) strategy files are supported.")
@@ -80,7 +86,21 @@ async def upload_strategy(
     except Exception as e:
         raise HTTPException(400, f"Failed to parse uploaded strategy: {e}") from e
 
-    job = start_pipeline_job(entry, rules_version="v1", auto_start=auto_start) if auto_start else None
+    # Parse timeframes if provided
+    selected_tfs = None
+    if timeframes:
+        tfs = [t.strip() for t in timeframes.split(",") if t.strip()]
+        if tfs:
+            selected_tfs = tfs
+
+    jobs: list[StrategyLabJob] = []
+    if auto_start:
+        jobs = start_pipeline_jobs(
+            entry,
+            timeframes=selected_tfs,
+            rules_version="v1",
+            auto_start=True,
+        )
 
     return UploadResponse(
         strategy_id=entry.strategy_id,
@@ -93,19 +113,29 @@ async def upload_strategy(
         file_path=entry.file_path,
         uploaded_at=entry.uploaded_at,
         is_new_upload=is_new,
-        job_id=job.job_id if job else None,
+        job_id=jobs[0].job_id if jobs else None,
+        job_ids=[j.job_id for j in jobs],
     )
 
 
 @router.post("/jobs")
 def create_pipeline_job(req: JobStartRequest) -> dict[str, Any]:
-    """Manually trigger a pipeline job for a registered strategy."""
+    """Manually trigger pipeline jobs for a registered strategy."""
     entry = _REGISTRY.get_by_id(req.strategy_id)
     if entry is None:
         raise HTTPException(404, f"Strategy '{req.strategy_id}' not found in registry.")
 
-    job = start_pipeline_job(entry, rules_version=req.rules_version)
-    return asdict(job)
+    jobs = start_pipeline_jobs(
+        entry,
+        timeframes=req.timeframes,
+        rules_version=req.rules_version,
+        auto_start=True,
+    )
+    return {
+        "strategy_id": entry.strategy_id,
+        "jobs": [asdict(j) for j in jobs],
+        "primary_job": asdict(jobs[0]) if jobs else {},
+    }
 
 
 @router.get("/jobs")
@@ -119,6 +149,24 @@ def get_job_status(job_id: str) -> dict[str, Any]:
     if job is None:
         raise HTTPException(404, f"Job '{job_id}' not found.")
     return asdict(job)
+
+
+@router.get("/comparison-report")
+def get_comparison_report_endpoint(strategy_id: str | None = Query(None)) -> dict[str, Any]:
+    """Return comparison report rows ordered by 4h -> 2h -> 1h -> 30m -> 15m -> 5m."""
+    rows = get_comparison_report(strategy_id)
+    return {"report": rows}
+
+
+@router.get("/comparison-report.csv")
+def download_comparison_report_csv_endpoint(strategy_id: str | None = Query(None)) -> Any:
+    """Download comparison report as CSV."""
+    csv_text = export_comparison_report_csv(strategy_id)
+    return StreamingResponse(
+        io.BytesIO(csv_text.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="comparison_report.csv"'},
+    )
 
 
 @router.get("/jobs/{job_id}/download/{fmt}")
@@ -150,11 +198,7 @@ def download_job_report(job_id: str, fmt: str) -> Any:
 
 @router.post("/jobs/{job_id}/test-2026")
 def run_2026_test(job_id: str, req: Test2026Request) -> dict[str, Any]:
-    """Execute locked 2026 test split.
-
-    Only enabled when verdict == PASS.
-    Requires explicit confirmation payload confirm=True.
-    """
+    """Execute locked 2026 test split."""
     job = get_job(job_id)
     if job is None:
         raise HTTPException(404, f"Job '{job_id}' not found.")
@@ -175,7 +219,6 @@ def run_2026_test(job_id: str, req: Test2026Request) -> dict[str, Any]:
             ),
         }
 
-    # If confirmed:
     job.test_2026_status = "RUNNING"
     return {
         "status": "INITIATED",

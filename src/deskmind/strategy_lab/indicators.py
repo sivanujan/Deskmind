@@ -29,14 +29,8 @@ def wma(x: np.ndarray, n: int) -> np.ndarray:
     return out
 
 
-def rma(x: np.ndarray, n: int) -> np.ndarray:
-    """Pine ta.rma (Running Moving Average / Wilder's MA).
-
-    Seeded with SMA of the first n values, then alpha = 1/n recursion:
-    RMA[i] = alpha * x[i] + (1 - alpha) * RMA[i-1].
-    """
+def _sma_seeded_recursive(x: np.ndarray, n: int, alpha: float) -> np.ndarray:
     out = np.full(len(x), np.nan)
-    alpha = 1.0 / n
     prev = np.nan
     for i in range(len(x)):
         if np.isnan(prev):
@@ -50,6 +44,20 @@ def rma(x: np.ndarray, n: int) -> np.ndarray:
             prev = alpha * (0.0 if np.isnan(v) else v) + (1.0 - alpha) * prev
             out[i] = prev
     return out
+
+
+def ema(x: np.ndarray, n: int) -> np.ndarray:
+    """Pine ta.ema (Exponential Moving Average seeded with SMA)."""
+    return _sma_seeded_recursive(x, n, 2.0 / (n + 1))
+
+
+def rma(x: np.ndarray, n: int) -> np.ndarray:
+    """Pine ta.rma (Running Moving Average / Wilder's MA).
+
+    Seeded with SMA of the first n values, then alpha = 1/n recursion:
+    RMA[i] = alpha * x[i] + (1 - alpha) * RMA[i-1].
+    """
+    return _sma_seeded_recursive(x, n, 1.0 / n)
 
 
 def tr(
@@ -196,10 +204,33 @@ def gt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         return np.where(np.isnan(a) | np.isnan(b), False, a > b)
 
 
-# Backward-compatible aliases for private-named imports
+def barssince(cond: np.ndarray) -> np.ndarray:
+    """Pine ta.barssince: 0 when true now, NaN if never true yet."""
+    out = np.full(len(cond), np.nan)
+    last = -1
+    for i, c in enumerate(cond):
+        if c:
+            last = i
+        if last >= 0:
+            out[i] = i - last
+    return out
+
+
+def rolling_min(x: np.ndarray, n: int) -> np.ndarray:
+    """Rolling minimum over n bars."""
+    return pd.Series(x).rolling(n, min_periods=n).min().to_numpy()
+
+
+def rolling_max(x: np.ndarray, n: int) -> np.ndarray:
+    """Rolling maximum over n bars."""
+    return pd.Series(x).rolling(n, min_periods=n).max().to_numpy()
+
+
+# Backward-compatible aliases
 _sma = sma
 _wma = wma
 _rma = rma
+_ema = ema
 _tr = tr
 _atr = atr
 _rsi = rsi
@@ -209,3 +240,7 @@ _linreg = linreg
 _hma = hma
 _tracker = tracker
 _gt = gt
+_barssince = barssince
+_rolling_min = rolling_min
+_rolling_max = rolling_max
+true_range = tr
