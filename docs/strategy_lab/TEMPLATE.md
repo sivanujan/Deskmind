@@ -129,92 +129,109 @@ Any failure **REJECTS** the strategy with a descriptive error.
 
 ## 5. Reference Implementation: `tas_v1.py`
 
-Below is the complete reference implementation converted from the TAS Pine Script:
+Below is the exact current contents of `src/deskmind/strategy_lab/strategies/tas_v1.py`
+(copied verbatim from the file; the file is the source of truth):
 
 ```python
+"""TAS (Trend Analysis Strategy) v1.0.0 ported to Strategy Lab format."""
+
 from __future__ import annotations
 
+from typing import Any
 import numpy as np
 import pandas as pd
 
 from deskmind.strategy_lab.base import BarContext
 from deskmind.strategy_lab.broker import ExitBracket, TradingViewBroker
-from deskmind.strategy_lab.indicators import atr, dmi, hma, linreg, rsi, tracker
+from deskmind.strategy_lab.indicators import atr, dmi, gt, hma, linreg, rsi, sma, tracker
 
 
 class Strategy:
-    """Trend + Momentum Scoring Strategy (TAS v1) converted from TradingView Pine Script."""
+    """Trend Analysis Strategy (Pine Script v6 port)."""
 
     name: str = "TAS"
     version: str = "1.0.0"
     timeframe: str = "4h"
 
-    params: dict = {
-        "tracker_len": 55,
-        "fast_len": 9,
-        "slow_len": 21,
+    params: dict[str, Any] = {
+        "trend_atr_len": 14,
+        "trend_mult": 2.2,
         "rsi_len": 14,
-        "rsi_ma_len": 14,
-        "adx_len": 14,
-        "adx_threshold": 20.0,
-        "risk_atr_len": 14,
-        "sl_atr_mult": 2.0,
-        "tp1_r": 1.0,
-        "tp2_r": 2.0,
-        "tp3_r": 3.0,
-        "tp1_qty_pct": 33.0,
-        "tp2_qty_pct": 33.0,
-        "be_after_tp1": True,
-        "exit_on_flip": True,
-        "allow_reverse": True,
+        "rsi_smooth": 14,
+        "dmi_len": 14,
+        "eq_len": 55,
+        "eq_smooth": 9,
         "min_score_pct": 50.0,
+        "allow_reverse": True,
         "allow_late": True,
-        "late_max": 2,
-        "direction": "Both",
+        "late_max": 10,
+        "direction": "Both",  # "Both" | "Long Only" | "Short Only"
+        "risk_atr_len": 14,
+        "sl_atr_mult": 2.0,  # guard multiplier
+        "be_after_tp1": True,
+        "tp1_r": 1.5,
+        "tp1_qty_pct": 33.0,
+        "tp2_r": 2.5,
+        "tp2_qty_pct": 33.0,
+        "tp3_r": 3.5,
+        "exit_on_flip": True,
+        "initial_capital": 10_000.0,
         "equity_pct_per_trade": 10.0,
+        "commission_pct": 0.05,
+        "slippage_ticks": 1,
     }
 
-    def __init__(self) -> None:
-        self.reset_state()
+    def __init__(self, **kwargs: Any) -> None:
+        self.params = {**self.params, **kwargs}
+        self.trend_signaled = False
+        self.trend_start = 0
+        self.plan_dir = 0
+        self.e_plan = float("nan")
+        self.sl_lvl = float("nan")
+        self.tp1 = float("nan")
+        self.tp2 = float("nan")
+        self.tp3 = float("nan")
+        self.tp1_hit = False
+        self.tp2_hit = False
 
     def reset_state(self) -> None:
-        self.trend_start = 0
         self.trend_signaled = False
+        self.trend_start = 0
         self.plan_dir = 0
-        self.e_plan = 0.0
-        self.sl_lvl = 0.0
-        self.tp1 = 0.0
-        self.tp2 = 0.0
-        self.tp3 = 0.0
+        self.e_plan = float("nan")
+        self.sl_lvl = float("nan")
+        self.tp1 = float("nan")
+        self.tp2 = float("nan")
+        self.tp3 = float("nan")
         self.tp1_hit = False
         self.tp2_hit = False
 
     def indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Compute all TAS indicators vectorially."""
         p = self.params
-        c = df["close"].to_numpy(float)
         h = df["high"].to_numpy(float)
         l = df["low"].to_numpy(float)
+        c = df["close"].to_numpy(float)
 
-        trk, tdir = tracker(h, l, c, p["tracker_len"])
-        fast = linreg(c, p["fast_len"])
-        slow = hma(c, p["slow_len"])
-        eq = np.where(np.isnan(fast) | np.isnan(slow), np.nan, fast - slow)
+        trk, tdir = tracker(h, l, c, p["trend_atr_len"], p["trend_mult"])
+        eq = hma(linreg(c, p["eq_len"]), p["eq_smooth"])
+        eq_prev = np.roll(eq, 1)
+        eq_prev[0] = np.nan
+        rsi_val = rsi(c, p["rsi_len"])
+        rsi_ma = sma(rsi_val, p["rsi_smooth"])
+        dip, dim, adx = dmi(h, l, c, p["dmi_len"])
 
-        rsi_val, rsi_ma = rsi(c, p["rsi_len"], p["rsi_ma_len"])
-        _, _, adx = dmi(h, l, c, p["adx_len"])
+        def pm(cond: np.ndarray) -> np.ndarray:
+            return np.where(cond, 1, -1)
 
-        s1 = np.where(np.isnan(tdir), 0, tdir)
-        s2 = np.where(np.isnan(eq), 0, np.where(eq > 0, 1, np.where(eq < 0, -1, 0)))
-        s3 = np.where(np.isnan(rsi_val), 0, np.where(rsi_val > 50, 1, np.where(rsi_val < 50, -1, 0)))
-        s4 = np.where(
-            np.isnan(rsi_val) | np.isnan(rsi_ma),
-            0,
-            np.where(rsi_val > rsi_ma, 1, np.where(rsi_val < rsi_ma, -1, 0)),
+        score = (
+            tdir
+            + pm(gt(c, eq))
+            + pm(gt(eq, eq_prev))
+            + pm(gt(rsi_val, np.full(len(c), 50.0)))
+            + pm(gt(rsi_val, rsi_ma))
+            + pm(gt(dip, dim))
         )
-        s5 = np.where(c > trk, 1, np.where(c < trk, -1, 0))
-        s6 = np.where(adx >= p["adx_threshold"], 1, 0) * s1
-        score = s1 + s2 + s3 + s4 + s5 + s6
-
         out = df.copy()
         out["trk"] = trk
         out["tdir"] = tdir
@@ -228,6 +245,7 @@ class Strategy:
         return out
 
     def on_bar(self, i: int, ctx: BarContext, broker: TradingViewBroker) -> None:
+        """Execute TAS state machine and trading rules on bar close."""
         if i == 0:
             self.reset_state()
 
@@ -327,13 +345,14 @@ class Strategy:
                 self.tp1_hit = True
                 if p["be_after_tp1"]:
                     self.sl_lvl = (
-                        max(self.sl_lvl, self.e_plan) if dd == 1 else min(self.sl_lvl, self.e_plan)
+                        max(self.sl_lvl, self.e_plan)
+                        if dd == 1
+                        else min(self.sl_lvl, self.e_plan)
                     )
             if not self.tp2_hit and (ctx.high >= self.tp2 if dd == 1 else ctx.low <= self.tp2):
                 self.tp2_hit = True
             if p["exit_on_flip"] and (bear_flip if dd == 1 else bull_flip):
                 broker.close(reason="Trend Flip")
 
-            # Update live protective stops
             broker.update_brackets(stop=self.sl_lvl)
 ```
