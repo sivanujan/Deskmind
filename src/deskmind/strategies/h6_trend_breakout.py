@@ -12,6 +12,7 @@ Specification:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -101,6 +102,15 @@ class H6TrendBreakoutStrategy(BaseStrategy):
 
         return None
 
+    def _log_progress(self, msg: str) -> None:
+        log_file = self.params.get("progress_log_file")
+        if log_file:
+            try:
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(msg + "\n")
+            except Exception:
+                pass
+
     def on_bar(self, contexts: dict[str, StrategyContext]) -> list[Intent]:
         intents: list[Intent] = []
 
@@ -116,6 +126,10 @@ class H6TrendBreakoutStrategy(BaseStrategy):
                         sid = f"time_exit_{symbol}_{pos.entry_time_ms}"
                         if sid not in self._emitted_setup_ids:
                             self._emitted_setup_ids.add(sid)
+                            self._log_progress(
+                                f"{datetime.fromtimestamp(ctx.as_of_ms / 1000.0, tz=UTC).isoformat()} "
+                                f"[{symbol}] TIME EXIT emitted (holding_time = {holding_ms / 86_400_000:.1f} days >= 10 days)"
+                            )
                             intents.append(
                                 Intent(
                                     symbol=symbol,
@@ -124,7 +138,6 @@ class H6TrendBreakoutStrategy(BaseStrategy):
                                     metadata={"exit_reason": "time_limit"},
                                 )
                             )
-                            continue
 
             # 2. Resample 5m bar into 4h bars
             b_open = float(current_bar.open)
@@ -208,6 +221,10 @@ class H6TrendBreakoutStrategy(BaseStrategy):
                         c_dec = Decimal(str(round(bar_close, 6)))
                         stop_val = c_dec - stop_dist
                         target_val = c_dec + target_dist
+                        self._log_progress(
+                            f"{datetime.fromtimestamp(new_4h_bar.close_time / 1000.0, tz=UTC).isoformat()} "
+                            f"[{symbol}] LONG signal @ {bar_close:.4f} (SL={stop_val}, TP={target_val}, ATR={atr_val:.4f})"
+                        )
 
                         intents.append(
                             Intent(
@@ -245,6 +262,10 @@ class H6TrendBreakoutStrategy(BaseStrategy):
                         c_dec = Decimal(str(round(bar_close, 6)))
                         stop_val = c_dec + stop_dist
                         target_val = c_dec - target_dist
+                        self._log_progress(
+                            f"{datetime.fromtimestamp(new_4h_bar.close_time / 1000.0, tz=UTC).isoformat()} "
+                            f"[{symbol}] SHORT signal @ {bar_close:.4f} (SL={stop_val}, TP={target_val}, ATR={atr_val:.4f})"
+                        )
 
                         intents.append(
                             Intent(

@@ -105,6 +105,7 @@ def run_backtest_random_baseline(
     sampled_trades: list[SampledTradeInfo] | None = None,
     symbol_filters: dict[str, Decimal] | None = None,
     data_dir: Path | str = "data",
+    progress_callback: Any = None,
 ) -> RandomBaselineStats:
     """Run backtest-level matched random baseline with exact engine fill model.
 
@@ -449,6 +450,12 @@ def run_backtest_random_baseline(
         if seed_net_list:
             seed_gross_exp.append(sum(seed_gross_list) / len(seed_gross_list))
             seed_net_exp.append(sum(seed_net_list) / len(seed_net_list))
+
+        if progress_callback is not None:
+            try:
+                progress_callback(seed + 1, num_seeds)
+            except Exception:
+                pass
 
     mean_gross = sum(seed_gross_exp) / len(seed_gross_exp) if seed_gross_exp else 0.0
     mean_net = sum(seed_net_exp) / len(seed_net_exp) if seed_net_exp else 0.0
