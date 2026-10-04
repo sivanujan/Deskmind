@@ -1,0 +1,202 @@
+[
+  {
+    "symbol": "1000WHYUSDT",
+    "tf": "5m",
+    "time": "2026-03-17 09:00:00",
+    "cache_ohlcv": [
+      3.4e-06,
+      3.4e-06,
+      3.4e-06,
+      3.4e-06,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 3.4e-06,
+      "fapi_high": 3.4e-06,
+      "fapi_low": 3.4e-06,
+      "fapi_close": 3.4e-06,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "VFYUSDT",
+    "tf": "5m",
+    "time": "2026-03-17 09:05:00",
+    "cache_ohlcv": [
+      0.01297,
+      0.01297,
+      0.01297,
+      0.01297,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.01297,
+      "fapi_high": 0.01297,
+      "fapi_low": 0.01297,
+      "fapi_close": 0.01297,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "A2ZUSDT",
+    "tf": "5m",
+    "time": "2026-03-24 09:05:00",
+    "cache_ohlcv": [
+      0.0011629,
+      0.0011629,
+      0.0011629,
+      0.0011629,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.0011629,
+      "fapi_high": 0.0011629,
+      "fapi_low": 0.0011629,
+      "fapi_close": 0.0011629,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "FORTHUSDT",
+    "tf": "5m",
+    "time": "2026-03-24 09:05:00",
+    "cache_ohlcv": [
+      0.406,
+      0.406,
+      0.406,
+      0.406,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.406,
+      "fapi_high": 0.406,
+      "fapi_low": 0.406,
+      "fapi_close": 0.406,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "LRCUSDT",
+    "tf": "5m",
+    "time": "2026-03-24 09:05:00",
+    "cache_ohlcv": [
+      0.02369,
+      0.02369,
+      0.02369,
+      0.02369,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.02369,
+      "fapi_high": 0.02369,
+      "fapi_low": 0.02369,
+      "fapi_close": 0.02369,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "NTRNUSDT",
+    "tf": "5m",
+    "time": "2026-03-24 09:05:00",
+    "cache_ohlcv": [
+      0.00522,
+      0.00522,
+      0.00522,
+      0.00522,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.00522,
+      "fapi_high": 0.00522,
+      "fapi_low": 0.00522,
+      "fapi_close": 0.00522,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "HOOKUSDT",
+    "tf": "5m",
+    "time": "2026-03-24 09:05:00",
+    "cache_ohlcv": [
+      0.0132,
+      0.0132,
+      0.0132,
+      0.0132,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.0132,
+      "fapi_high": 0.0132,
+      "fapi_low": 0.0132,
+      "fapi_close": 0.0132,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "RDNTUSDT",
+    "tf": "5m",
+    "time": "2026-03-24 09:05:00",
+    "cache_ohlcv": [
+      0.005899,
+      0.005899,
+      0.005899,
+      0.005899,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.005899,
+      "fapi_high": 0.005899,
+      "fapi_low": 0.005899,
+      "fapi_close": 0.005899,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "1000WHYUSDT",
+    "tf": "15m",
+    "time": "2026-03-17 09:00:00",
+    "cache_ohlcv": [
+      3.4e-06,
+      3.4e-06,
+      3.4e-06,
+      3.4e-06,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 3.4e-06,
+      "fapi_high": 3.4e-06,
+      "fapi_low": 3.4e-06,
+      "fapi_close": 3.4e-06,
+      "fapi_volume": 0.0
+    }
+  },
+  {
+    "symbol": "VFYUSDT",
+    "tf": "15m",
+    "time": "2026-03-17 09:15:00",
+    "cache_ohlcv": [
+      0.01297,
+      0.01297,
+      0.01297,
+      0.01297,
+      0.0
+    ],
+    "fapi_result": {
+      "exists_on_binance": true,
+      "fapi_open": 0.01297,
+      "fapi_high": 0.01297,
+      "fapi_low": 0.01297,
+      "fapi_close": 0.01297,
+      "fapi_volume": 0.0
+    }
+  }
+]

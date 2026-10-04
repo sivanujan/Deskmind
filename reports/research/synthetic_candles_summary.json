@@ -1,0 +1,668 @@
+{
+  "total_files_checked": 3384,
+  "files_with_flat_candles": 319,
+  "total_candles": 62431188,
+  "total_flat_zero_vol_candles": 521860,
+  "top_20": [
+    {
+      "file": "ohlcv_1000WHY_USDT_USDT_5m.csv",
+      "row_count": 51578,
+      "flat_zero_vol_count": 17726,
+      "pct": 34.3674,
+      "samples": [
+        {
+          "open_time": "2026-03-17 09:00:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:05:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:10:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:15:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:20:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_VFY_USDT_USDT_5m.csv",
+      "row_count": 51015,
+      "flat_zero_vol_count": 17232,
+      "pct": 33.7783,
+      "samples": [
+        {
+          "open_time": "2026-03-17 09:05:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:10:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:15:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:20:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:25:00",
+          "close": 0.01297,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_A2Z_USDT_USDT_5m.csv",
+      "row_count": 51526,
+      "flat_zero_vol_count": 15716,
+      "pct": 30.5011,
+      "samples": [
+        {
+          "open_time": "2026-03-24 09:05:00",
+          "close": 0.0011629,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:10:00",
+          "close": 0.0011629,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:15:00",
+          "close": 0.0011629,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:20:00",
+          "close": 0.0011629,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:25:00",
+          "close": 0.0011629,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_FORTH_USDT_USDT_5m.csv",
+      "row_count": 51670,
+      "flat_zero_vol_count": 15715,
+      "pct": 30.4142,
+      "samples": [
+        {
+          "open_time": "2026-03-24 09:05:00",
+          "close": 0.406,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:10:00",
+          "close": 0.406,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:15:00",
+          "close": 0.406,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:20:00",
+          "close": 0.406,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:25:00",
+          "close": 0.406,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_LRC_USDT_USDT_5m.csv",
+      "row_count": 51628,
+      "flat_zero_vol_count": 15707,
+      "pct": 30.4234,
+      "samples": [
+        {
+          "open_time": "2026-03-24 09:05:00",
+          "close": 0.02369,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:10:00",
+          "close": 0.02369,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:15:00",
+          "close": 0.02369,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:20:00",
+          "close": 0.02369,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:25:00",
+          "close": 0.02369,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_NTRN_USDT_USDT_5m.csv",
+      "row_count": 51613,
+      "flat_zero_vol_count": 15707,
+      "pct": 30.4323,
+      "samples": [
+        {
+          "open_time": "2026-03-24 09:05:00",
+          "close": 0.00522,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:10:00",
+          "close": 0.00522,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:15:00",
+          "close": 0.00522,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:20:00",
+          "close": 0.00522,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:25:00",
+          "close": 0.00522,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_HOOK_USDT_USDT_5m.csv",
+      "row_count": 51619,
+      "flat_zero_vol_count": 15706,
+      "pct": 30.4268,
+      "samples": [
+        {
+          "open_time": "2026-03-24 09:05:00",
+          "close": 0.0132,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:10:00",
+          "close": 0.0132,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:15:00",
+          "close": 0.0132,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:20:00",
+          "close": 0.0132,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:25:00",
+          "close": 0.0132,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_RDNT_USDT_USDT_5m.csv",
+      "row_count": 51617,
+      "flat_zero_vol_count": 15706,
+      "pct": 30.428,
+      "samples": [
+        {
+          "open_time": "2026-03-24 09:05:00",
+          "close": 0.005899,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:10:00",
+          "close": 0.005899,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:15:00",
+          "close": 0.005899,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:20:00",
+          "close": 0.005899,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-24 09:25:00",
+          "close": 0.005899,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_OL_USDT_USDT_5m.csv",
+      "row_count": 51531,
+      "flat_zero_vol_count": 11395,
+      "pct": 22.1129,
+      "samples": [
+        {
+          "open_time": "2026-04-08 09:05:00",
+          "close": 0.00763,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:10:00",
+          "close": 0.00763,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:15:00",
+          "close": 0.00763,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:20:00",
+          "close": 0.00763,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:25:00",
+          "close": 0.00763,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_PUFFER_USDT_USDT_5m.csv",
+      "row_count": 51535,
+      "flat_zero_vol_count": 11395,
+      "pct": 22.1112,
+      "samples": [
+        {
+          "open_time": "2026-04-08 09:05:00",
+          "close": 0.02723,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:10:00",
+          "close": 0.02723,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:15:00",
+          "close": 0.02723,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:20:00",
+          "close": 0.02723,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:25:00",
+          "close": 0.02723,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_HIPPO_USDT_USDT_5m.csv",
+      "row_count": 51579,
+      "flat_zero_vol_count": 11388,
+      "pct": 22.0788,
+      "samples": [
+        {
+          "open_time": "2026-04-08 09:05:00",
+          "close": 0.0001965,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:10:00",
+          "close": 0.0001965,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:15:00",
+          "close": 0.0001965,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:20:00",
+          "close": 0.0001965,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:25:00",
+          "close": 0.0001965,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_RLS_USDT_USDT_5m.csv",
+      "row_count": 47461,
+      "flat_zero_vol_count": 10896,
+      "pct": 22.9578,
+      "samples": [
+        {
+          "open_time": "2026-04-08 09:05:00",
+          "close": 0.00263,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:10:00",
+          "close": 0.00263,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:15:00",
+          "close": 0.00263,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:20:00",
+          "close": 0.00263,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-08 09:25:00",
+          "close": 0.00263,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_FUN_USDT_USDT_5m.csv",
+      "row_count": 51671,
+      "flat_zero_vol_count": 9379,
+      "pct": 18.1514,
+      "samples": [
+        {
+          "open_time": "2026-04-15 09:05:00",
+          "close": 0.000514,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:10:00",
+          "close": 0.000514,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:15:00",
+          "close": 0.000514,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:20:00",
+          "close": 0.000514,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:25:00",
+          "close": 0.000514,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_FIO_USDT_USDT_5m.csv",
+      "row_count": 51583,
+      "flat_zero_vol_count": 9373,
+      "pct": 18.1707,
+      "samples": [
+        {
+          "open_time": "2026-04-15 09:00:00",
+          "close": 0.002699,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:05:00",
+          "close": 0.002699,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:10:00",
+          "close": 0.002699,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:15:00",
+          "close": 0.002699,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:20:00",
+          "close": 0.002699,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_OXT_USDT_USDT_5m.csv",
+      "row_count": 51615,
+      "flat_zero_vol_count": 9370,
+      "pct": 18.1536,
+      "samples": [
+        {
+          "open_time": "2026-04-15 09:05:00",
+          "close": 0.01089,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:10:00",
+          "close": 0.01089,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:15:00",
+          "close": 0.01089,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:20:00",
+          "close": 0.01089,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-15 09:25:00",
+          "close": 0.01089,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_DEGO_USDT_USDT_5m.csv",
+      "row_count": 51575,
+      "flat_zero_vol_count": 7646,
+      "pct": 14.825,
+      "samples": [
+        {
+          "open_time": "2026-04-21 09:00:00",
+          "close": 0.1466,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:05:00",
+          "close": 0.1466,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:10:00",
+          "close": 0.1466,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:15:00",
+          "close": 0.1466,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:20:00",
+          "close": 0.1466,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_TRU_USDT_USDT_5m.csv",
+      "row_count": 51618,
+      "flat_zero_vol_count": 7642,
+      "pct": 14.8049,
+      "samples": [
+        {
+          "open_time": "2026-04-21 09:05:00",
+          "close": 0.005252,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:10:00",
+          "close": 0.005252,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:15:00",
+          "close": 0.005252,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:20:00",
+          "close": 0.005252,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:25:00",
+          "close": 0.005252,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_DENT_USDT_USDT_5m.csv",
+      "row_count": 51623,
+      "flat_zero_vol_count": 7640,
+      "pct": 14.7996,
+      "samples": [
+        {
+          "open_time": "2026-04-21 09:05:00",
+          "close": 0.0001186,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:10:00",
+          "close": 0.0001186,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:15:00",
+          "close": 0.0001186,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:20:00",
+          "close": 0.0001186,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-04-21 09:25:00",
+          "close": 0.0001186,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_1000WHY_USDT_USDT_15m.csv",
+      "row_count": 51507,
+      "flat_zero_vol_count": 6909,
+      "pct": 13.4137,
+      "samples": [
+        {
+          "open_time": "2026-03-17 09:00:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:15:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:30:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:45:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 10:00:00",
+          "close": 3.4e-06,
+          "volume": 0.0
+        }
+      ]
+    },
+    {
+      "file": "ohlcv_VFY_USDT_USDT_15m.csv",
+      "row_count": 22527,
+      "flat_zero_vol_count": 6410,
+      "pct": 28.4547,
+      "samples": [
+        {
+          "open_time": "2026-03-17 09:15:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:30:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 09:45:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 10:00:00",
+          "close": 0.01297,
+          "volume": 0.0
+        },
+        {
+          "open_time": "2026-03-17 10:15:00",
+          "close": 0.01297,
+          "volume": 0.0
+        }
+      ]
+    }
+  ]
+}

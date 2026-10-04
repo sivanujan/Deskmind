@@ -1,0 +1,157 @@
+[
+  {
+    "symbol": "SOLUSDT",
+    "fapi_matches": 20,
+    "spot_matches": 0,
+    "samples": [
+      {
+        "time": "2026-05-10 02:00:00",
+        "cache": 93.0,
+        "fapi": 93.0,
+        "spot": 93.04,
+        "fapi_match": true,
+        "spot_match": false
+      },
+      {
+        "time": "2026-05-13 22:00:00",
+        "cache": 91.11,
+        "fapi": 91.11,
+        "spot": 91.18,
+        "fapi_match": true,
+        "spot_match": false
+      },
+      {
+        "time": "2026-05-17 19:00:00",
+        "cache": 86.74,
+        "fapi": 86.74,
+        "spot": 86.79,
+        "fapi_match": true,
+        "spot_match": false
+      }
+    ]
+  },
+  {
+    "symbol": "BNBUSDT",
+    "fapi_matches": 20,
+    "spot_matches": 0,
+    "samples": [
+      {
+        "time": "2023-07-07 16:00:00",
+        "cache": 235.14,
+        "fapi": 235.14,
+        "spot": 235.4,
+        "fapi_match": true,
+        "spot_match": false
+      },
+      {
+        "time": "2023-09-01 09:00:00",
+        "cache": 214.49,
+        "fapi": 214.49,
+        "spot": 214.5,
+        "fapi_match": true,
+        "spot_match": false
+      },
+      {
+        "time": "2023-10-27 02:00:00",
+        "cache": 222.38,
+        "fapi": 222.38,
+        "spot": 222.2,
+        "fapi_match": true,
+        "spot_match": false
+      }
+    ]
+  },
+  {
+    "symbol": "ADAUSDT",
+    "fapi_matches": 20,
+    "spot_matches": 3,
+    "samples": [
+      {
+        "time": "2023-07-07 16:00:00",
+        "cache": 0.2848,
+        "fapi": 0.2848,
+        "spot": 0.285,
+        "fapi_match": true,
+        "spot_match": false
+      },
+      {
+        "time": "2023-09-01 09:00:00",
+        "cache": 0.2564,
+        "fapi": 0.2564,
+        "spot": 0.2564,
+        "fapi_match": true,
+        "spot_match": true
+      },
+      {
+        "time": "2023-10-27 02:00:00",
+        "cache": 0.2844,
+        "fapi": 0.2844,
+        "spot": 0.2846,
+        "fapi_match": true,
+        "spot_match": false
+      }
+    ]
+  },
+  {
+    "symbol": "DOGEUSDT",
+    "fapi_matches": 20,
+    "spot_matches": 14,
+    "samples": [
+      {
+        "time": "2023-07-07 17:00:00",
+        "cache": 0.0655,
+        "fapi": 0.0655,
+        "spot": 0.06556,
+        "fapi_match": true,
+        "spot_match": true
+      },
+      {
+        "time": "2023-08-31 19:00:00",
+        "cache": 0.06378,
+        "fapi": 0.06378,
+        "spot": 0.06382,
+        "fapi_match": true,
+        "spot_match": true
+      },
+      {
+        "time": "2023-10-25 22:00:00",
+        "cache": 0.06895,
+        "fapi": 0.06895,
+        "spot": 0.06891,
+        "fapi_match": true,
+        "spot_match": true
+      }
+    ]
+  },
+  {
+    "symbol": "LINKUSDT",
+    "fapi_matches": 20,
+    "spot_matches": 2,
+    "samples": [
+      {
+        "time": "2023-07-07 16:00:00",
+        "cache": 6.197,
+        "fapi": 6.197,
+        "spot": 6.203,
+        "fapi_match": true,
+        "spot_match": false
+      },
+      {
+        "time": "2023-09-01 09:00:00",
+        "cache": 6.028,
+        "fapi": 6.028,
+        "spot": 6.031,
+        "fapi_match": true,
+        "spot_match": false
+      },
+      {
+        "time": "2023-10-27 02:00:00",
+        "cache": 10.845,
+        "fapi": 10.845,
+        "spot": 10.842,
+        "fapi_match": true,
+        "spot_match": false
+      }
+    ]
+  }
+]

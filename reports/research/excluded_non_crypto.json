@@ -1,0 +1,44 @@
+[
+  {
+    "coin": "AMZN",
+    "symbol": "AMZNUSDT",
+    "reason": "Equity / Stock Perpetual",
+    "contract_type": "TRADIFI_PERPETUAL"
+  },
+  {
+    "coin": "BTCDOM",
+    "symbol": "BTCDOMUSDT",
+    "reason": "Binance Crypto Dominance Index",
+    "contract_type": "PERPETUAL"
+  },
+  {
+    "coin": "GOOGL",
+    "symbol": "GOOGLUSDT",
+    "reason": "Equity / Stock Perpetual",
+    "contract_type": "TRADIFI_PERPETUAL"
+  },
+  {
+    "coin": "SPX",
+    "symbol": "SPXUSDT",
+    "reason": "TradFi Stock Index Perpetual",
+    "contract_type": "PERPETUAL"
+  },
+  {
+    "coin": "TSLA",
+    "symbol": "TSLAUSDT",
+    "reason": "Equity / Stock Perpetual",
+    "contract_type": "TRADIFI_PERPETUAL"
+  },
+  {
+    "coin": "XAG",
+    "symbol": "XAGUSDT",
+    "reason": "Commodity / Precious Metal Perpetual (Gold / Silver)",
+    "contract_type": "TRADIFI_PERPETUAL"
+  },
+  {
+    "coin": "XAU",
+    "symbol": "XAUUSDT",
+    "reason": "Commodity / Precious Metal Perpetual (Gold / Silver)",
+    "contract_type": "TRADIFI_PERPETUAL"
+  }
+]

@@ -1,0 +1,290 @@
+{
+  "total_files": 3384,
+  "total_rows": 62431188,
+  "timeframe_counts": {
+    "15m": 565,
+    "1d": 556,
+    "1h": 591,
+    "2h": 556,
+    "4h": 557,
+    "5m": 556,
+    "1m": 3
+  },
+  "total_duplicates": 0,
+  "total_out_of_order": 0,
+  "total_high_less_low": 0,
+  "total_zero_neg": 0,
+  "total_nans": 1,
+  "tiny_files_count": 1347,
+  "flagged_specific": [
+    {
+      "file": "ohlcv_BTC_USDT_USDT_1h.csv",
+      "coin": "BTC",
+      "tf": "1h",
+      "size_bytes": 121032,
+      "columns": [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "ts_format": "ISO datetime string (second precision)",
+      "timezone": "UTC",
+      "row_count": 1951,
+      "first_candle": "2026-05-08 00:00:00",
+      "last_candle": "2026-07-28 06:00:00",
+      "expected_candles": 1951,
+      "candle_diff": 0,
+      "gaps_count": 0,
+      "top_10_gaps": [],
+      "duplicate_timestamps": 0,
+      "out_of_order_rows": 0,
+      "high_less_than_low": 0,
+      "zero_or_negative": 0,
+      "nan_count": 0,
+      "is_tiny": true
+    },
+    {
+      "file": "ohlcv_ETH_USDT_USDT_1h.csv",
+      "coin": "ETH",
+      "tf": "1h",
+      "size_bytes": 122572,
+      "columns": [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "ts_format": "ISO datetime string (second precision)",
+      "timezone": "UTC",
+      "row_count": 1951,
+      "first_candle": "2026-05-08 00:00:00",
+      "last_candle": "2026-07-28 06:00:00",
+      "expected_candles": 1951,
+      "candle_diff": 0,
+      "gaps_count": 0,
+      "top_10_gaps": [],
+      "duplicate_timestamps": 0,
+      "out_of_order_rows": 0,
+      "high_less_than_low": 0,
+      "zero_or_negative": 0,
+      "nan_count": 0,
+      "is_tiny": true
+    },
+    {
+      "file": "ohlcv_XRP_USDT_USDT_15m.csv",
+      "coin": "XRP",
+      "tf": "15m",
+      "size_bytes": 122942,
+      "columns": [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "ts_format": "ISO datetime string (second precision)",
+      "timezone": "UTC",
+      "row_count": 2100,
+      "first_candle": "2026-07-06 09:15:00",
+      "last_candle": "2026-07-28 06:00:00",
+      "expected_candles": 2100,
+      "candle_diff": 0,
+      "gaps_count": 0,
+      "top_10_gaps": [],
+      "duplicate_timestamps": 0,
+      "out_of_order_rows": 0,
+      "high_less_than_low": 0,
+      "zero_or_negative": 0,
+      "nan_count": 0,
+      "is_tiny": true
+    }
+  ],
+  "fapi_verification": [
+    {
+      "symbol": "BTCUSDT",
+      "tf": "1h",
+      "candles_checked": 20,
+      "fapi_perp_matches": 18,
+      "spot_matches": 0,
+      "fapi_match_pct": 90.0,
+      "spot_match_pct": 0.0,
+      "conclusion": "Mismatch",
+      "samples": [
+        {
+          "time": "2026-07-01 13:00:00",
+          "cache_close": 59463.1,
+          "fapi_close": 59463.1,
+          "spot_close": 59498.03,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2026-05-17 12:00:00",
+          "cache_close": 78354.0,
+          "fapi_close": 78326.9,
+          "spot_close": 78364.83,
+          "fapi_match": false,
+          "spot_match": false
+        },
+        {
+          "time": "2026-05-10 03:00:00",
+          "cache_close": 80735.1,
+          "fapi_close": 80735.1,
+          "spot_close": 80775.0,
+          "fapi_match": true,
+          "spot_match": false
+        }
+      ]
+    },
+    {
+      "symbol": "ETHUSDT",
+      "tf": "1h",
+      "candles_checked": 20,
+      "fapi_perp_matches": 18,
+      "spot_matches": 0,
+      "fapi_match_pct": 90.0,
+      "spot_match_pct": 0.0,
+      "conclusion": "Mismatch",
+      "samples": [
+        {
+          "time": "2026-07-01 13:00:00",
+          "cache_close": 1596.42,
+          "fapi_close": 1596.42,
+          "spot_close": 1597.22,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2026-05-17 12:00:00",
+          "cache_close": 2190.89,
+          "fapi_close": 2193.37,
+          "spot_close": 2194.3,
+          "fapi_match": false,
+          "spot_match": false
+        },
+        {
+          "time": "2026-05-10 03:00:00",
+          "cache_close": 2326.79,
+          "fapi_close": 2326.79,
+          "spot_close": 2327.76,
+          "fapi_match": true,
+          "spot_match": false
+        }
+      ]
+    },
+    {
+      "symbol": "SOLUSDT",
+      "tf": "1h",
+      "candles_checked": 20,
+      "fapi_perp_matches": 20,
+      "spot_matches": 0,
+      "fapi_match_pct": 100.0,
+      "spot_match_pct": 0.0,
+      "conclusion": "Binance USDT-M Perpetual (EXACT MATCH)",
+      "samples": [
+        {
+          "time": "2026-07-01 13:00:00",
+          "cache_close": 76.0,
+          "fapi_close": 76.0,
+          "spot_close": 76.04,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2026-05-17 12:00:00",
+          "cache_close": 86.7,
+          "fapi_close": 86.7,
+          "spot_close": 86.76,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2026-05-10 03:00:00",
+          "cache_close": 93.37,
+          "fapi_close": 93.37,
+          "spot_close": 93.42,
+          "fapi_match": true,
+          "spot_match": false
+        }
+      ]
+    },
+    {
+      "symbol": "BNBUSDT",
+      "tf": "1h",
+      "candles_checked": 20,
+      "fapi_perp_matches": 20,
+      "spot_matches": 0,
+      "fapi_match_pct": 100.0,
+      "spot_match_pct": 0.0,
+      "conclusion": "Binance USDT-M Perpetual (EXACT MATCH)",
+      "samples": [
+        {
+          "time": "2025-11-24 14:00:00",
+          "cache_close": 838.64,
+          "fapi_close": 838.64,
+          "spot_close": 838.23,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2023-12-04 14:00:00",
+          "cache_close": 228.93,
+          "fapi_close": 228.93,
+          "spot_close": 228.7,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2023-08-08 17:00:00",
+          "cache_close": 245.18,
+          "fapi_close": 245.18,
+          "spot_close": 245.2,
+          "fapi_match": true,
+          "spot_match": false
+        }
+      ]
+    },
+    {
+      "symbol": "ADAUSDT",
+      "tf": "1h",
+      "candles_checked": 20,
+      "fapi_perp_matches": 20,
+      "spot_matches": 4,
+      "fapi_match_pct": 100.0,
+      "spot_match_pct": 20.0,
+      "conclusion": "Binance USDT-M Perpetual (EXACT MATCH)",
+      "samples": [
+        {
+          "time": "2025-11-24 14:00:00",
+          "cache_close": 0.4084,
+          "fapi_close": 0.4084,
+          "spot_close": 0.4087,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2023-12-04 14:00:00",
+          "cache_close": 0.4014,
+          "fapi_close": 0.4014,
+          "spot_close": 0.4012,
+          "fapi_match": true,
+          "spot_match": false
+        },
+        {
+          "time": "2023-08-08 17:00:00",
+          "cache_close": 0.3012,
+          "fapi_close": 0.3012,
+          "spot_close": 0.3013,
+          "fapi_match": true,
+          "spot_match": true
+        }
+      ]
+    }
+  ]
+}

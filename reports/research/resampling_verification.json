@@ -1,0 +1,44 @@
+{
+  "SOL": {
+    "4h_common_bars": 488,
+    "4h_open_match": true,
+    "4h_high_match": false,
+    "4h_low_match": false,
+    "4h_close_match": false,
+    "4h_volume_match": false,
+    "1d_common_bars": 82,
+    "1d_open_match": true,
+    "1d_high_match": false,
+    "1d_low_match": false,
+    "1d_close_match": false,
+    "1d_volume_match": false
+  },
+  "BNB": {
+    "4h_common_bars": 6713,
+    "4h_open_match": false,
+    "4h_high_match": false,
+    "4h_low_match": false,
+    "4h_close_match": false,
+    "4h_volume_match": false,
+    "1d_common_bars": 1120,
+    "1d_open_match": false,
+    "1d_high_match": false,
+    "1d_low_match": false,
+    "1d_close_match": false,
+    "1d_volume_match": false
+  },
+  "ADA": {
+    "4h_common_bars": 6713,
+    "4h_open_match": false,
+    "4h_high_match": false,
+    "4h_low_match": false,
+    "4h_close_match": false,
+    "4h_volume_match": false,
+    "1d_common_bars": 1120,
+    "1d_open_match": false,
+    "1d_high_match": false,
+    "1d_low_match": false,
+    "1d_close_match": false,
+    "1d_volume_match": false
+  }
+}

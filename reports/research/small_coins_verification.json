@@ -1,0 +1,262 @@
+{
+  "DENTUSDT": {
+    "15m": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2024-12-07 23:00:00",
+          "cache_close": 0.001967,
+          "fapi_close": 0.001967,
+          "match": true
+        },
+        {
+          "time": "2025-01-03 16:45:00",
+          "cache_close": 0.001505,
+          "fapi_close": 0.001505,
+          "match": true
+        },
+        {
+          "time": "2025-01-30 10:30:00",
+          "cache_close": 0.001092,
+          "fapi_close": 0.001092,
+          "match": true
+        }
+      ]
+    },
+    "4h": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2021-10-27 00:00:00",
+          "cache_close": 0.006328,
+          "fapi_close": 0.006328,
+          "match": true
+        },
+        {
+          "time": "2022-01-20 12:00:00",
+          "cache_close": 0.003662,
+          "fapi_close": 0.003662,
+          "match": true
+        },
+        {
+          "time": "2022-04-16 00:00:00",
+          "cache_close": 0.002846,
+          "fapi_close": 0.002846,
+          "match": true
+        }
+      ]
+    }
+  },
+  "PHBUSDT": {
+    "15m": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2024-12-07 23:30:00",
+          "cache_close": 2.4348,
+          "fapi_close": 2.4348,
+          "match": true
+        },
+        {
+          "time": "2025-01-03 17:15:00",
+          "cache_close": 1.7724,
+          "fapi_close": 1.7724,
+          "match": true
+        },
+        {
+          "time": "2025-01-30 11:00:00",
+          "cache_close": 1.395,
+          "fapi_close": 1.395,
+          "match": true
+        }
+      ]
+    },
+    "4h": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2023-02-24 20:00:00",
+          "cache_close": 1.2944,
+          "fapi_close": 1.2944,
+          "match": true
+        },
+        {
+          "time": "2023-04-27 00:00:00",
+          "cache_close": 0.9123,
+          "fapi_close": 0.9123,
+          "match": true
+        },
+        {
+          "time": "2023-06-27 04:00:00",
+          "cache_close": 0.699,
+          "fapi_close": 0.699,
+          "match": true
+        }
+      ]
+    }
+  },
+  "DUSKUSDT": {
+    "15m": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2024-12-07 23:15:00",
+          "cache_close": 0.31635,
+          "fapi_close": 0.31635,
+          "match": true
+        },
+        {
+          "time": "2025-01-03 17:00:00",
+          "cache_close": 0.25668,
+          "fapi_close": 0.25668,
+          "match": true
+        },
+        {
+          "time": "2025-01-30 10:45:00",
+          "cache_close": 0.16276,
+          "fapi_close": 0.16276,
+          "match": true
+        }
+      ]
+    },
+    "4h": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2022-01-15 08:00:00",
+          "cache_close": 0.95526,
+          "fapi_close": 0.95526,
+          "match": true
+        },
+        {
+          "time": "2022-04-06 20:00:00",
+          "cache_close": 0.39092,
+          "fapi_close": 0.39092,
+          "match": true
+        },
+        {
+          "time": "2022-06-27 08:00:00",
+          "cache_close": 0.14376,
+          "fapi_close": 0.14376,
+          "match": true
+        }
+      ]
+    }
+  },
+  "CTKUSDT": {
+    "15m": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2025-04-30 22:45:00",
+          "cache_close": 0.4466,
+          "fapi_close": 0.4466,
+          "match": true
+        },
+        {
+          "time": "2025-05-20 11:45:00",
+          "cache_close": 0.3407,
+          "fapi_close": 0.3407,
+          "match": true
+        },
+        {
+          "time": "2025-06-09 00:45:00",
+          "cache_close": 0.2799,
+          "fapi_close": 0.2799,
+          "match": true
+        }
+      ]
+    },
+    "4h": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2025-05-08 16:00:00",
+          "cache_close": 0.3567,
+          "fapi_close": 0.3567,
+          "match": true
+        },
+        {
+          "time": "2025-05-29 16:00:00",
+          "cache_close": 0.3463,
+          "fapi_close": 0.3463,
+          "match": true
+        },
+        {
+          "time": "2025-06-19 16:00:00",
+          "cache_close": 0.2415,
+          "fapi_close": 0.2415,
+          "match": true
+        }
+      ]
+    }
+  },
+  "TRUUSDT": {
+    "15m": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2024-12-07 23:45:00",
+          "cache_close": 0.14488,
+          "fapi_close": 0.14488,
+          "match": true
+        },
+        {
+          "time": "2025-01-03 17:15:00",
+          "cache_close": 0.09637,
+          "fapi_close": 0.09637,
+          "match": true
+        },
+        {
+          "time": "2025-01-30 11:00:00",
+          "cache_close": 0.06533,
+          "fapi_close": 0.06533,
+          "match": true
+        }
+      ]
+    },
+    "4h": {
+      "matches": 20,
+      "total": 20,
+      "pct": 100.0,
+      "samples": [
+        {
+          "time": "2023-03-15 20:00:00",
+          "cache_close": 0.09671,
+          "fapi_close": 0.09671,
+          "match": true
+        },
+        {
+          "time": "2023-05-15 00:00:00",
+          "cache_close": 0.04656,
+          "fapi_close": 0.04656,
+          "match": true
+        },
+        {
+          "time": "2023-07-14 08:00:00",
+          "cache_close": 0.041,
+          "fapi_close": 0.041,
+          "match": true
+        }
+      ]
+    }
+  }
+}
