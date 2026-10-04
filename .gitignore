@@ -46,6 +46,10 @@ data/journal/*
 data/trade/*
 !data/trade/.gitkeep
 data/features*
+data/strategy_lab/*
+!data/strategy_lab/.gitkeep
+uploads/*
+!uploads/.gitkeep
 scratch/
 
 # Backtest reports

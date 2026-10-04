@@ -1,0 +1,56 @@
+version: "v1"
+name: "TAS_Phase2_Standard_Rules"
+description: "Frozen Phase 2 rules for Strategy Lab: $20M liquidity gate, tiered slippage, TRAIN selection, and VALIDATION acceptance."
+
+universe:
+  path: "reports/research/universe_2022_2025.json"
+  excluded_symbols:
+    - "TSLAUSDT"
+    - "AMZNUSDT"
+    - "GOOGLUSDT"
+    - "XAUUSDT"
+    - "XAGUSDT"
+    - "SPXUSDT"
+    - "BTCDOMUSDT"
+
+liquidity:
+  min_30d_median_quote_volume_usd: 20000000.0  # $20M gate
+  volume_data_path: "data/daily_quote_volume.parquet"
+
+slippage:
+  tiered: true
+  tiers:
+    - min_volume: 500000000.0   # >= $500M: 1 tick
+      ticks: 1
+    - min_volume: 100000000.0   # $100M - $500M: 0.02% (min 1 tick)
+      pct: 0.0002
+      min_ticks: 1
+    - min_volume: 20000000.0    # $20M - $100M: 0.05% (min 1 tick)
+      pct: 0.0005
+      min_ticks: 1
+
+splits:
+  train:
+    name: "TRAIN"
+    start: "2023-01-01"
+    end: "2024-12-31"
+  validation:
+    name: "VALIDATION"
+    start: "2025-01-01"
+    end: "2025-12-31"
+  test:
+    name: "TEST"
+    start: "2026-01-01"
+    end: null
+    locked: true
+
+train_selection:
+  min_positions: 30
+  min_profit_factor: 1.30
+  min_mean_r: 0.0
+  max_drawdown_pct: 20.0
+
+validation_pass:
+  min_pooled_mean_r: 0.0
+  min_pooled_profit_factor: 1.20
+  min_profitable_cohort_pct: 60.0

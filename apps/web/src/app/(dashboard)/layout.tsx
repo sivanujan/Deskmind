@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/chart", label: "Chart" },
   { href: "/control", label: "Control" },
   { href: "/backtest", label: "Backtest Lab" },
+  { href: "/strategy-lab", label: "Strategy Lab" },
   { href: "/research", label: "Research" },
   { href: "/trades", label: "Trades & Journal" },
   { href: "/risk", label: "Risk" },

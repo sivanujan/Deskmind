@@ -577,8 +577,25 @@ export const api = {
   // One-off jobs started from the dashboard (login + CSRF; audit-logged)
   runUniverseJob: () => post<TaskState>("/api/control/universe/run"),
   syncAccount: () => post<TaskState>("/api/control/account/sync"),
-  tasks: () => get<Record<TaskKind, TaskState | null>>("/api/control/tasks"),
-
   // Audit
   auditLogs: (params?: { limit?: number; action?: string }) => get<AuditLogEntry[]>("/api/audit/logs", params),
+
+  // Strategy Lab Phase B
+  strategyLabStatus: () => get<{ trial_count_k: number; strategies_count: number; strategies: any[]; jobs: any[] }>("/api/strategy-lab/status"),
+  strategyLabJobs: () => get<any[]>("/api/strategy-lab/jobs"),
+  strategyLabJob: (jobId: string) => get<any>(`/api/strategy-lab/jobs/${jobId}`),
+  uploadStrategy: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const url = new URL("/api/strategy-lab/upload", API_URL);
+    const res = await fetch(url, { method: "POST", body: formData, credentials: "include" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `${res.status} ${res.statusText}`);
+    }
+    return await res.json();
+  },
+  test2026: (jobId: string, confirm: boolean) =>
+    post<{ status: string; message: string }>(`/api/strategy-lab/jobs/${jobId}/test-2026`, { confirm }),
 };
+

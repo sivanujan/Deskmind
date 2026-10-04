@@ -403,9 +403,11 @@ def create_app(
     from deskmind.api.actions import router as actions_router
     from deskmind.api.control import router as control_router
     from deskmind.api.dashboard import router as dashboard_router
+    from deskmind.strategy_lab.api import router as strategy_lab_router
 
     app.include_router(control_router)
     app.include_router(dashboard_router)
     app.include_router(actions_router)
+    app.include_router(strategy_lab_router)
 
     return app
