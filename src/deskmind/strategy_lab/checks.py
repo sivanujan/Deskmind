@@ -37,6 +37,8 @@ def run_strategy_checks(
     symbol: str = DEFAULT_TEST_SYMBOL,
     data_dir: Path | str = "data/parquet",
     meta_path: Path | str = "data/meta/symbol_filters_universe.json",
+    df: pd.DataFrame | None = None,
+    tick: float | None = None,
 ) -> dict[str, Any]:
     """Run the 4 standard integrity checks on a strategy.
 
@@ -56,11 +58,13 @@ def run_strategy_checks(
     else:
         strategy = strategy_or_path
 
-    # Check 1: Execution on ETHUSDT
+    # Check 1: Execution on benchmark symbol
     tf = strategy.timeframe
     try:
-        df = load_ohlcv(symbol, tf, data_dir=data_dir)
-        tick = get_tick_size(symbol, meta_path=meta_path)
+        if df is None:
+            df = load_ohlcv(symbol, tf, data_dir=data_dir)
+        if tick is None:
+            tick = get_tick_size(symbol, meta_path=meta_path)
     except Exception as e:
         return {
             "status": "REJECTED",
@@ -162,6 +166,8 @@ def assert_strategy_passes(
     symbol: str = DEFAULT_TEST_SYMBOL,
     data_dir: Path | str = "data/parquet",
     meta_path: Path | str = "data/meta/symbol_filters_universe.json",
+    df: pd.DataFrame | None = None,
+    tick: float | None = None,
 ) -> dict[str, Any]:
     """Run checks and raise StrategyCheckError if rejected."""
     result = run_strategy_checks(
@@ -169,6 +175,8 @@ def assert_strategy_passes(
         symbol=symbol,
         data_dir=data_dir,
         meta_path=meta_path,
+        df=df,
+        tick=tick,
     )
     if result["status"] == "REJECTED":
         raise StrategyCheckError(result["failed_check"], result["reason"])

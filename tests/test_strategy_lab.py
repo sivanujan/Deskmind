@@ -1,4 +1,6 @@
-"""Tests for Strategy Lab Phase A (indicators, broker, base protocol, and validation checks)."""
+"""Tests for Strategy Lab Phase A & B (indicators, broker, base protocol, and validation checks)."""
+
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -12,7 +14,10 @@ from deskmind.strategy_lab.base import (
     run_strategy_backtest,
     validate_strategy_ast,
 )
-from deskmind.strategy_lab.checks import assert_strategy_passes, run_strategy_checks
+from deskmind.strategy_lab.checks import assert_strategy_passes
+
+TAS_STRATEGY_PATH = Path("src/deskmind/strategy_lab/strategies/tas_v1.py")
+FIXTURE_2000_BARS = Path("tests/fixtures/ethusdt_4h_2000.parquet")
 
 
 def test_validator_rejects_forbidden_imports():
@@ -76,9 +81,10 @@ class Strategy:
     validate_strategy_ast(code_clean)
 
 
-def test_tas_v1_strategy_checks():
-    """Verify that tas_v1 passes all four integrity checks on ETHUSDT."""
-    res = assert_strategy_passes("strategy_lab/strategies/tas_v1.py")
+def test_tas_v1_strategy_checks_fixture():
+    """Fast integrity check on the 2,000-bar ETHUSDT fixture."""
+    df_fixture = pd.read_parquet(FIXTURE_2000_BARS)
+    res = assert_strategy_passes(TAS_STRATEGY_PATH, df=df_fixture, tick=0.01)
     assert res["status"] == "PASSED"
     assert res["checks"]["execution"] is True
     assert res["checks"]["accounting"] is True
@@ -86,13 +92,25 @@ def test_tas_v1_strategy_checks():
     assert res["checks"]["no_lookahead"] is True
 
 
+@pytest.mark.slow
+def test_tas_v1_strategy_checks_full():
+    """Verify that tas_v1 passes all four integrity checks on full ETHUSDT history."""
+    res = assert_strategy_passes(TAS_STRATEGY_PATH)
+    assert res["status"] == "PASSED"
+    assert res["checks"]["execution"] is True
+    assert res["checks"]["accounting"] is True
+    assert res["checks"]["determinism"] is True
+    assert res["checks"]["no_lookahead"] is True
+
+
+@pytest.mark.slow
 def test_tas_v1_regression_vs_old_tas():
     """Regression test: ETHUSDT 4h 2023-01-01 -> 2024-12-31 must match old TAS exactly."""
     df = load_ohlcv("ETHUSDT", "4h")
     tick = get_tick_size("ETHUSDT")
 
     res_old = run_old_backtest(df, tick=tick, start="2023-01-01", end="2024-12-31")
-    strat = load_strategy("strategy_lab/strategies/tas_v1.py")
+    strat = load_strategy(TAS_STRATEGY_PATH)
     res_new = run_strategy_backtest(strat, df, tick=tick, start="2023-01-01", end="2024-12-31")
 
     t_old = res_old["trades"]

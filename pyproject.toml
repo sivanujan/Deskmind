@@ -48,8 +48,11 @@ packages = ["src/deskmind"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-m 'not network'"
-markers = ["network: hits real external services (run with: uv run pytest -m network)"]
+addopts = "-m 'not network and not slow'"
+markers = [
+    "network: hits real external services (run with: uv run pytest -m network)",
+    "slow: tests using full dataset or extensive simulation (run with: uv run pytest -m slow)",
+]
 
 [tool.ruff]
 line-length = 100
