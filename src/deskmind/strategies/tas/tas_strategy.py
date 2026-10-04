@@ -291,14 +291,18 @@ def _round_tick(x: float, tick: float) -> float:
 def run_backtest(df: pd.DataFrame, tick: float,
                  params: TASParams = TASParams(),
                  start: Optional[str] = None,
-                 end: Optional[str] = None) -> dict:
+                 end: Optional[str] = None,
+                 min_quote_volume_30d: Optional[float] = None,
+                 tiered_slippage: bool = False) -> dict:
     """Run TAS on one symbol.
 
-    df: columns open_time (UTC), open, high, low, close[, volume],
+    df: columns open_time (UTC), open, high, low, close[, volume, vol_30d_med],
         sorted, no duplicates. Give it the FULL history: indicators warm
         up on everything, signals are only taken inside [start, end]
         (Pine "Limit Backtest Window").
     tick: exchange tick size for the symbol (required, no default).
+    min_quote_volume_30d: if set, signals only taken when vol_30d_med >= this threshold.
+    tiered_slippage: if True and vol_30d_med present, use volume-tiered slippage.
     """
     if tick is None or tick <= 0:
         raise ValueError("tick size is required")
@@ -308,11 +312,24 @@ def run_backtest(df: pd.DataFrame, tick: float,
     O, H, L, C = (d[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     trk, tdir = d["trk"].to_numpy(), d["tdir"].to_numpy()
     spct, ratr = d["score_pct"].to_numpy(), d["r_atr"].to_numpy()
+    vol_arr = d["vol_30d_med"].to_numpy(float) if "vol_30d_med" in d.columns else None
     n = len(d)
     t_start = pd.Timestamp(start, tz="UTC") if start else None
     t_end = pd.Timestamp(end, tz="UTC") if end else None
-    slip = p.slippage_ticks * tick
+    base_slip = p.slippage_ticks * tick
     fee_rate = p.commission_pct / 100.0
+
+    def get_slip(bar: int, price: float) -> float:
+        if tiered_slippage and vol_arr is not None:
+            v = vol_arr[bar]
+            if not np.isnan(v):
+                if v >= 500_000_000:
+                    return 1.0 * tick
+                elif v >= 100_000_000:
+                    return max(tick, _round_tick(0.0002 * price, tick))
+                else:
+                    return max(tick, _round_tick(0.0005 * price, tick))
+        return base_slip
 
     # Pine `var` state
     trend_signaled, trend_start = False, 0
@@ -355,7 +372,7 @@ def run_backtest(df: pd.DataFrame, tick: float,
             pos = None
 
     def market_close_all(bar: int, reason: str):
-        price = O[bar] - pos.side * slip
+        price = O[bar] - pos.side * get_slip(bar, O[bar])
         close_qty(pos.remaining, price, bar, reason)
 
     for i in range(n):
@@ -369,7 +386,7 @@ def run_backtest(df: pd.DataFrame, tick: float,
             if pos is not None and pos.side != side:
                 market_close_all(i, "Reverse")
             if pos is None:
-                price = O[i] + side * slip
+                price = O[i] + side * get_slip(i, O[i])
                 fee = price * qty * fee_rate
                 pos = _Position(side=side, qty=qty, entry_price=price,
                                 entry_time=t_open[i], entry_bar=i,
@@ -396,7 +413,7 @@ def run_backtest(df: pd.DataFrame, tick: float,
                 if (s == 1 and open_ <= b.stop) or (s == -1 and open_ >= b.stop):
                     b.filled = True
                     q = pos.remaining if b.name == "TP3" else min(b.qty, pos.remaining)
-                    close_qty(q, open_ - s * slip, i, b.name + " SL")
+                    close_qty(q, open_ - s * get_slip(i, open_), i, b.name + " SL")
                 elif (s == 1 and open_ >= b.limit) or (s == -1 and open_ <= b.limit):
                     b.filled = True
                     q = pos.remaining if b.name == "TP3" else min(b.qty, pos.remaining)
@@ -430,7 +447,7 @@ def run_backtest(df: pd.DataFrame, tick: float,
                     b.filled = True
                     q = min(b.qty, pos.remaining) if b.name != "TP3" else pos.remaining
                     if kind == "stop":
-                        close_qty(q, lvl - s * slip, i, b.name + " SL")
+                        close_qty(q, lvl - s * get_slip(i, lvl), i, b.name + " SL")
                     else:
                         close_qty(q, lvl, i, b.name)
 
@@ -444,11 +461,14 @@ def run_backtest(df: pd.DataFrame, tick: float,
         ok_s = (not np.isnan(spct[i])) and spct[i] <= -p.min_score_pct
         t_bar = t_open[i]
         in_date = (t_start is None or t_bar >= t_start) and (t_end is None or t_bar <= t_end)
+        ok_vol = True
+        if min_quote_volume_30d is not None and vol_arr is not None:
+            ok_vol = (not np.isnan(vol_arr[i])) and vol_arr[i] >= min_quote_volume_30d
         in_window = i - trend_start <= p.late_max
         cand_b = tdir[i] == 1 and (bull_flip or (p.allow_late and not trend_signaled and in_window))
         cand_s = tdir[i] == -1 and (bear_flip or (p.allow_late and not trend_signaled and in_window))
-        buy_sig = cand_b and ok_b and in_date and p.direction != "Short Only" and not trend_signaled
-        sell_sig = cand_s and ok_s and in_date and p.direction != "Long Only" and not trend_signaled
+        buy_sig = cand_b and ok_b and in_date and ok_vol and p.direction != "Short Only" and not trend_signaled
+        sell_sig = cand_s and ok_s and in_date and ok_vol and p.direction != "Long Only" and not trend_signaled
         if buy_sig or sell_sig:
             trend_signaled = True
 
