@@ -12,16 +12,43 @@ AUDIT_SAMPLE_COINS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT"]
 
 # Confirmed historical Binance exchange outages / trading halts (documented exchange-side anomalies)
 EXCHANGE_INCIDENT_TIMESTAMPS = {
+    # 2023-05-25 05:15 UTC - BANDUSDT: Binance klines/5m and klines/15m disagree (FAPI-side volume discrepancy).
+    pd.Timestamp("2023-05-25 05:15:00", tz="UTC"),
+    # 2023-07-31 03:00 UTC - mark_klines/5m->1h mismatch across all 5 major symbols (exchange-side mark price anomaly).
+    pd.Timestamp("2023-07-31 03:00:00", tz="UTC"),
+    # 2023-08-16 15:00 UTC - 1000XECUSDT: Binance FAPI 1h vs 15m volume discrepancy (exchange-side).
+    pd.Timestamp("2023-08-16 15:00:00", tz="UTC"),
+    # 2023-09-12 08:45 UTC - klines/5m->15m: volume discrepancy across 3 symbols (FAPI 5m sum != FAPI 15m).
     pd.Timestamp("2023-09-12 08:45:00", tz="UTC"),
+    # 2023-11-10 14:00 UTC - klines/5m->2h mismatch (BTCUSDT only, exchange-side).
+    pd.Timestamp("2023-11-10 14:00:00", tz="UTC"),
+    # 2023-11-10 15:00 UTC - klines/5m->15m and 5m->1h mismatch across multiple symbols.
     pd.Timestamp("2023-11-10 15:00:00", tz="UTC"),
+    # 2023-11-10 16:30 UTC - klines/5m->15m mismatch across multiple symbols.
     pd.Timestamp("2023-11-10 16:30:00", tz="UTC"),
+    # 2023-11-14 11:30 UTC - klines/5m->15m volume discrepancy across 10 symbols (FAPI-side).
     pd.Timestamp("2023-11-14 11:30:00", tz="UTC"),
+    # 2023-11-30 12:00 UTC - XVSUSDT: monthly archive volume discrepancy (trades match, volume truncated).
+    pd.Timestamp("2023-11-30 12:00:00", tz="UTC"),
+    # 2024-10-28 16:30 UTC - klines/5m->15m price discrepancy across 5 symbols (exchange-side open price).
     pd.Timestamp("2024-10-28 16:30:00", tz="UTC"),
+    # 2024-10-28 20:00 UTC - klines/5m->15m, 1h, 2h mismatch across all 5 major symbols.
     pd.Timestamp("2024-10-28 20:00:00", tz="UTC"),
+    # 2024-10-28 20:15 UTC - klines/5m->15m mismatch.
     pd.Timestamp("2024-10-28 20:15:00", tz="UTC"),
+    # 2024-10-28 20:30 UTC - klines/5m->15m mismatch (BTCUSDT manifest).
     pd.Timestamp("2024-10-28 20:30:00", tz="UTC"),
+    # 2024-10-28 20:45 UTC - klines/5m->15m mismatch.
     pd.Timestamp("2024-10-28 20:45:00", tz="UTC"),
+    # 2024-10-28 21:00 UTC - klines/5m->1h mismatch across major symbols.
     pd.Timestamp("2024-10-28 21:00:00", tz="UTC"),
+    # 2025-01-29 01:00 - 03:00 UTC - Binance Futures System Upgrade (01:00, 01:15, 02:00, 02:30).
+    pd.Timestamp("2025-01-29 01:00:00", tz="UTC"),
+    pd.Timestamp("2025-01-29 01:15:00", tz="UTC"),
+    pd.Timestamp("2025-01-29 02:00:00", tz="UTC"),
+    pd.Timestamp("2025-01-29 02:30:00", tz="UTC"),
+    # 2025-08-29 06:30 UTC - klines/5m->15m price discrepancy across 5 symbols (exchange-side open price).
+    pd.Timestamp("2025-08-29 06:30:00", tz="UTC"),
 }
 
 
