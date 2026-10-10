@@ -373,12 +373,12 @@ class TradingViewBroker:
         for b in live:
             if self.pos is None:
                 break
-            if (s == 1 and open_ <= b.stop) or (s == -1 and open_ >= b.stop):
+            if b.stop is not None and ((s == 1 and open_ <= b.stop) or (s == -1 and open_ >= b.stop)):
                 b.filled = True
                 q = self.pos.remaining if b.name == "TP3" else min(b.qty, self.pos.remaining)
                 slip = self.get_slip(i, open_, vol_arr)
                 self._close_qty(q, open_ - s * slip, i, b.name + " SL", t_open, slip=slip)
-            elif (s == 1 and open_ >= b.limit) or (s == -1 and open_ <= b.limit):
+            elif b.limit is not None and ((s == 1 and open_ >= b.limit) or (s == -1 and open_ <= b.limit)):
                 b.filled = True
                 q = self.pos.remaining if b.name == "TP3" else min(b.qty, self.pos.remaining)
                 self._close_qty(q, open_, i, b.name, t_open, slip=0.0)
@@ -395,6 +395,8 @@ class TradingViewBroker:
                 if b.filled:
                     continue
                 for kind, lvl in (("stop", b.stop), ("limit", b.limit)):
+                    if lvl is None:
+                        continue
                     for seg in range(3):
                         a, z = path[seg], path[seg + 1]
                         lo, hi = min(a, z), max(a, z)

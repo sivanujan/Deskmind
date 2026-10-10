@@ -152,6 +152,9 @@ class Settings(BaseSettings):
     # are the permanent point-in-time record).
     ict_smc_report_retention_days: float = Field(default=3.0, ge=0.1)
     trend_report_retention_days: float = Field(default=3.0, ge=0.1)
+    # Strategy Lab coin-scan worker processes. 0 = auto: half the CPU threads, at most 6, so the
+    # PC stays usable while a backtest runs (each worker holds one coin's candles in RAM).
+    strategy_lab_workers: int = Field(default=0, ge=0, le=64)
     # Browser origins allowed to call the read-only API (CORS + WebSocket origin check).
     web_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3010", "http://127.0.0.1:3010"]

@@ -1,0 +1,98 @@
+version: "walkforward_v1"
+name: "TAS_WalkForward_Standard_Rules"
+description: "Frozen 8-quarter walk-forward evaluation rules for Strategy Lab."
+
+universe:
+  path: "reports/research/universe_2022_2025.json"
+  excluded_symbols:
+    - "TSLAUSDT"
+    - "AMZNUSDT"
+    - "GOOGLUSDT"
+    - "XAUUSDT"
+    - "XAGUSDT"
+    - "SPXUSDT"
+    - "BTCDOMUSDT"
+
+liquidity:
+  min_30d_median_quote_volume_usd: 20000000.0  # $20M gate
+  volume_data_path: "data/daily_quote_volume.parquet"
+
+slippage:
+  tiered: true
+  tiers:
+    - min_volume: 500000000.0   # >= $500M: 1 tick
+      ticks: 1
+    - min_volume: 100000000.0   # $100M - $500M: 0.02% (min 1 tick)
+      pct: 0.0002
+      min_ticks: 1
+    - min_volume: 20000000.0    # $20M - $100M: 0.05% (min 1 tick)
+      pct: 0.0005
+      min_ticks: 1
+
+selection_rules:
+  min_positions: 15             # 30 positions scaled from 24m to 12m
+  min_profit_factor: 1.30
+  min_mean_r: 0.0
+  max_drawdown_pct: 20.0
+
+verdict_rules:
+  min_pooled_mean_r: 0.0
+  min_pooled_profit_factor: 1.20
+  min_profitable_quarters: 5    # at least 5 of 8 quarters profitable
+  total_quarters: 8
+
+quarters:
+  - id: "2024Q1"
+    label: "2024 Q1"
+    train_start: "2023-01-01"
+    train_end: "2023-12-31"
+    test_start: "2024-01-01"
+    test_end: "2024-03-31"
+  - id: "2024Q2"
+    label: "2024 Q2"
+    train_start: "2023-04-01"
+    train_end: "2024-03-31"
+    test_start: "2024-04-01"
+    test_end: "2024-06-30"
+  - id: "2024Q3"
+    label: "2024 Q3"
+    train_start: "2023-07-01"
+    train_end: "2024-06-30"
+    test_start: "2024-07-01"
+    test_end: "2024-09-30"
+  - id: "2024Q4"
+    label: "2024 Q4"
+    train_start: "2023-10-01"
+    train_end: "2024-09-30"
+    test_start: "2024-10-01"
+    test_end: "2024-12-31"
+  - id: "2025Q1"
+    label: "2025 Q1"
+    train_start: "2024-01-01"
+    train_end: "2024-12-31"
+    test_start: "2025-01-01"
+    test_end: "2025-03-31"
+  - id: "2025Q2"
+    label: "2025 Q2"
+    train_start: "2024-04-01"
+    train_end: "2025-03-31"
+    test_start: "2025-04-01"
+    test_end: "2025-06-30"
+  - id: "2025Q3"
+    label: "2025 Q3"
+    train_start: "2024-07-01"
+    train_end: "2025-06-30"
+    test_start: "2025-07-01"
+    test_end: "2025-09-30"
+  - id: "2025Q4"
+    label: "2025 Q4"
+    train_start: "2024-10-01"
+    train_end: "2025-09-30"
+    test_start: "2025-10-01"
+    test_end: "2025-12-31"
+
+test_2026:
+  name: "TEST"
+  start: "2026-01-01"
+  end: null
+  locked: true

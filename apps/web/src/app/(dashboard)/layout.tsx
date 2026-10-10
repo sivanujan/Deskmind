@@ -5,21 +5,44 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, setCsrfToken } from "@/lib/api";
 
-const NAV_ITEMS = [
-  { href: "/overview", label: "Overview" },
-  { href: "/chart", label: "Chart" },
-  { href: "/control", label: "Control" },
-  { href: "/backtest", label: "Backtest Lab" },
-  { href: "/strategy-lab", label: "Strategy Lab" },
-  { href: "/research", label: "Research" },
-  { href: "/trades", label: "Trades & Journal" },
-  { href: "/risk", label: "Risk" },
-  { href: "/agents", label: "Agents" },
-  { href: "/strategies", label: "Strategies" },
-  { href: "/universe", label: "Universe" },
-  { href: "/account", label: "Account" },
-  { href: "/audit", label: "Audit Log" },
+// Navigation grouped by what the operator is doing: watching the market, trading, researching.
+const NAV_GROUPS: Array<{ label: string; items: Array<{ href: string; label: string }> }> = [
+  {
+    label: "Monitor",
+    items: [
+      { href: "/overview", label: "Overview" },
+      { href: "/chart", label: "Chart" },
+      { href: "/agents", label: "Agents" },
+      { href: "/universe", label: "Universe" },
+    ],
+  },
+  {
+    label: "Trade",
+    items: [
+      { href: "/control", label: "Control" },
+      { href: "/trades", label: "Trades & Journal" },
+      { href: "/risk", label: "Risk" },
+      { href: "/account", label: "Account" },
+    ],
+  },
+  {
+    label: "Research",
+    items: [
+      { href: "/strategy-lab", label: "Strategy Lab" },
+      { href: "/backtest", label: "Backtest Lab" },
+      { href: "/research", label: "Hypotheses" },
+      { href: "/strategies", label: "Strategies" },
+    ],
+  },
+  {
+    label: "System",
+    items: [{ href: "/audit", label: "Audit Log" }],
+  },
 ];
+
+function isActive(pathname: string, href: string) {
+  return pathname === href || (href !== "/overview" && pathname.startsWith(href));
+}
 
 export default function DashboardLayout({
   children,
@@ -35,7 +58,7 @@ export default function DashboardLayout({
   const [passwordInput, setPasswordInput] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     // Initial fetch of status & user
@@ -55,6 +78,7 @@ export default function DashboardLayout({
     api.systemStatus().then(updateStatus).catch(() => {});
 
     const interval = setInterval(() => {
+      if (document.hidden) return; // no polling from a background tab
       api.systemStatus().then(updateStatus).catch(() => {});
     }, 10000);
 
@@ -87,149 +111,158 @@ export default function DashboardLayout({
     }
   };
 
+  // HARD SAFETY MODE - NEVER LIVE. Rail colour: paper = accent, testnet = warn, unknown = muted.
+  const modeLabel = tradingMode === null ? "Unknown" : tradingMode === "paper" ? "Paper" : "Testnet / demo";
+  const modeColor = tradingMode === null ? "var(--muted)" : tradingMode === "paper" ? "var(--accent)" : "var(--warn)";
+  const modeText = tradingMode === null ? "text-muted" : tradingMode === "paper" ? "text-accent" : "text-warn";
+
+  const riskLabel = riskState === null ? "Unknown" : riskState.replace(/_/g, " ");
+  const riskText =
+    riskState === null ? "text-muted" : riskState === "normal" ? "text-up" : riskState === "half_risk" ? "text-warn" : "text-down";
+  const riskDot =
+    riskState === null ? "bg-muted" : riskState === "normal" ? "bg-up" : riskState === "half_risk" ? "bg-warn" : "bg-down";
+
+  const sidebar = (
+    <div className="flex h-full flex-col">
+      <Link href="/overview" className="flex items-baseline gap-2 px-5 pt-5 pb-4">
+        <span className="font-display text-lg font-bold tracking-[0.18em] text-foreground">DESKMIND</span>
+      </Link>
+
+      {/* Desk state: what environment this is and whether the risk manager allows trading. */}
+      <div className="mx-3 mb-4 rounded-md border border-border bg-background/60 px-3 py-2.5">
+        <div className="flex items-center justify-between">
+          <span className="label-caps">Mode</span>
+          <span className={`font-display text-xs font-bold uppercase tracking-wider ${modeText}`}>{modeLabel}</span>
+        </div>
+        <div className="mt-1.5 flex items-center justify-between">
+          <span className="label-caps">Risk</span>
+          <span className={`flex items-center gap-1.5 font-display text-xs font-bold uppercase tracking-wider ${riskText}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${riskDot}`} />
+            {riskLabel}
+          </span>
+        </div>
+      </div>
+
+      <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Main">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.label}>
+            <div className="label-caps px-2 pb-1.5">{group.label}</div>
+            <ul className="space-y-0.5">
+              {group.items.map((item) => {
+                const active = isActive(pathname, item.href);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => setNavOpen(false)}
+                      className={`relative flex items-center rounded-md px-2 py-1.5 text-[13px] transition-colors ${
+                        active
+                          ? "bg-surface-2 font-semibold text-foreground"
+                          : "text-muted hover:bg-surface-2/60 hover:text-foreground"
+                      }`}
+                    >
+                      {active && <span className="absolute -left-3 top-1 bottom-1 w-[3px] rounded-r bg-accent" />}
+                      {item.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      <div className="border-t border-border px-4 py-3 text-xs">
+        {user ? (
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-muted">
+              Signed in as <span className="font-semibold text-foreground">{user}</span>
+            </span>
+            <button onClick={handleLogout} className="btn btn-sm">
+              Log out
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setShowLoginModal(true)} className="btn btn-primary w-full">
+            Log in for control actions
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      {/* Top Header */}
-      <header className="flex h-12 items-center justify-between border-b border-border bg-surface px-4">
-        <div className="flex items-center gap-6">
-          <Link href="/overview" className="flex items-center gap-2 font-bold tracking-wider text-accent text-base">
-            <span className="h-2.5 w-2.5 rounded-full bg-accent animate-pulse" />
-            DESKMIND
-          </Link>
+      <div className="mode-rail sticky top-0 z-40" style={{ ["--rail-color" as string]: modeColor }} aria-hidden />
 
-          {/* Navigation Bar */}
-          <nav className="flex items-center gap-1 text-xs font-medium">
-            {NAV_ITEMS.map((item) => {
-              const active = pathname === item.href || (item.href !== "/overview" && pathname.startsWith(item.href));
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`rounded px-2.5 py-1.5 transition-colors ${
-                    active
-                      ? "bg-surface-2 text-accent font-semibold border border-border"
-                      : "text-muted hover:text-foreground hover:bg-surface-2/50"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* Right Status Badges & Auth */}
+      {/* Mobile top bar */}
+      <header className="flex h-12 items-center justify-between border-b border-border bg-surface px-4 md:hidden">
+        <span className="font-display text-base font-bold tracking-[0.18em]">DESKMIND</span>
         <div className="flex items-center gap-3">
-          {/* HARD SAFETY MODE BADGE - NEVER LIVE */}
-          <span
-            className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${
-              tradingMode === "paper"
-                ? "border-accent/40 bg-accent/10 text-accent"
-                : "border-warn/40 bg-warn/10 text-warn"
-            }`}
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                tradingMode === "paper" ? "bg-accent" : "bg-warn"
-              }`}
-            />
-            {tradingMode === null ? "MODE UNKNOWN" : tradingMode === "paper" ? "PAPER" : "TESTNET / DEMO"}
-          </span>
-
-          {/* Risk State Badge */}
-          <span
-            className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium ${
-              riskState === null
-                ? "border-border text-muted"
-                : riskState === "normal"
-                ? "border-up/40 bg-up/10 text-up"
-                : riskState === "half_risk"
-                ? "border-warn/40 bg-warn/10 text-warn"
-                : "border-down/40 bg-down/10 text-down font-bold"
-            }`}
-          >
-            {riskState === null ? "RISK UNKNOWN" : riskState.replace("_", " ").toUpperCase()}
-          </span>
-
-          {/* User profile / Login */}
-          {user ? (
-            <div className="flex items-center gap-2 border-l border-border pl-3 text-xs">
-              <span className="text-muted">User:</span>
-              <span className="font-semibold text-foreground">{user}</span>
-              <button
-                onClick={handleLogout}
-                className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:text-down hover:border-down/50 transition-colors"
-              >
-                Logout
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowLoginModal(true)}
-              className="rounded bg-accent/20 border border-accent/40 px-3 py-1 text-xs font-semibold text-accent hover:bg-accent/30 transition-colors"
-            >
-              Control Login
-            </button>
-          )}
+          <span className={`font-display text-xs font-bold uppercase tracking-wider ${modeText}`}>{modeLabel}</span>
+          <button onClick={() => setNavOpen((o) => !o)} className="btn btn-sm" aria-expanded={navOpen} aria-label="Menu">
+            {navOpen ? "Close" : "Menu"}
+          </button>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex flex-1 flex-col overflow-auto bg-background">{children}</main>
+      <div className="flex flex-1">
+        <aside
+          className={`${
+            navOpen ? "fixed inset-0 top-[52px] z-30 block" : "hidden"
+          } w-full shrink-0 border-r border-border bg-surface md:sticky md:top-1 md:block md:h-[calc(100vh-4px)] md:w-56`}
+        >
+          {sidebar}
+        </aside>
+
+        <main className="flex min-w-0 flex-1 flex-col overflow-auto bg-background">{children}</main>
+      </div>
 
       {/* Login Modal */}
       {showLoginModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
           <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 shadow-2xl">
-            <h2 className="text-lg font-bold text-foreground">Dashboard Authentication</h2>
+            <h2 className="font-display text-lg font-bold text-foreground">Log in</h2>
             <p className="mt-1 text-xs text-muted">
-              Enter credentials to authorize control actions and session tokens.
+              Needed for control actions (start/stop services, approvals, uploads). Viewing works without it.
             </p>
 
             <form onSubmit={handleLogin} className="mt-4 space-y-3">
               <div>
-                <label className="block text-xs font-medium text-muted">Username</label>
+                <label className="label-caps block">Username</label>
                 <input
                   type="text"
                   value={usernameInput}
                   onChange={(e) => setUsernameInput(e.target.value)}
-                  className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-accent focus:outline-hidden"
+                  className="mt-1 w-full px-3 py-1.5 text-sm"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-muted">Password</label>
+                <label className="label-caps block">Password</label>
                 <input
                   type="password"
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="Enter admin password..."
-                  className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-accent focus:outline-hidden"
+                  className="mt-1 w-full px-3 py-1.5 text-sm"
                   required
                 />
               </div>
 
               {loginError && (
-                <div className="rounded border border-down/40 bg-down/10 px-3 py-1.5 text-xs text-down">
+                <div className="rounded-md border border-down/40 bg-down/10 px-3 py-1.5 text-xs text-down">
                   {loginError}
                 </div>
               )}
 
               <div className="mt-4 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLoginModal(false)}
-                  className="rounded border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground"
-                >
+                <button type="button" onClick={() => setShowLoginModal(false)} className="btn">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isLoggingIn}
-                  className="rounded bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:bg-accent/80 disabled:opacity-50"
-                >
-                  {isLoggingIn ? "Logging in..." : "Login"}
+                <button type="submit" disabled={isLoggingIn} className="btn btn-primary">
+                  {isLoggingIn ? "Logging in…" : "Log in"}
                 </button>
               </div>
             </form>

@@ -8,6 +8,29 @@ import type { OverlayResponse } from "./overlays";
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
 export const WS_URL = API_URL.replace(/^http/, "ws");
 
+/** POST /api/strategy-lab/upload response (strategy_lab/api.py UploadResponse). */
+export interface StrategyUpload {
+  strategy_id: string;
+  name: string;
+  version: string;
+  timeframe: string;
+  short_hash: string;
+  trial_k: number;
+  is_new_upload: boolean;
+}
+
+/** GET /api/strategy-lab/library item (strategy_lab/api.py get_strategy_library). */
+export interface LibraryStrategy {
+  file: string;
+  name?: string;
+  version?: string;
+  timeframe?: string;
+  title?: string;
+  description?: string;
+  params?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface Candle {
   time: number; // UNIX seconds, candle open (UTC)
   open: number;
@@ -577,15 +600,28 @@ export const api = {
   // One-off jobs started from the dashboard (login + CSRF; audit-logged)
   runUniverseJob: () => post<TaskState>("/api/control/universe/run"),
   syncAccount: () => post<TaskState>("/api/control/account/sync"),
+  tasks: () => get<Record<TaskKind, TaskState | null>>("/api/control/tasks"),
   // Audit
   auditLogs: (params?: { limit?: number; action?: string }) => get<AuditLogEntry[]>("/api/audit/logs", params),
 
   // Strategy Lab Phase B & Multi-Timeframe
-  strategyLabStatus: () => get<{ trial_count_k: number; strategies_count: number; strategies: any[]; jobs: any[] }>("/api/strategy-lab/status"),
-  strategyLabJobs: () => get<any[]>("/api/strategy-lab/jobs"),
-  strategyLabJob: (jobId: string) => get<any>(`/api/strategy-lab/jobs/${jobId}`),
+  strategyLabStatus: () =>
+    get<{
+      trial_count_k: number;
+      strategies_count: number;
+      strategies: Record<string, unknown>[];
+      jobs: Record<string, unknown>[];
+      worker: { status: "running" | "stopped"; current_job_id: string | null; queued_count: number };
+    }>("/api/strategy-lab/status"),
+  strategyLabJobs: () => get<Record<string, unknown>[]>("/api/strategy-lab/jobs"),
+  strategyLabJob: (jobId: string) => get<Record<string, unknown>>(`/api/strategy-lab/jobs/${jobId}`),
+  strategyLabJobLog: (jobId: string, lines?: number) =>
+    get<{ job_id: string; lines: string[] }>(`/api/strategy-lab/jobs/${jobId}/log`, lines ? { lines } : undefined),
+  retryJob: (jobId: string) => post<{ status: string; job: Record<string, unknown> }>(`/api/strategy-lab/jobs/${jobId}/retry`),
+  cancelJob: (jobId: string) => post<{ status: string; job: Record<string, unknown> }>(`/api/strategy-lab/jobs/${jobId}/cancel`),
+  recomputeK: () => post<{ trial_count_k: number }>("/api/strategy-lab/recompute-k"),
   strategyLabComparisonReport: (strategyId?: string) =>
-    get<{ report: any[] }>("/api/strategy-lab/comparison-report", strategyId ? { strategy_id: strategyId } : undefined),
+    get<{ report: Record<string, unknown>[] }>("/api/strategy-lab/comparison-report", strategyId ? { strategy_id: strategyId } : undefined),
   uploadStrategy: async (file: File, timeframes?: string[]) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -600,6 +636,32 @@ export const api = {
     }
     return await res.json();
   },
+  /** Upload + validate a strategy file without starting any run (step 1 of the upload flow). */
+  checkStrategyFile: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const url = new URL("/api/strategy-lab/upload", API_URL);
+    url.searchParams.set("auto_start", "false");
+    const res = await fetch(url, { method: "POST", body: formData, credentials: "include" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as StrategyUpload;
+  },
+  /** Queue one backtest job per timeframe for an uploaded strategy (step 3). */
+  startStrategyJobs: (strategyId: string, timeframes: string[], evalMode: "standard" | "walk_forward" = "standard") =>
+    post<{ strategy_id: string; jobs: Array<{ job_id: string }> }>("/api/strategy-lab/jobs", {
+      strategy_id: strategyId,
+      timeframes,
+      eval_mode: evalMode,
+    }),
+  /** Built-in strategies (strategy_lab/strategies/*.py) that can be loaded without an upload. */
+  strategyLibrary: () => get<LibraryStrategy[]>("/api/strategy-lab/library"),
+  /** Register a built-in strategy (same as step 1 of the upload flow; no run starts). */
+  registerLibraryStrategy: (file: string) =>
+    post<StrategyUpload>(`/api/strategy-lab/library/${encodeURIComponent(file)}/register`),
+  clearStrategyLab: () => post<{ removed_jobs: number; trial_count_k: number }>("/api/strategy-lab/clear"),
   test2026: (jobId: string, confirm: boolean) =>
     post<{ status: string; message: string }>(`/api/strategy-lab/jobs/${jobId}/test-2026`, { confirm }),
 };

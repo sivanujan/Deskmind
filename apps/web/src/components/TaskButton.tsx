@@ -59,7 +59,7 @@ export default function TaskButton({
       setTask(await start());
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setErr(/authentication required|401/i.test(msg) ? "Log in first (Control Login, top right)." : msg);
+      setErr(/authentication required|401/i.test(msg) ? "Log in first (button at the bottom of the sidebar)." : msg);
     }
   };
 

@@ -30,8 +30,18 @@ export function useApi<T>(fn: () => Promise<T>, intervalMs?: number) {
   useEffect(() => {
     void reload();
     if (!intervalMs) return;
-    const t = setInterval(() => void reload(), intervalMs);
-    return () => clearInterval(t);
+    // Do not poll while the tab is in the background; refresh as soon as it is visible again.
+    const t = setInterval(() => {
+      if (!document.hidden) void reload();
+    }, intervalMs);
+    const onVisible = () => {
+      if (!document.hidden) void reload();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [reload, intervalMs]);
 
   return { data, error, loading, reload };
@@ -39,39 +49,51 @@ export function useApi<T>(fn: () => Promise<T>, intervalMs?: number) {
 
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-      <div>
-        <h1 className="text-xl font-bold text-foreground">{title}</h1>
-        {subtitle && <p className="text-xs text-muted">{subtitle}</p>}
+    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
+      <div className="min-w-0 max-w-3xl">
+        <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm leading-relaxed text-muted">{subtitle}</p>}
       </div>
-      {children && <div className="flex items-center gap-2">{children}</div>}
+      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
     </div>
   );
 }
 
 export function Card({ title, right, children, className = "" }: { title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <div className={`space-y-3 rounded-lg border border-border bg-surface p-5 ${className}`}>
+    <section className={`space-y-3 rounded-lg border border-border bg-surface p-5 ${className}`}>
       {(title || right) && (
-        <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
-          <h2 className="text-sm font-bold text-foreground">{title}</h2>
+        <div className="flex items-center justify-between gap-2 pb-1">
+          <h2 className="font-display text-[15px] font-semibold text-foreground">{title}</h2>
           {right}
         </div>
       )}
       {children}
+    </section>
+  );
+}
+
+/** A labelled number. `tone` colours the value only. */
+export function Stat({ label, value, hint, tone }: { label: ReactNode; value: ReactNode; hint?: ReactNode; tone?: "up" | "down" | "accent" | "warn" }) {
+  const cls = tone ? { up: "text-up", down: "text-down", accent: "text-accent", warn: "text-warn" }[tone] : "text-foreground";
+  return (
+    <div className="rounded-lg border border-border bg-surface px-4 py-3">
+      <div className="label-caps">{label}</div>
+      <div className={`mt-1 font-mono text-2xl font-semibold tabular-nums ${cls}`}>{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-muted">{hint}</div>}
     </div>
   );
 }
 
 /** Explicit "nothing here" state. Use it instead of zeros or placeholder numbers. */
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="rounded border border-dashed border-border p-4 text-center text-xs text-muted">{children}</div>;
+  return <div className="rounded-md border border-dashed border-border px-4 py-5 text-center text-xs leading-relaxed text-muted">{children}</div>;
 }
 
 export function ErrorBox({ error }: { error: string | null }) {
   if (!error) return null;
   return (
-    <div className="rounded border border-down/40 bg-down/10 p-3 text-xs text-down">
+    <div role="alert" className="rounded-md border border-down/40 bg-down/10 p-3 text-xs text-down">
       Backend request failed: {error}. Nothing is shown in place of the missing data.
     </div>
   );
@@ -83,19 +105,19 @@ export function Loading({ loading }: { loading: boolean }) {
 
 export function KV({ k, v, hint }: { k: ReactNode; v: ReactNode; hint?: ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-3 py-1 text-xs">
+    <div className="flex items-start justify-between gap-3 border-b border-border/50 py-1.5 text-xs last:border-b-0">
       <span className="text-muted">
         {k}
         {hint && <span className="block text-[10px] opacity-70">{hint}</span>}
       </span>
-      <span className="text-right font-mono text-foreground">{v}</span>
+      <span className="text-right font-mono tabular-nums text-foreground">{v}</span>
     </div>
   );
 }
 
 export function RefreshButton({ onClick }: { onClick: () => void }) {
   return (
-    <button onClick={onClick} className="rounded border border-border bg-surface px-3 py-1.5 text-xs text-muted hover:text-foreground">
+    <button onClick={onClick} className="btn">
       Refresh
     </button>
   );
@@ -134,12 +156,17 @@ export function fmtAge(seconds: number | null | undefined): ReactNode {
   return `${(seconds / 86400).toFixed(1)} d ago`;
 }
 
-export function Badge({ tone, children }: { tone: "up" | "down" | "accent" | "muted"; children: ReactNode }) {
+export function Badge({ tone, children }: { tone: "up" | "down" | "accent" | "muted" | "warn"; children: ReactNode }) {
   const cls = {
-    up: "bg-up/20 text-up",
-    down: "bg-down/20 text-down",
-    accent: "bg-accent/20 text-accent",
-    muted: "bg-muted/20 text-muted",
+    up: "border-up/35 bg-up/12 text-up",
+    down: "border-down/35 bg-down/12 text-down",
+    accent: "border-accent/35 bg-accent/12 text-accent",
+    warn: "border-warn/35 bg-warn/12 text-warn",
+    muted: "border-border bg-surface-2 text-muted",
   }[tone];
-  return <span className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase ${cls}`}>{children}</span>;
+  return (
+    <span className={`inline-flex items-center whitespace-nowrap rounded border px-1.5 py-px font-display text-[11px] font-semibold uppercase tracking-wide ${cls}`}>
+      {children}
+    </span>
+  );
 }

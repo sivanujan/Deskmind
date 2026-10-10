@@ -1,17 +1,19 @@
 @import "tailwindcss";
 
-/* Dark trading theme. Chart colours live in components/chart/theme.ts. */
+/* Deskmind desk theme (dark, instrument-panel). Chart colours live in components/chart/theme.ts.
+   Type: IBM Plex Sans (body), Plex Sans Condensed (titles, labels, table heads), Plex Mono (numbers). */
 :root {
-  --background: #0b0e14;
-  --surface: #131722;
-  --surface-2: #1c2130;
-  --border: #2a2f3d;
-  --foreground: #d1d4dc;
-  --muted: #8a90a2;
-  --up: #26a69a;
-  --down: #ef5350;
-  --accent: #5b9cf6;
-  --warn: #f5a524;
+  --background: #0f1216;
+  --surface: #161a20;
+  --surface-2: #1e242c;
+  --border: #2a313b;
+  --border-strong: #3a4350;
+  --foreground: #e3e6eb;
+  --muted: #8c95a3;
+  --up: #2bb59b;
+  --down: #ef5d5d;
+  --accent: #7fa8f5;
+  --warn: #e8a33d;
 }
 
 @theme inline {
@@ -19,14 +21,22 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-up: var(--up);
   --color-down: var(--down);
   --color-accent: var(--accent);
   --color-warn: var(--warn);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Aliases so shadcn-style class names used in some pages resolve to the desk theme. */
+  --color-card: var(--surface);
+  --color-muted-foreground: var(--muted);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #0f1216;
+  --color-destructive: var(--down);
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+  --font-display: var(--font-plex-condensed);
 }
 
 html {
@@ -36,4 +46,150 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
+  font-feature-settings: "ss02";
+}
+
+@layer base {
+  /* Form controls: one look everywhere, visible keyboard focus. */
+  select,
+  input[type="text"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  input:not([type]),
+  textarea {
+    background-color: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    color: var(--foreground);
+  }
+  select:hover,
+  input:hover,
+  textarea:hover {
+    border-color: var(--border-strong);
+  }
+  input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button:not(:disabled),
+  [role="button"],
+  label:has(input[type="checkbox"]) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  /* Eyebrow / column labels: condensed caps. */
+  .label-caps {
+    font-family: var(--font-display);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* Data tables: sticky readable header, tabular numbers, quiet row separators. */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 0.75rem;
+  }
+  .data-table th {
+    font-family: var(--font-display);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--surface-2);
+    padding: 0.5rem 0.75rem;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+  .data-table td {
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    font-variant-numeric: tabular-nums;
+    vertical-align: middle;
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .data-table tbody tr:hover td {
+    background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  }
+
+  /* Buttons. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0.375rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--foreground);
+    transition: background-color 120ms, border-color 120ms, color 120ms;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+  }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #0f1216;
+    font-weight: 600;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 85%, white);
+    border-color: color-mix(in srgb, var(--accent) 85%, white);
+  }
+  .btn-danger {
+    color: var(--down);
+    border-color: color-mix(in srgb, var(--down) 40%, transparent);
+    background: color-mix(in srgb, var(--down) 8%, transparent);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--down) 16%, transparent);
+    border-color: var(--down);
+  }
+  .btn-sm {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.6875rem;
+  }
+
+  /* Signature: the mode rail. Diagonal tape across the top says which environment this is. */
+  .mode-rail {
+    height: 4px;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      var(--rail-color) 0 10px,
+      transparent 10px 20px
+    );
+    background-color: color-mix(in srgb, var(--rail-color) 25%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

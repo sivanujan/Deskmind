@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { API_URL } from "@/lib/api";
+import { Badge, Card, ErrorBox, Loading, PageHeader, useApi } from "@/components/ui";
 
 interface GateChecklist {
   min_trades_100: boolean;
@@ -35,160 +36,113 @@ interface ResearchData {
   validation_period: string;
 }
 
-export function ResearchView() {
-  const [data, setData] = useState<ResearchData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/dashboard/research")
-      .then((res) => res.json())
-      .then((d) => {
-        setData(d);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="p-8 text-gray-400 animate-pulse">Loading Research Framework...</div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="p-8 text-red-400">Error loading research data: {error}</div>
-    );
-  }
-
-  return (
-    <div className="p-6 space-y-6 bg-slate-950 text-slate-100 min-h-screen font-sans">
-      {/* Header Banner */}
-      <div className="flex justify-between items-center bg-slate-900/80 p-6 rounded-xl border border-slate-800 shadow-xl backdrop-blur-md">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
-            <span>🔬 Research & Hypothesis Framework</span>
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Pre-registered frozen parameter hypotheses, event studies, and encoded gate evaluation.
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <div className="text-xs text-slate-400">TRAIN PERIOD</div>
-            <div className="text-sm font-mono text-cyan-400">{data.train_period}</div>
-          </div>
-          <div className="h-8 w-px bg-slate-800" />
-          <div className="text-right">
-            <div className="text-xs text-slate-400">VALIDATION SPLIT</div>
-            <div className="text-sm font-mono text-emerald-400 flex items-center gap-1.5">
-              <span>🔒 LOCKED</span>
-              <span className="text-xs text-slate-400">({data.validation_period})</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Hypotheses Grid */}
-      <div className="grid grid-cols-1 gap-6">
-        {data.hypotheses.map((h) => (
-          <div
-            key={h.id}
-            className="bg-slate-900/50 rounded-xl border border-slate-800/80 p-6 hover:border-slate-700 transition-all shadow-lg space-y-4"
-          >
-            {/* Top Bar */}
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="flex items-center gap-3">
-                  <span className="px-2.5 py-1 text-xs font-mono font-semibold rounded bg-cyan-950 text-cyan-400 border border-cyan-800/50">
-                    {h.id}
-                  </span>
-                  <h3 className="text-lg font-semibold text-white">{h.name}</h3>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-slate-400 font-mono">
-                  Trials: <strong className="text-white">{h.trial_count}</strong>
-                </span>
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${
-                    h.status === "pre-registered"
-                      ? "bg-amber-950/80 text-amber-300 border border-amber-800/60"
-                      : h.status === "validation"
-                      ? "bg-emerald-950/80 text-emerald-300 border border-emerald-800/60"
-                      : "bg-slate-800 text-slate-300"
-                  }`}
-                >
-                  {h.status}
-                </span>
-              </div>
-            </div>
-
-            {/* Research Gate Checklist */}
-            <div className="bg-slate-950/60 p-4 rounded-lg border border-slate-800/60 space-y-2">
-              <div className="text-xs font-semibold uppercase text-slate-400 tracking-wider flex justify-between">
-                <span>Validation Gate Criteria (All Required)</span>
-                <span>Deflated Sharpe: <strong className="text-cyan-400">{h.deflated_sharpe}</strong></span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 pt-2 text-xs font-mono">
-                <GateBadge label="≥ 100 Trades" passed={h.gate_checklist.min_trades_100} />
-                <GateBadge label="Gross Exp ≥ 0.15R" passed={h.gate_checklist.gross_expectancy_0_15R} />
-                <GateBadge label="Net Exp > 0" passed={h.gate_checklist.net_expectancy_positive} />
-                <GateBadge label="≥ 95th % vs Random" passed={h.gate_checklist.beats_random_95th_pct} />
-                <GateBadge label="≥ 60% Pos Symbols" passed={h.gate_checklist.positive_symbols_60pct} />
-                <GateBadge label="Both Halves Pos" passed={h.gate_checklist.both_halves_positive} />
-              </div>
-            </div>
-
-            {/* Summary Metrics */}
-            <div className="grid grid-cols-4 gap-4 text-center bg-slate-950/30 p-3 rounded-lg border border-slate-800/30 text-xs">
-              <div>
-                <div className="text-slate-400">Total Signals</div>
-                <div className="text-sm font-semibold font-mono text-white mt-0.5">
-                  {h.event_study_summary.total_signals}
-                </div>
-              </div>
-              <div>
-                <div className="text-slate-400">Win Rate</div>
-                <div className="text-sm font-semibold font-mono text-white mt-0.5">
-                  {h.event_study_summary.win_rate_pct}%
-                </div>
-              </div>
-              <div>
-                <div className="text-slate-400">12-Bar MFE</div>
-                <div className="text-sm font-semibold font-mono text-emerald-400 mt-0.5">
-                  {h.event_study_summary.mfe_12_r}R
-                </div>
-              </div>
-              <div>
-                <div className="text-slate-400">12-Bar MAE</div>
-                <div className="text-sm font-semibold font-mono text-rose-400 mt-0.5">
-                  {h.event_study_summary.mae_12_r}R
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+async function loadResearch(): Promise<ResearchData> {
+  const res = await fetch(`${API_URL}/api/dashboard/research`, { credentials: "include" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
-function GateBadge({ label, passed }: { label: string; passed: boolean }) {
+const GATES: Array<[keyof GateChecklist, string]> = [
+  ["min_trades_100", "At least 100 trades"],
+  ["gross_expectancy_0_15R", "Gross expectancy ≥ 0.15 R"],
+  ["net_expectancy_positive", "Net expectancy > 0 (after costs)"],
+  ["beats_random_95th_pct", "Beats 95% of random entries"],
+  ["positive_symbols_60pct", "Positive on ≥ 60% of coins"],
+  ["both_halves_positive", "Positive in both halves of the period"],
+];
+
+export function ResearchView() {
+  const { data, error, loading } = useApi(loadResearch);
+
   return (
-    <div
-      className={`flex items-center gap-2 p-2 rounded border ${
-        passed
-          ? "bg-emerald-950/40 border-emerald-800/50 text-emerald-300"
-          : "bg-slate-900 border-slate-800 text-slate-500"
-      }`}
-    >
-      <span>{passed ? "✓" : "✗"}</span>
-      <span>{label}</span>
+    <div className="flex-1 space-y-6 p-6">
+      <PageHeader
+        title="Hypotheses"
+        subtitle="Trade ideas written down before testing, with their parameters frozen. Each one must clear every gate below before it can move to validation."
+      >
+        {data && (
+          <div className="flex gap-6 text-right">
+            <div>
+              <div className="label-caps">Train period</div>
+              <div className="font-mono text-sm">{data.train_period}</div>
+            </div>
+            <div>
+              <div className="label-caps">Validation</div>
+              <div className="font-mono text-sm">
+                {data.validation_split_locked ? "Locked · " : ""}
+                {data.validation_period}
+              </div>
+            </div>
+          </div>
+        )}
+      </PageHeader>
+      <ErrorBox error={error} />
+      <Loading loading={loading} />
+
+      {data?.hypotheses.map((h) => (
+        <Card
+          key={h.id}
+          title={
+            <span className="flex items-center gap-2">
+              <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-muted">{h.id}</span>
+              {h.name}
+            </span>
+          }
+          right={
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted">
+                Trials <span className="font-mono text-foreground">{h.trial_count}</span>
+              </span>
+              <Badge tone={h.status === "validation" ? "up" : h.status === "rejected" ? "down" : h.status === "pre-registered" ? "warn" : "muted"}>
+                {h.status}
+              </Badge>
+            </div>
+          }
+        >
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <div>
+              <div className="mb-2 flex justify-between">
+                <span className="label-caps">Gates (all required)</span>
+                <span className="text-xs text-muted">
+                  Deflated Sharpe <span className="font-mono text-foreground">{h.deflated_sharpe}</span>
+                </span>
+              </div>
+              <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {GATES.map(([key, label]) => {
+                  const passed = h.gate_checklist[key];
+                  return (
+                    <li
+                      key={key}
+                      className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${
+                        passed ? "border-up/35 bg-up/[0.06] text-foreground" : "border-border text-muted"
+                      }`}
+                    >
+                      <span className={`font-mono ${passed ? "text-up" : "text-down"}`}>{passed ? "✓" : "✗"}</span>
+                      {label}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div>
+              <div className="label-caps mb-2">Event study</div>
+              <dl className="grid grid-cols-2 gap-2">
+                {[
+                  { k: "Signals", v: h.event_study_summary.total_signals, cls: "" },
+                  { k: "Win rate", v: `${h.event_study_summary.win_rate_pct}%`, cls: "" },
+                  { k: "Best move, 12 bars", v: `${h.event_study_summary.mfe_12_r} R`, cls: "text-up" },
+                  { k: "Worst move, 12 bars", v: `${h.event_study_summary.mae_12_r} R`, cls: "text-down" },
+                ].map((m) => (
+                  <div key={m.k} className="rounded-md border border-border bg-background/60 px-2.5 py-1.5">
+                    <dt className="text-[11px] text-muted">{m.k}</dt>
+                    <dd className={`font-mono text-sm font-semibold ${m.cls}`}>{m.v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }

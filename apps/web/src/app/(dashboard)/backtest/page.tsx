@@ -84,7 +84,7 @@ export default function BacktestPage() {
       const msg = e instanceof Error ? e.message : String(e);
       setSubmitErr(
         /authentication required|401/i.test(msg)
-          ? "Log in first (Control Login, top right): starting a backtest is a control action."
+          ? "Log in first (button at the bottom of the sidebar): starting a backtest is a control action."
           : `Could not start the backtest: ${msg}`,
       );
     }

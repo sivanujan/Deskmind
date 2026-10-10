@@ -86,7 +86,11 @@ def create_app(
 
                 engine = engine or create_engine(settings)
                 app.state.ict_smc_store = PostgresIctSmcStore(engine)
+        # Auto-start Strategy Lab queue runner
+        from deskmind.strategy_lab.pipeline import start_queue_runner, stop_queue_runner
+        start_queue_runner()
         yield
+        stop_queue_runner()
         if redis is None:
             await app.state.redis.aclose()
         if engine is not None:

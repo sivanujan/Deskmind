@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any
 
 import numpy as np
@@ -14,6 +16,22 @@ from deskmind.strategy_lab.base import load_strategy, run_strategy_backtest
 # Module-level cache per process
 _WORKER_VOL_MAP: dict[tuple[str, str], float] | None = None
 _WORKER_VOL_PATH: str | None = None
+
+
+def lower_worker_priority() -> None:
+    """Pool initializer: run scan workers below normal priority so the desktop, browser and API
+    stay responsive while a backtest uses the CPU."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            below_normal = 0x00004000  # BELOW_NORMAL_PRIORITY_CLASS
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), below_normal)
+        else:
+            os.nice(10)
+    except Exception:
+        pass  # priority is a nicety; never fail a scan over it
 
 
 def get_worker_vol_map(vol_path: str) -> dict[tuple[str, str], float]:
@@ -33,6 +51,8 @@ def scan_symbol_worker(
     min_quote_volume_30d: float,
     tiered_slippage: bool,
     vol_data_path: str,
+    data_dir: str | None = None,
+    meta_path: str | None = None,
 ) -> dict[str, Any]:
     """Execute backtest for a single symbol and timeframe inside a worker process.
 
@@ -40,8 +60,8 @@ def scan_symbol_worker(
     """
     vol_map = get_worker_vol_map(vol_data_path)
     try:
-        tick = get_tick_size(sym)
-        df = load_ohlcv(sym, tf)
+        tick = get_tick_size(sym, meta_path=meta_path) if meta_path else get_tick_size(sym)
+        df = load_ohlcv(sym, tf, data_dir=data_dir) if data_dir else load_ohlcv(sym, tf)
     except Exception:
         return {
             "symbol": sym,
