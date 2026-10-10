@@ -41,6 +41,9 @@ data/*.duckdb
 data/*.duckdb.wal
 *.duckdb
 *.duckdb.wal
+data/*.parquet
+data/*.db
+data/cache/
 data/journal/*
 !data/journal/.gitkeep
 data/trade/*
@@ -51,6 +54,11 @@ data/strategy_lab/*
 uploads/*
 !uploads/.gitkeep
 scratch/
+
+# Research CSVs
+reports/research/*.csv
+reports/research/tas/*
+!reports/research/universe_*.json
 
 # Backtest reports
 reports/backtests/*
