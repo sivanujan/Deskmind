@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: "/backtest", label: "Backtest Lab" },
   { href: "/trades", label: "Trades & Journal" },
   { href: "/risk", label: "Risk" },
+  { href: "/universe", label: "Universe" },
   { href: "/agents", label: "Agents" },
   { href: "/strategies", label: "Strategies" },
   { href: "/account", label: "Account" },

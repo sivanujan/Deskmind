@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -11,6 +11,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -231,3 +232,40 @@ class ExternalTrade(Base):
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class UniverseSymbol(Base):
+    """Lifecycle state of every symbol that was ever in the trading universe (see
+    universe/lifecycle.py). Rows are never deleted: an exited symbol keeps its row and its data."""
+
+    __tablename__ = "universe_symbols"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    in_universe: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer)
+    quote_volume_24h: Mapped[Decimal | None] = mapped_column(Numeric(38, 8))
+    onboard_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    exited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    state_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    warmed_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    blocked_reason: Mapped[str | None] = mapped_column(String(32))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    history: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class UniverseRun(Base):
+    """One row per daily universe run (00:00 UTC), with the daily summary."""
+
+    __tablename__ = "universe_runs"
+
+    run_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # running|completed|failed
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB)

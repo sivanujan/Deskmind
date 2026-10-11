@@ -1,4 +1,4 @@
-"""Process supervisor for managing live data, trend agent, and trade runner services."""
+"""Process supervisor for managing live data, trend agent, trade runner and universe services."""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ SERVICE_COMMANDS: dict[str, list[str]] = {
     "live": [sys.executable, "-m", "deskmind.cli", "live", "run"],
     "trend": [sys.executable, "-m", "deskmind.cli", "agents", "run", "trend"],
     "trade": [sys.executable, "-m", "deskmind.cli", "trade", "run"],
+    # Daily universe job at 00:00 UTC (recompute, download/verify/warm up entries).
+    "universe": [sys.executable, "-m", "deskmind.cli", "universe", "run"],
 }
 
 

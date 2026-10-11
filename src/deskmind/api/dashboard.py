@@ -533,3 +533,68 @@ async def backtest_meta() -> dict[str, Any]:
             "symbols": list(get_settings().data_symbols),
         },
     }
+
+
+# ---------------------------------------------------------------- trading universe
+
+
+def universe_store() -> Any:
+    """The universe tables in Postgres (replaced in tests)."""
+    from deskmind.db.session import get_engine
+    from deskmind.universe.store import PostgresUniverseStore
+
+    return PostgresUniverseStore(get_engine())
+
+
+def _iso(v: Any) -> str | None:
+    return v.isoformat() if v is not None else None
+
+
+@router.get("/api/dashboard/universe")
+async def dashboard_universe() -> dict[str, Any]:
+    """Universe members and their lifecycle state (universe_symbols), the latest daily summaries
+    (universe_runs), the configured thresholds and the next scheduled run."""
+    from datetime import UTC, datetime
+
+    from deskmind.universe.config import UniverseConfig
+    from deskmind.universe.lifecycle import SymbolState, allows_new_entries, is_tradeable
+    from deskmind.universe.scheduler import next_run_at
+
+    cfg = UniverseConfig.from_settings(get_settings())
+    base = {
+        "config": cfg.as_dict(),
+        "states": [str(s) for s in SymbolState],
+        "next_run_at": next_run_at(datetime.now(UTC), cfg.run_hour_utc).isoformat(),
+    }
+    try:
+        store = universe_store()
+        records = await store.load_all()
+        runs = await store.recent_runs(7)
+    except Exception as exc:
+        return {**base, "symbols": None, "runs": None, "reason": f"database unavailable: {exc}"}
+    symbols = [
+        {
+            "symbol": r.symbol,
+            "state": str(r.state),
+            "in_universe": r.in_universe,
+            "tradeable": is_tradeable(r),
+            "new_entries_allowed": allows_new_entries(r),
+            "rank": r.rank,
+            "quote_volume_24h": str(r.quote_volume_24h) if r.quote_volume_24h is not None else None,
+            "onboard_at": _iso(r.onboard_at),
+            "entered_at": _iso(r.entered_at),
+            "exited_at": _iso(r.exited_at),
+            "state_changed_at": _iso(r.state_changed_at),
+            "verified_at": _iso(r.verified_at),
+            "warmed_up_at": _iso(r.warmed_up_at),
+            "blocked_reason": str(r.blocked_reason) if r.blocked_reason else None,
+            "last_error": r.last_error,
+        }
+        for r in sorted(records.values(), key=lambda r: (not r.in_universe, r.rank or 10**6))
+    ]
+    return {
+        **base,
+        "symbols": symbols,
+        "runs": runs,
+        "reason": None if runs else "no universe run yet: the job runs daily at 00:00 UTC",
+    }

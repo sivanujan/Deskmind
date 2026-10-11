@@ -313,6 +313,82 @@ export interface RiskResponse {
   };
 }
 
+export interface UniverseSymbol {
+  symbol: string;
+  state: string;
+  in_universe: boolean;
+  tradeable: boolean;
+  new_entries_allowed: boolean;
+  rank: number | null;
+  quote_volume_24h: string | null;
+  onboard_at: string | null;
+  entered_at: string | null;
+  exited_at: string | null;
+  state_changed_at: string | null;
+  verified_at: string | null;
+  warmed_up_at: string | null;
+  blocked_reason: string | null;
+  last_error: string | null;
+}
+
+export interface UniverseAlert {
+  kind: string;
+  symbol: string | null;
+  message: string;
+  at: string;
+}
+
+export interface UniverseSummary {
+  run_date: string;
+  status: string;
+  started_at: string;
+  finished_at: string;
+  universe_size: number | null;
+  tradeable: string[];
+  entered: Array<{ symbol: string; rank: number; quote_volume_24h: string; state: string }>;
+  exited: string[];
+  new_watch_only: string[];
+  promoted: string[];
+  retried: string[];
+  downloads: {
+    done: Array<{ symbol: string; kind: string; start: string | null }>;
+    failed: Array<{ symbol: string; kind: string; error: string }>;
+  };
+  verification: {
+    passed: Array<{ symbol: string; status: string; report: string | null }>;
+    failed: Array<{ symbol: string; failures: string[]; report: string | null }>;
+  };
+  warm_up: { done: Array<{ symbol: string; reports: number }>; failed: Array<{ symbol: string; error: string }> };
+  blocked: Array<{ symbol: string; reason: string; error: string | null }>;
+  skipped_disk_guard: string[];
+  disk: {
+    used_pct?: string;
+    free_bytes?: number;
+    total_bytes?: number;
+    data_dir_bytes?: number;
+    threshold_pct: string;
+    guard_tripped: boolean;
+  };
+  alerts: UniverseAlert[];
+}
+
+export interface UniverseRun {
+  run_date: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  summary: UniverseSummary | null;
+}
+
+export interface UniverseResponse {
+  config: Record<string, string | number>;
+  states: string[];
+  next_run_at: string;
+  symbols: UniverseSymbol[] | null;
+  runs: UniverseRun[] | null;
+  reason: string | null;
+}
+
 export interface AccountResponse {
   read_only: true;
   used_for_sizing: false;
@@ -445,7 +521,7 @@ export const api = {
 
   // System & service control
   systemStatus: () => get<SystemStatus>("/api/system/status"),
-  serviceControl: (service: "live" | "trend" | "trade", action: "start" | "stop" | "restart") =>
+  serviceControl: (service: "live" | "trend" | "trade" | "universe", action: "start" | "stop" | "restart") =>
     post<{ service: string; action: string; success: boolean }>("/api/control/service", { service, action }),
   stopAllServices: (confirm: string) =>
     post<{ success: boolean; results: Record<string, boolean> }>("/api/control/service/stop-all", { confirm }),
@@ -504,6 +580,7 @@ export const api = {
   strategies: () => get<StrategyEntry[]>("/api/dashboard/strategies"),
   risk: () => get<RiskResponse>("/api/dashboard/risk"),
   account: () => get<AccountResponse>("/api/dashboard/account"),
+  universe: () => get<UniverseResponse>("/api/dashboard/universe"),
 
   // Audit
   auditLogs: (params?: { limit?: number; action?: string }) => get<AuditLogEntry[]>("/api/audit/logs", params),

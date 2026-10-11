@@ -136,6 +136,16 @@ class Settings(BaseSettings):
         default_factory=lambda: list(DEFAULT_DATA_SYMBOLS)
     )
 
+    # Trading universe (liquidity only; see docs/universe.md). Recomputed daily at 00:00 UTC by
+    # `deskmind universe run` (supervised). Volatility/trend belong to the Market Scanner, not here.
+    universe_top_n: int = Field(default=30, ge=1, le=200)
+    universe_min_quote_volume_usdt: Decimal = Field(default=Decimal("50000000"), ge=0)
+    universe_exit_rank_buffer: int = Field(default=5, ge=0, le=100)
+    universe_min_listing_age_days: int = Field(default=180, ge=0)
+    universe_history_days: int = Field(default=365, ge=1)
+    universe_download_concurrency: int = Field(default=2, ge=1, le=4)
+    universe_disk_max_used_pct: Decimal = Field(default=Decimal("90"), gt=0, le=100)
+
     # LLM access for the Head agent, via OpenRouter (OpenAI-compatible API).
     openrouter_api_key: SecretStr = SecretStr("")
     openrouter_model: str = DEFAULT_OPENROUTER_MODEL

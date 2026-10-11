@@ -183,11 +183,22 @@ anything is executed. Phase 1 MVP: BTCUSDT only, one strategy, Binance TESTNET o
 - Overlays: `GET /api/overlays?symbol&tf&start&end&as_of` (as_of = replay), report:
   `GET /api/agents/trend/report?symbol&as_of`. The chart's Replay mode uses both.
 
+## Trading universe (daily job)
+- `src/deskmind/universe/`, spec `docs/universe.md`. Universe = liquidity only (24h quote volume);
+  never add volatility/trend to its ranking (that is the Market Scanner's job, inside the universe).
+- Daily at 00:00 UTC via the supervised `universe` service (`deskmind universe run`); states in
+  `universe_symbols`, summaries in `universe_runs` (migration 0007), shown at `/universe`.
+- A symbol is tradeable ONLY via `universe.lifecycle.is_tradeable` (verified data + completed
+  agent warm-up). watch_only, blocked and exited symbols never get new entries; exited data is kept.
+- Universe symbols come from exchange data at runtime, not from source code. The live service,
+  trend runner and trade runner still use `DATA_SYMBOLS` until they are wired to the universe.
+
 ## Commands
 `make up | down | logs | ps | migrate | test | lint | format | health`, and `uv run deskmind health`.
 Data (each takes `--symbol X` or `--all`): `uv run deskmind data download --all --start 2023-01-01`,
 `data update --all`, `data verify --all` (writes `data/reports/verify_{date}.md`), `data info --all`.
 Live: `uv run deskmind live run | status | tail | verify --hours N | disconnect --seconds N`.
+Universe: `uv run deskmind universe run | run-once [--force] | status`.
 Agents: `uv run deskmind agents run trend | backfill trend --all --start YYYY-MM-DD | check trend --all`.
 API + web: `uv run deskmind api` (:8010) and `npm --prefix apps/web run dev` (:3010);
 web checks: `npm --prefix apps/web run lint` and `npm --prefix apps/web run typecheck`.

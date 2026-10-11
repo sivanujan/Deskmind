@@ -39,6 +39,10 @@ account_app = typer.Typer(
     help="Mainnet read-only account and metadata synchronization", no_args_is_help=True
 )
 app.add_typer(account_app, name="account")
+universe_app = typer.Typer(
+    help="Trading universe (liquidity only) and the daily 00:00 UTC job", no_args_is_help=True
+)
+app.add_typer(universe_app, name="universe")
 
 SymbolOpt = typer.Option(None, "--symbol", "-s", help="One symbol from DATA_SYMBOLS")
 AllOpt = typer.Option(False, "--all", help="Every symbol in DATA_SYMBOLS")
@@ -1266,9 +1270,63 @@ def account_import_csv_cmd(
     )
 
 
+# ---------------------------------------------------------------- universe
+
+
+@universe_app.command("run")
+def universe_run_cmd() -> None:
+    """Scheduler: run the daily universe job at 00:00 UTC (supervised service)."""
+    from deskmind.universe.scheduler import build_and_run
+
+    asyncio.run(build_and_run(get_settings()))
+
+
+@universe_app.command("run-once")
+def universe_run_once_cmd(
+    force: bool = typer.Option(False, help="Run even if today's run already completed"),
+) -> None:
+    """Run the daily job now (recompute, download/verify/warm up entries, update members)."""
+    import json
+
+    from deskmind.universe.scheduler import build_and_run
+
+    summary = asyncio.run(build_and_run(get_settings(), once=True, force=force))
+    typer.echo(json.dumps(summary, indent=2, default=str))
+
+
+@universe_app.command("status")
+def universe_status_cmd() -> None:
+    """Symbols in the universe with their lifecycle state, and the latest run."""
+    from deskmind.db.session import create_engine
+    from deskmind.universe.lifecycle import is_tradeable
+    from deskmind.universe.store import PostgresUniverseStore
+
+    async def go() -> None:
+        engine = create_engine(get_settings())
+        try:
+            store = PostgresUniverseStore(engine)
+            records = await store.load_all()
+            runs = await store.recent_runs(1)
+        finally:
+            await engine.dispose()
+        typer.echo(f"{'symbol':<16}{'state':<14}{'rank':>6}{'in':>4}  {'trade':<6}{'blocked':<22}")
+        for r in sorted(records.values(), key=lambda r: (not r.in_universe, r.rank or 10**6)):
+            typer.echo(
+                f"{r.symbol:<16}{r.state:<14}{r.rank or '-':>6}{'y' if r.in_universe else 'n':>4}  "
+                f"{'yes' if is_tradeable(r) else 'no':<6}{r.blocked_reason or '':<22}"
+            )
+        if runs:
+            run = runs[0]
+            typer.echo(f"\nlast run {run['run_date']}: {run['status']} ({run['finished_at']})")
+        else:
+            typer.echo("\nno universe run yet")
+
+    asyncio.run(go())
+
+
 @app.command("supervisor")
 def supervisor_cmd() -> None:
-    """Run process supervisor monitoring live, trend, and trade background services."""
+    """Run process supervisor monitoring live, trend, trade and universe background services."""
     from deskmind.supervisor.manager import get_supervisor
 
     async def go() -> None:
